@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[9989],{9989(e,r,n){n.r(r),n.d(r,{default:()=>s});n(9643);var t=n(5709),a=n(5508),i=n(6507);function s(e){let r=e.profile;return(0,i.jsx)(t.A,{profile:r,title:"Medicine Inventory",children:(0,i.jsx)(a.A,{profile:r})})}}}]);
+//# sourceMappingURL=9989.ab539db1.chunk.js.map

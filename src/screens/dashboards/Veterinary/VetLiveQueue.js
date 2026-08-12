@@ -1,0 +1,6 @@
+import React from 'react';
+import { ScrollView, StyleSheet } from 'react-native';
+import VetShell from './VetShell';
+import LiveQueueList from '../../../components/LiveQueueList';
+import { getQueue, subscribeToQueue } from '../../../api/queueService';
+export default function VetLiveQueue({navigation,route}){const user=route?.params?.user;const veterinarianId=user?.id||user?.user_id||user?.profile_id;const [entries,setEntries]=React.useState([]);const [loading,setLoading]=React.useState(true);const [error,setError]=React.useState('');const load=React.useCallback(async()=>{try{setEntries(veterinarianId?await getQueue({veterinarianId}):[]);setError('');}catch(e){setError(e?.message||'Unable to load queue.');}finally{setLoading(false);}},[veterinarianId]);React.useEffect(()=>{load();const off=subscribeToQueue(load,{veterinarianId});const t=setInterval(load,30000);return()=>{off?.();clearInterval(t);};},[load,veterinarianId]);return <VetShell navigation={navigation} route={route} subtitle="Live Queue" caption="Live read-only queue"><ScrollView contentContainerStyle={s.content}><LiveQueueList entries={entries} loading={loading} error={error}/></ScrollView></VetShell>};const s=StyleSheet.create({content:{padding:18,paddingBottom:100}});

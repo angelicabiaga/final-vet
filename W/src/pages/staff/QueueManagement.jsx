@@ -1,0 +1,1 @@
+import React from"react";import QueueManagementModule from"../../components/QueueManagementModule";export default function QueueManagement({profile}){return <QueueManagementModule profile={profile}/>}

@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[6691],{6691(e,t,r){r.r(t),r.d(t,{default:()=>i});r(5043);var a=r(8584),n=r(3661),s=r(579);function i(e){let t=e.profile;return(0,s.jsx)(a.A,{profile:t,title:"Pet Management",children:(0,s.jsx)(n.A,{profile:t})})}}}]);
+//# sourceMappingURL=6691.1cb0a831.chunk.js.map

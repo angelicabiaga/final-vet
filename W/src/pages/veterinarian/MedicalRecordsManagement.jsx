@@ -1,0 +1,1 @@
+import React from"react";import AppShell from"../../components/AppShell";import MedicalRecordsModule from"../../components/MedicalRecordsModule";export default function MedicalRecordsManagement({profile}){return <AppShell profile={profile} title="Medical Records Management"><MedicalRecordsModule profile={profile}/></AppShell>}

@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[7649],{7649(e,t,r){r.r(t),r.d(t,{default:()=>s});r(9643);var a=r(401),n=r(6507);function s(e){let t=e.profile;return(0,n.jsx)(a.A,{profile:t,title:"Staff Profile"})}}}]);
+//# sourceMappingURL=7649.dd45416a.chunk.js.map

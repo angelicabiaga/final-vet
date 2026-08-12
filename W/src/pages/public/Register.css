@@ -1,0 +1,211 @@
+body {
+  margin: 0;
+}
+
+.registration-success-page {
+  box-sizing: border-box;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  position: relative;
+  padding: 28px 20px;
+  background: linear-gradient(145deg, #f9fdff 0%, #dff3fa 52%, #bfdfeb 100%);
+}
+
+.registration-success-page::before,
+.registration-success-page::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.38);
+  pointer-events: none;
+}
+
+.registration-success-page::before {
+  width: 360px;
+  height: 360px;
+  top: -180px;
+  right: -110px;
+}
+
+.registration-success-page::after {
+  width: 280px;
+  height: 280px;
+  bottom: -150px;
+  left: -90px;
+}
+
+.registration-success-card {
+  box-sizing: border-box;
+  width: min(500px, 100%);
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 44px 46px 46px;
+  border: 1px solid rgba(67, 143, 181, 0.14);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 24px 65px rgba(37, 80, 101, 0.18);
+  text-align: center;
+  animation: registration-card-in 0.48s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.registration-success-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--pc-navy, #255065);
+  font-family: "Quicksand", "Poppins", sans-serif;
+  font-size: 23px;
+  font-weight: 700;
+}
+
+.registration-success-brand img {
+  width: 31px;
+  height: 37px;
+  object-fit: contain;
+}
+
+.registration-success-icon {
+  width: 112px;
+  height: 112px;
+  display: grid;
+  place-items: center;
+  margin: 34px 0 28px;
+  border: 4px solid #20b989;
+  border-radius: 50%;
+  background: #effcf7;
+  box-shadow: 0 10px 25px rgba(32, 185, 137, 0.16);
+  color: #16a97c;
+  animation: registration-check-in 0.58s 0.18s cubic-bezier(0.2, 1.35, 0.45, 1) both;
+}
+
+.registration-success-icon svg path {
+  stroke-dasharray: 70;
+  stroke-dashoffset: 70;
+  animation: registration-check-draw 0.45s 0.55s ease-out forwards;
+}
+
+.registration-success-card h1 {
+  margin: 0 0 14px;
+  color: var(--pc-text, #183345);
+  font-size: clamp(26px, 6vw, 34px);
+  line-height: 1.2;
+  letter-spacing: -0.5px;
+}
+
+.registration-success-card p {
+  max-width: 390px;
+  margin: 0;
+  color: #4f6875;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.registration-success-card .registration-success-note {
+  margin-top: 8px;
+  color: var(--pc-muted, #71828b);
+  font-size: 14px;
+}
+
+.registration-success-button {
+  box-sizing: border-box;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 30px;
+  padding: 14px 22px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--pc-blue, #438fb5), var(--pc-navy, #255065));
+  box-shadow: 0 9px 20px rgba(37, 80, 101, 0.2);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.registration-success-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(37, 80, 101, 0.25);
+}
+
+.registration-success-button:focus-visible {
+  outline: 3px solid rgba(67, 143, 181, 0.35);
+  outline-offset: 3px;
+}
+
+@keyframes registration-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes registration-check-in {
+  from {
+    opacity: 0;
+    transform: scale(0.55) rotate(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes registration-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .registration-success-page {
+    padding: 18px 14px;
+  }
+
+  .registration-success-card {
+    padding: 32px 24px 30px;
+    border-radius: 22px;
+  }
+
+  .registration-success-icon {
+    width: 96px;
+    height: 96px;
+    margin: 28px 0 24px;
+  }
+
+  .registration-success-icon svg {
+    width: 50px;
+    height: 50px;
+  }
+
+  .registration-success-button {
+    margin-top: 26px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .registration-success-card,
+  .registration-success-icon,
+  .registration-success-icon svg path {
+    animation: none;
+  }
+
+  .registration-success-icon svg path {
+    stroke-dashoffset: 0;
+  }
+
+  .registration-success-button {
+    transition: none;
+  }
+}

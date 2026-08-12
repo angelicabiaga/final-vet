@@ -1,0 +1,1 @@
+import React from "react";import AppShell from "../../components/AppShell";import PetManagementModule from "../../components/PetManagementModule";export default function MyPets({profile}){return <AppShell profile={profile} title="My Pets"><PetManagementModule profile={profile} ownerOnly/></AppShell>}

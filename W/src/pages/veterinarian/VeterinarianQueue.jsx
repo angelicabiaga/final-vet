@@ -1,0 +1,1 @@
+import React from"react";import QueueManagementModule from"../../components/QueueManagementModule";export default function VeterinarianQueue({profile}){return <QueueManagementModule profile={profile} mode="veterinarian"/>}

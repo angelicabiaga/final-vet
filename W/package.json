@@ -1,0 +1,51 @@
+{
+  "name": "pawcruz-veterinary-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "react-scripts": "^5.0.1",
+    "recharts": "^2.13.3",
+    "web-vitals": "^2.1.4"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "start:3000": "set PORT=3000&&react-scripts start",
+    "start:3001": "set PORT=3001&&react-scripts start",
+    "start:3002": "set PORT=3002&&react-scripts start",
+    "start:3003": "set PORT=3003&&react-scripts start",
+    "start:admin": "set PORT=3000&&react-scripts start",
+    "start:staff": "set PORT=3001&&react-scripts start",
+    "start:vet": "set PORT=3002&&react-scripts start",
+    "start:owner": "set PORT=3003&&react-scripts start"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "ajv": "^6.12.6",
+    "ajv-keywords": "^3.5.2"
+  }
+}

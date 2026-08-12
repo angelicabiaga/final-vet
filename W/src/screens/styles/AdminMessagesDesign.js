@@ -1,0 +1,38 @@
+import { StyleSheet } from 'react-native';
+
+export const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#eef9fb' },
+  topHeader: {
+    backgroundColor: '#63B6C5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingBottom: 20,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+    shadowColor: '#447C99',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  headerLogo: { width: 48, height: 48, marginRight: 16 },
+  headerTitle: { color: '#fff', fontSize: 26, fontWeight: '900' },
+  welcomeBar: { backgroundColor: '#5ba1a6', flexDirection: 'row', justifyContent: 'space-between', padding: 15, alignItems: 'center' },
+  welcomeText: { color: '#fff', fontSize: 20, fontWeight: '500' },
+  bellIcon: { width: 20, height: 20, tintColor: '#fff' },
+  searchBox: { backgroundColor: '#fff', margin: 15, borderRadius: 25, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15, height: 45, borderWidth: 1, borderColor: '#ddd' },
+  searchInput: { flex: 1, fontSize: 16 },
+  messageRow: { flexDirection: 'row', padding: 15, borderBottomWidth: 1, borderBottomColor: '#eee', alignItems: 'center' },
+  avatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#ccc' },
+  textContainer: { flex: 1, marginLeft: 15 },
+  rowHeader: { flexDirection: 'row', justifyContent: 'space-between' },
+  nameText: { fontSize: 18, fontWeight: 'bold', color: '#333' },
+  timeText: { fontSize: 12, color: '#999' },
+  msgText: { fontSize: 14, color: '#666', marginTop: 4 },
+  bottomNav: { flexDirection: 'row', height: 70, borderTopWidth: 1, borderTopColor: '#ddd', backgroundColor: '#fff', justifyContent: 'space-around', alignItems: 'center' },
+  navItem: { alignItems: 'center' },
+  navIcon: { width: 24, height: 24 },
+  navLabel: { fontSize: 12, color: '#666', marginTop: 4 }
+});

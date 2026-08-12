@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[389],{389(e,t,r){r.r(t),r.d(t,{default:()=>i});r(9643);var a=r(5709),n=r(1982),s=r(6507);function i(e){let t=e.profile;return(0,s.jsx)(a.A,{profile:t,title:"Create Appointment / Walk-In",children:(0,s.jsx)(n.A,{profile:t,mode:"staff"})})}}}]);
+//# sourceMappingURL=389.23dda905.chunk.js.map

@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[2150],{2150(e,r,a){a.r(r),a.d(r,{default:()=>i});a(9643);var t=a(5709),n=a(5252),s=a(6507);function i(e){let r=e.profile;return(0,s.jsx)(t.A,{profile:r,title:"Medical Records Management",children:(0,s.jsx)(n.A,{profile:r})})}}}]);
+//# sourceMappingURL=2150.fc2ba3e7.chunk.js.map

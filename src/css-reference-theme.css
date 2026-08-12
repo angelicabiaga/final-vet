@@ -1,0 +1,71 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Quicksand:wght@600;700&display=swap");
+
+:root{
+  --pc-navy:#255065;
+  --pc-blue:#438fb5;
+  --pc-cyan:#63b6c5;
+  --pc-pale:#f4f9fb;
+  --pc-soft:#c9eaf7;
+  --pc-border:#d8eaf1;
+  --pc-text:#183345;
+  --pc-muted:#71828b;
+  --pc-shadow:0 4px 12px rgba(37,80,101,.08);
+}
+html{scroll-behavior:smooth}
+body{font-family:"Poppins",sans-serif!important;background:linear-gradient(145deg,#fff 0%,#edf8fc 54%,#d6edf6 100%)!important;color:var(--pc-text)!important}
+button,input,select,textarea{font-family:"Poppins",sans-serif!important}
+button{transition:transform .18s ease,box-shadow .18s ease,opacity .18s ease}
+button:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 5px 13px rgba(37,80,101,.17)}
+button:not(:disabled):active{transform:translateY(0)}
+
+/* Shared working-project surfaces */
+.shell{background:transparent!important}
+.shell main{min-width:0}
+.shell .content{background:linear-gradient(145deg,#fff 0%,#e7f5fa 58%,#c9eaf7 100%)!important;min-height:calc(100vh - 85px)}
+.shell .card,.dash-panel,.dash-cards article,.quick-links a,.stat,.panel,.profileHero{
+  border:1px solid rgba(67,143,181,.12)!important;
+  box-shadow:var(--pc-shadow)!important;
+}
+.shell .card,.dash-panel,.dash-cards article,.stat{border-radius:15px!important}
+.shell h1,.shell h2,.shell h3,.shell h4{color:var(--pc-navy)}
+.shell a{transition:background .2s ease,color .2s ease,transform .2s ease}
+
+/* Common form and table styling */
+.shell input,.shell select,.shell textarea{
+  border:1px solid var(--pc-border)!important;border-radius:10px!important;background:#fff!important;
+  color:var(--pc-text)!important;outline:none!important;
+}
+.shell input:focus,.shell select:focus,.shell textarea:focus{border-color:var(--pc-blue)!important;box-shadow:0 0 0 3px rgba(67,143,181,.12)!important}
+.shell table{background:#fff;border-radius:12px;overflow:hidden}
+.shell th{background:#eef8fb!important;color:var(--pc-navy)!important;font-size:12px;text-transform:uppercase;letter-spacing:.35px}
+.shell td{color:#334f5e}
+.shell tbody tr:hover{background:#f5fbfd}
+.shell .pill{font-weight:600}
+
+/* Dashboard styling inspired by reference project */
+.dash-head{background:linear-gradient(135deg,var(--pc-blue),var(--pc-navy))!important;color:#fff!important;border-radius:18px!important;padding:25px!important;box-shadow:0 8px 22px rgba(37,80,101,.18)!important}
+.dash-head h2,.dash-head p,.dash-head span{color:#fff!important}
+.dash-head button{background:#fff!important;color:var(--pc-navy)!important}
+.dash-cards article{background:#fff!important;border-left:5px solid var(--pc-blue)!important}
+.dash-cards article:nth-child(2){border-left-color:#63c58d!important}
+.dash-cards article:nth-child(3){border-left-color:#e9c46a!important}
+.dash-cards article:nth-child(4){border-left-color:#e76f51!important}
+.dash-cards .icon{background:#eaf5f9!important;color:var(--pc-blue)!important}
+.quick-links a{background:#fff!important;color:var(--pc-navy)!important}
+.quick-links a:hover{background:var(--pc-blue)!important;color:#fff!important;transform:translateY(-2px)}
+
+/* Public/auth pages */
+.auth{background:linear-gradient(135deg,#fff 0%,#d7eff8 55%,#b9dce9 100%)!important}
+.auth .panel{border-radius:18px!important;border-top:6px solid var(--pc-blue)!important}
+.auth .brand{font-family:"Quicksand",sans-serif!important;color:var(--pc-navy)!important}
+.auth button,.auth .primary{background:linear-gradient(135deg,var(--pc-blue),var(--pc-navy))!important}
+.landing{font-family:"Poppins",sans-serif!important;background:linear-gradient(145deg,#fff,#dff2f8)!important}
+.landing header{border-bottom:1px solid rgba(67,143,181,.15)!important;box-shadow:0 3px 12px rgba(37,80,101,.08)!important}
+.landing .logo{font-family:"Quicksand",sans-serif!important;color:var(--pc-navy)!important}
+.landing .primary{background:linear-gradient(135deg,var(--pc-blue),var(--pc-navy))!important}
+.landing .hero{border:1px solid rgba(67,143,181,.14)!important;border-radius:20px!important}
+
+@media(max-width:800px){
+  .shell .content{min-height:calc(100vh - 70px)}
+  .dash-head{padding:19px!important}
+}

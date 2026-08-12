@@ -1,0 +1,1 @@
+import React from "react";import AppShell from "../../components/AppShell";import MessagingModule from "../../components/MessagingModule";export default function VeterinarianMessages({profile}){return <AppShell profile={profile} title="Messages"><MessagingModule profile={profile}/></AppShell>}

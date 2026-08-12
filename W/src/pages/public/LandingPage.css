@@ -1,0 +1,389 @@
+.landing-page,
+.landing-page * {
+  box-sizing: border-box;
+}
+
+.landing-page {
+  --navy: #082b52;
+  --deep-navy: #061f3c;
+  --clinic-blue: #318fbe;
+  --bright-blue: #4da8da;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  color: #17324b;
+  font-family: Arial, Helvetica, sans-serif;
+  background: var(--deep-navy);
+}
+
+.landing-header {
+  min-height: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 7%;
+  background: linear-gradient(110deg, var(--deep-navy), var(--navy) 62%, #0d5684);
+  border-bottom: 3px solid var(--bright-blue);
+  box-shadow: 0 5px 20px rgba(3, 25, 49, 0.25);
+  position: relative;
+  z-index: 2;
+}
+
+.landing-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  color: #fff;
+  font-size: 25px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.landing-logo {
+  width: 43px;
+  height: 43px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 2px solid rgba(77, 168, 218, 0.8);
+  border-radius: 50%;
+}
+
+.landing-logo img {
+  width: 27px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.landing-nav,
+.landing-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.landing-nav a,
+.landing-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 11px 18px;
+  border-radius: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+.landing-nav a:hover,
+.landing-actions a:hover {
+  transform: translateY(-2px);
+}
+
+.login-link {
+  color: #dff5ff;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+
+.login-link:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.account-link,
+.register-link {
+  color: var(--deep-navy);
+  background: #fff;
+  box-shadow: 0 7px 18px rgba(2, 20, 39, 0.22);
+}
+
+.landing-main {
+  flex: 1;
+  min-height: 560px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 54px 7%;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  position: relative;
+  isolation: isolate;
+}
+
+.landing-main::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, rgba(5, 31, 59, 0.3), rgba(10, 58, 91, 0.12));
+}
+
+.landing-content {
+  width: min(1160px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(320px, 0.88fr);
+  align-items: center;
+  gap: clamp(28px, 5vw, 72px);
+}
+
+.welcome-card,
+.hours-card {
+  align-self: center;
+  border-radius: 26px;
+  box-shadow: 0 20px 55px rgba(2, 24, 46, 0.28);
+}
+
+.welcome-card {
+  padding: clamp(32px, 4.5vw, 56px);
+  color: #fff;
+  background: linear-gradient(145deg, rgba(25, 124, 175, 0.88), rgba(10, 76, 119, 0.78));
+  border: 1px solid rgba(193, 235, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.clinic-tag {
+  display: inline-block;
+  padding: 8px 13px;
+  color: #e9f9ff;
+  background: rgba(5, 42, 78, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.welcome-card h1 {
+  margin: 18px 0 16px;
+  font-size: clamp(38px, 4.8vw, 62px);
+  line-height: 1.04;
+  letter-spacing: -1.5px;
+}
+
+.welcome-card p {
+  margin: 0;
+  color: #edfaff;
+  font-size: 18px;
+  line-height: 1.65;
+}
+
+.landing-actions {
+  flex-wrap: wrap;
+  margin-top: 30px;
+}
+
+.queue-link {
+  color: #fff;
+  background: rgba(5, 42, 78, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+}
+
+.hours-card {
+  padding: clamp(30px, 4vw, 46px);
+  text-align: center;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #fff;
+}
+
+.hours-icon {
+  width: 70px;
+  height: 70px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 17px;
+  color: #fff;
+  background: linear-gradient(145deg, var(--clinic-blue), var(--bright-blue));
+  border-radius: 21px;
+  box-shadow: 0 10px 24px rgba(49, 143, 190, 0.28);
+}
+
+.hours-eyebrow {
+  color: var(--clinic-blue);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1.7px;
+  text-transform: uppercase;
+}
+
+.hours-card h2 {
+  margin: 8px 0 9px;
+  color: var(--navy);
+  font-size: clamp(28px, 3vw, 38px);
+}
+
+.hours-time {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #267fae;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.hours-details {
+  display: grid;
+  gap: 11px;
+  margin-top: 28px;
+}
+
+.hours-details > div {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 12px 16px;
+  color: #27516d;
+  background: #eaf7fc;
+  border: 1px solid #d2edf8;
+  border-radius: 13px;
+  font-weight: 700;
+}
+
+.hours-details svg {
+  flex: 0 0 auto;
+  color: var(--clinic-blue);
+}
+
+.contact-bar {
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 13px 40px;
+  padding: 15px 7%;
+  color: #f2fbff;
+  background: var(--deep-navy);
+  border-top: 3px solid var(--bright-blue);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.contact-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+
+.contact-item svg {
+  flex: 0 0 auto;
+  color: #71c6ee;
+}
+
+.phone-numbers {
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.phone-numbers a {
+  color: #fff;
+  text-decoration: none;
+}
+
+.phone-numbers a:hover {
+  color: #9bdcff;
+  text-decoration: underline;
+}
+
+@media (max-width: 860px) {
+  .landing-main {
+    min-height: auto;
+    padding: 42px 6%;
+  }
+
+  .landing-content {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .welcome-card h1 {
+    font-size: clamp(36px, 8vw, 50px);
+  }
+
+  .hours-card {
+    width: min(100%, 560px);
+    justify-self: center;
+  }
+}
+
+@media (max-width: 560px) {
+  .landing-header {
+    min-height: 70px;
+    padding: 10px 5%;
+  }
+
+  .landing-brand {
+    font-size: 21px;
+  }
+
+  .landing-logo {
+    width: 38px;
+    height: 38px;
+  }
+
+  .landing-logo img {
+    width: 24px;
+    height: 28px;
+  }
+
+  .landing-nav a {
+    min-height: 40px;
+    padding: 9px 12px;
+    font-size: 14px;
+  }
+
+  .account-link {
+    display: none;
+  }
+
+  .landing-main {
+    padding: 30px 4.5%;
+    background-position: 60% center;
+  }
+
+  .welcome-card,
+  .hours-card {
+    border-radius: 21px;
+  }
+
+  .welcome-card {
+    padding: 30px 24px;
+  }
+
+  .welcome-card h1 {
+    font-size: 36px;
+    letter-spacing: -0.8px;
+  }
+
+  .welcome-card p {
+    font-size: 16px;
+  }
+
+  .landing-actions {
+    flex-direction: column;
+  }
+
+  .landing-actions a {
+    width: 100%;
+  }
+
+  .hours-card {
+    padding: 30px 21px;
+  }
+
+  .contact-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 16px 5%;
+    font-size: 14px;
+  }
+
+  .contact-item {
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
