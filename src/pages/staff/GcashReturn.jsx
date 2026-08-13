@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   CheckCircle2,
   Loader2,
@@ -20,6 +20,7 @@ function money(value) {
 }
 
 export default function GcashReturn({ profile }) {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const transactionId = searchParams.get("tx");
   const redirectResult = searchParams.get("result");
@@ -27,6 +28,7 @@ export default function GcashReturn({ profile }) {
   const [status, setStatus] = useState("checking");
   const [transaction, setTransaction] = useState(null);
   const [error, setError] = useState("");
+  const [redirectSeconds, setRedirectSeconds] = useState(5);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,6 +74,23 @@ export default function GcashReturn({ profile }) {
     };
   }, [transactionId, redirectResult]);
 
+  useEffect(() => {
+    if (status !== "paid") return undefined;
+
+    setRedirectSeconds(5);
+    const countdown = window.setInterval(() => {
+      setRedirectSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    const redirect = window.setTimeout(() => {
+      navigate("/staff/transactions#payment-history");
+    }, 5000);
+
+    return () => {
+      window.clearInterval(countdown);
+      window.clearTimeout(redirect);
+    };
+  }, [navigate, status]);
+
   return (
     <AppShell profile={profile} title="GCash Payment">
       <div className="card gcash-card">
@@ -99,6 +118,9 @@ export default function GcashReturn({ profile }) {
             <CheckCircle2 size={40} className="ok" />
             <h2>Payment Received</h2>
             <p>GCash payment confirmed for this transaction.</p>
+            <p className="redirect-note">
+              Redirecting to Payment History in {redirectSeconds} second{redirectSeconds === 1 ? "" : "s"}…
+            </p>
             {transaction && (
               <div className="gcash-total">{money(transaction.total_amount)}</div>
             )}
@@ -113,8 +135,8 @@ export default function GcashReturn({ profile }) {
           </>
         )}
 
-        <Link to="/staff/transactions" className="back-link">
-          Back to Transactions
+        <Link to={status === "paid" ? "/staff/transactions#payment-history" : "/staff/transactions"} className="back-link">
+          {status === "paid" ? "Go to Payment Transaction History now" : "Back to Transactions"}
         </Link>
       </div>
 
@@ -122,6 +144,7 @@ export default function GcashReturn({ profile }) {
         .gcash-card{background:white;border-radius:18px;padding:40px;box-shadow:0 8px 24px rgba(47,117,150,.09);max-width:420px;margin:40px auto;text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}
         .gcash-card h2{margin:8px 0 0}
         .gcash-card p{color:#6F7F88;font-size:14px;margin:0}
+        .gcash-card .redirect-note{color:#536b78;font-weight:600}
         .gcash-total{font-size:24px;font-weight:700;color:#318fbe;margin-top:10px}
         .spin{animation:spin 1s linear infinite;color:#318fbe}
         .ok{color:#1f9d55}

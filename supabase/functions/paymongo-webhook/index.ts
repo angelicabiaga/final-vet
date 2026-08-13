@@ -97,10 +97,17 @@ Deno.serve(async (req) => {
       const paymentData = await paymentResponse.json();
 
       if (!paymentResponse.ok) {
-        await supabase
+        const { data: cancelledTransaction } = await supabase
           .from("transactions")
-          .update({ payment_status: "Cancelled" })
-          .eq("paymongo_source_id", sourceId);
+          .select("id")
+          .eq("paymongo_source_id", sourceId)
+          .maybeSingle();
+        if (cancelledTransaction?.id) {
+          await supabase.rpc("pawcruz_cancel_pos_transaction", {
+            p_transaction_id: cancelledTransaction.id,
+            p_reason: "PayMongo could not charge the GCash source.",
+          });
+        }
 
         return json({ error: "PayMongo could not charge the source.", details: paymentData }, 502);
       }
@@ -108,13 +115,28 @@ Deno.serve(async (req) => {
       const paymentId = paymentData?.data?.id;
       const paymentStatus = paymentData?.data?.attributes?.status;
 
-      await supabase
+      const { data: settledTransaction, error: settledTransactionError } = await supabase
         .from("transactions")
-        .update({
-          paymongo_payment_id: paymentId,
-          payment_status: paymentStatus === "paid" ? "Paid" : "Pending",
-        })
-        .eq("paymongo_source_id", sourceId);
+        .select("id")
+        .eq("paymongo_source_id", sourceId)
+        .single();
+
+      if (settledTransactionError || !settledTransaction) {
+        return json({ error: "Transaction for this GCash source was not found." }, 404);
+      }
+
+      if (paymentStatus === "paid") {
+        const { error: settleError } = await supabase.rpc("pawcruz_settle_pos_transaction", {
+          p_transaction_id: settledTransaction.id,
+          p_payment_id: paymentId,
+        });
+        if (settleError) return json({ error: settleError.message }, 500);
+      } else {
+        await supabase
+          .from("transactions")
+          .update({ paymongo_payment_id: paymentId, payment_status: "Pending" })
+          .eq("id", settledTransaction.id);
+      }
 
       return json({ received: true, paymentId });
     }
@@ -123,10 +145,17 @@ Deno.serve(async (req) => {
       const sourceId = resource?.id || resource?.attributes?.source?.id;
 
       if (sourceId) {
-        await supabase
+        const { data: cancelledTransaction } = await supabase
           .from("transactions")
-          .update({ payment_status: "Cancelled" })
-          .eq("paymongo_source_id", sourceId);
+          .select("id")
+          .eq("paymongo_source_id", sourceId)
+          .maybeSingle();
+        if (cancelledTransaction?.id) {
+          await supabase.rpc("pawcruz_cancel_pos_transaction", {
+            p_transaction_id: cancelledTransaction.id,
+            p_reason: eventType === "source.expired" ? "GCash source expired." : "PayMongo reported a failed payment.",
+          });
+        }
       }
 
       return json({ received: true });
