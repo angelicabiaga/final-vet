@@ -1,2 +1,0 @@
-"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[8386],{8386(e,r,t){t.r(r),t.d(r,{default:()=>l});t(5043);var n=t(8584),a=t(3661),s=t(579);function l(e){let r=e.profile;return(0,s.jsx)(n.A,{profile:r,title:"My Pets",children:(0,s.jsx)(a.A,{profile:r,ownerOnly:!0})})}}}]);
-//# sourceMappingURL=8386.ddd8f7ce.chunk.js.map

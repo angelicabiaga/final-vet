@@ -1,2 +1,0 @@
-"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[5895],{5895(e,n,r){r.r(n),r.d(n,{default:()=>i});r(5043);var t=r(8584),a=r(8067),s=r(579);function i(e){let n=e.profile;return(0,s.jsx)(t.A,{profile:n,title:"Inventory Management",children:(0,s.jsx)(a.A,{profile:n})})}}}]);
-//# sourceMappingURL=5895.32e6c422.chunk.js.map

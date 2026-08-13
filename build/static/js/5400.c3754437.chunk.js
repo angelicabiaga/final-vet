@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[5400],{45400(e,r,t){t.r(r),t.d(r,{default:()=>i});t(65043);var a=t(68584),n=t(74465),s=t(70579);function i(e){let r=e.profile;return(0,s.jsx)(a.A,{profile:r,title:"My Pet Medical Records",children:(0,s.jsx)(n.A,{profile:r})})}}}]);
+//# sourceMappingURL=5400.c3754437.chunk.js.map
