@@ -13,6 +13,7 @@ import {
   Loader2,
   Minus,
   Plus,
+  Receipt,
   Search,
   ShoppingCart,
   Stethoscope,
@@ -21,7 +22,6 @@ import {
 } from "lucide-react";
 
 import AppShell from "../../components/AppShell";
-import PaymentTransactionHistory from "../../components/PaymentTransactionHistory";
 import {
   getInventoryItems,
   recordInventoryTransaction,
@@ -30,6 +30,7 @@ import { getPets } from "../../services/petService";
 import {
   checkoutTransaction,
   getTransactionById,
+  getTransactions,
   initiateGcashPayment,
   updatePaymentStatus,
 } from "../../services/transactionService";
@@ -64,7 +65,6 @@ export default function TransactionManagement({ profile }) {
   const [petResults, setPetResults] = useState([]);
   const [petLoading, setPetLoading] = useState(false);
   const [selectedPet, setSelectedPet] = useState(null);
-  const [selectedPets, setSelectedPets] = useState([]);
 
   const [petFocused, setPetFocused] = useState(false);
 
@@ -72,7 +72,6 @@ export default function TransactionManagement({ profile }) {
   const [checkupFee, setCheckupFee] = useState("500");
   const [applyDiscount, setApplyDiscount] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
-  const [amountPaid, setAmountPaid] = useState("");
   const [notes, setNotes] = useState("");
 
   const [itemSearch, setItemSearch] = useState("");
@@ -85,14 +84,32 @@ export default function TransactionManagement({ profile }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [successReceipt, setSuccessReceipt] = useState(null);
-  const [redirectSeconds, setRedirectSeconds] = useState(5);
-  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
   const [gcashModal, setGcashModal] = useState(null);
   // gcashModal shape: { transactionId, qrDataUrl, secondsLeft, status: 'waiting'|'paid'|'expired'|'cancelled' }
   const gcashPollRef = useRef(null);
   const gcashTimerRef = useRef(null);
   const gcashPendingReceiptRef = useRef(null);
+
+  const [recent, setRecent] = useState([]);
+  const [recentLoading, setRecentLoading] = useState(true);
+
+  const loadRecent = useCallback(async () => {
+    setRecentLoading(true);
+
+    try {
+      const data = await getTransactions({ limit: 8 });
+      setRecent(data);
+    } catch (err) {
+      console.error("Unable to load recent transactions.", err);
+    } finally {
+      setRecentLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRecent();
+  }, [loadRecent]);
 
   useEffect(() => {
     if (!petSearch.trim() && !petFocused) {
@@ -172,25 +189,10 @@ export default function TransactionManagement({ profile }) {
   const totalAmount = grossTotal - discountAmount;
 
   function selectPet(pet) {
-    if (selectedPets.some((selected) => selected.id === pet.id)) return;
-    if (selectedPet && selectedPet.owner?.id !== pet.owner?.id) {
-      setError("All pets in one transaction must belong to the same owner.");
-      return;
-    }
-    if (!selectedPet) setSelectedPet(pet);
-    setSelectedPets((current) => [...current, pet]);
-    setError("");
+    setSelectedPet(pet);
     setPetSearch("");
     setPetResults([]);
     setPetFocused(false);
-  }
-
-  function removeSelectedPet(petId) {
-    setSelectedPets((current) => {
-      const next = current.filter((pet) => pet.id !== petId);
-      setSelectedPet(next[0] || null);
-      return next;
-    });
   }
 
   function addToCart(inventoryItem) {
@@ -237,12 +239,10 @@ export default function TransactionManagement({ profile }) {
 
   function resetForm() {
     setSelectedPet(null);
-    setSelectedPets([]);
     setIncludeCheckupFee(true);
     setCheckupFee("500");
     setApplyDiscount(false);
     setPaymentMethod("Cash");
-    setAmountPaid("");
     setNotes("");
     setCart([]);
     setError("");
@@ -268,6 +268,11 @@ export default function TransactionManagement({ profile }) {
     setSubmitting(true);
 
     const isGcash = paymentMethod === "GCash";
+    // Fold the PWD/Senior 20% discount into the fee + unit prices themselves,
+    // so the stored total always matches (checkup_fee + sum of line totals)
+    // without needing a separate discount column.
+    const discountMultiplier = applyDiscount ? 0.8 : 1;
+    const discountedCheckupFee = Number((effectiveCheckupFee * discountMultiplier).toFixed(2));
     const discountNote = applyDiscount ? "PWD/Senior Citizen 20% discount applied." : "";
     const combinedNotes = [discountNote, notes.trim()].filter(Boolean).join(" ");
 
@@ -275,11 +280,8 @@ export default function TransactionManagement({ profile }) {
       const transactionId = await checkoutTransaction(
         {
           petId: selectedPet.id,
-          petIds: selectedPets.map((pet) => pet.id),
           ownerId: selectedPet.owner?.id,
-          checkupFee: effectiveCheckupFee,
-          discountAmount,
-          amountPaid: isGcash ? totalAmount : Number(amountPaid || totalAmount),
+          checkupFee: discountedCheckupFee,
           paymentMethod,
           paymentStatus: isGcash ? "Pending" : "Paid",
           notes: combinedNotes,
@@ -288,7 +290,7 @@ export default function TransactionManagement({ profile }) {
             itemType: l.item_type,
             itemName: l.item_name,
             quantity: l.quantity,
-            unitPrice: Number(l.unit_price),
+            unitPrice: Number((Number(l.unit_price) * discountMultiplier).toFixed(2)),
           })),
         },
         profile
@@ -310,10 +312,10 @@ export default function TransactionManagement({ profile }) {
 
         gcashPendingReceiptRef.current = {
           id: transactionId,
-          petName: selectedPets.map((pet) => pet.pet_name).join(", "),
+          petName: selectedPet.pet_name,
           ownerName: selectedPet.owner?.full_name,
-          checkupFee: effectiveCheckupFee,
-          items: cart,
+          checkupFee: discountedCheckupFee,
+          items: cart.map((l) => ({ ...l, unit_price: Number((Number(l.unit_price) * discountMultiplier).toFixed(2)) })),
           total: totalAmount,
         };
 
@@ -331,16 +333,15 @@ export default function TransactionManagement({ profile }) {
 
       setSuccessReceipt({
         id: transactionId,
-        petName: selectedPets.map((pet) => pet.pet_name).join(", "),
+        petName: selectedPet.pet_name,
         ownerName: selectedPet.owner?.full_name,
-        checkupFee: effectiveCheckupFee,
-        items: cart,
+        checkupFee: discountedCheckupFee,
+        items: cart.map((l) => ({ ...l, unit_price: Number((Number(l.unit_price) * discountMultiplier).toFixed(2)) })),
         total: totalAmount,
       });
-      setRedirectSeconds(5);
-      setHistoryRefreshKey((value) => value + 1);
 
       resetForm();
+      loadRecent();
     } catch (err) {
       setError(err.message || "Unable to complete the transaction.");
     } finally {
@@ -389,6 +390,7 @@ export default function TransactionManagement({ profile }) {
       }
 
       await updatePaymentStatus(tx.id, "Cancelled");
+      loadRecent();
 
       if (restoreFailures.length > 0) {
         setError(
@@ -457,32 +459,11 @@ export default function TransactionManagement({ profile }) {
   useEffect(() => {
     if (gcashModal?.status === "paid" && gcashPendingReceiptRef.current) {
       setSuccessReceipt(gcashPendingReceiptRef.current);
-      setRedirectSeconds(5);
-      setHistoryRefreshKey((value) => value + 1);
       gcashPendingReceiptRef.current = null;
       setGcashModal(null);
+      loadRecent();
     }
-  }, [gcashModal?.status]);
-
-  useEffect(() => {
-    if (!successReceipt) return undefined;
-
-    const interval = setInterval(() => {
-      setRedirectSeconds((seconds) => Math.max(0, seconds - 1));
-    }, 1000);
-    const redirect = setTimeout(() => {
-      setSuccessReceipt(null);
-      document.getElementById("payment-transaction-history")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 5000);
-
-    return () => {
-      clearInterval(interval);
-      clearTimeout(redirect);
-    };
-  }, [successReceipt]);
+  }, [gcashModal?.status, loadRecent]);
 
   useEffect(() => stopGcashTimers, []);
 
@@ -498,36 +479,36 @@ export default function TransactionManagement({ profile }) {
 
           <label className="field-label">Pet / Owner</label>
 
-          <div className="search-box pet-search-box">
-            <Search size={16} />
-            <input
-              placeholder={selectedPets.length ? "Add another pet for this owner" : "Search pet by name, species, or breed"}
-              value={petSearch}
-              onChange={(e) => setPetSearch(e.target.value)}
-              onFocus={() => setPetFocused(true)}
-              onBlur={() => setTimeout(() => setPetFocused(false), 150)}
-            />
-          </div>
-
-          {selectedPets.length > 0 && (
-            <div className="selected-pets" aria-label="Pets added to transaction">
-              {selectedPets.map((pet, index) => (
-                <div className="selected-pet" key={pet.id}>
-                  <div>
-                    <strong>{pet.pet_name}</strong>
-                    <span>
-                      Pet {index + 1} · {pet.species} · Owner: {pet.owner?.full_name || "—"}
-                    </span>
-                  </div>
-                  <button type="button" className="link-btn" onClick={() => removeSelectedPet(pet.id)}>
-                    <X size={16} /> Remove
-                  </button>
-                </div>
-              ))}
+          {selectedPet ? (
+            <div className="selected-pet">
+              <div>
+                <strong>{selectedPet.pet_name}</strong>
+                <span>
+                  {selectedPet.species} · Owner: {selectedPet.owner?.full_name || "—"}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => setSelectedPet(null)}
+              >
+                <X size={16} /> Change
+              </button>
+            </div>
+          ) : (
+            <div className="search-box">
+              <Search size={16} />
+              <input
+                placeholder="Search pet by name, species, or breed"
+                value={petSearch}
+                onChange={(e) => setPetSearch(e.target.value)}
+                onFocus={() => setPetFocused(true)}
+                onBlur={() => setTimeout(() => setPetFocused(false), 150)}
+              />
             </div>
           )}
 
-          {(petSearch.trim() || petFocused) && (
+          {!selectedPet && (petSearch.trim() || petFocused) && (
             <div className="results-list">
               {petLoading && <div className="results-empty">Searching…</div>}
               {!petLoading && petResults.length === 0 && (
@@ -538,7 +519,6 @@ export default function TransactionManagement({ profile }) {
                   type="button"
                   key={pet.id}
                   className="result-row"
-                  disabled={selectedPets.some((selected) => selected.id === pet.id) || Boolean(selectedPet && selectedPet.owner?.id !== pet.owner?.id)}
                   onMouseDown={(e) => {
   e.preventDefault();
   selectPet(pet);
@@ -587,15 +567,9 @@ export default function TransactionManagement({ profile }) {
               >
                 <option>Cash</option>
                 <option>GCash</option>
-                <option>Maya</option>
-                <option>Credit Card</option>
-                <option>Debit Card</option>
-                <option>Split Payment</option>
               </select>
             </div>
           </div>
-
-          {paymentMethod !== "GCash" && <div className="amount-paid-row"><label className="field-label">Amount Paid</label><input type="number" min={totalAmount} step="0.01" placeholder={totalAmount.toFixed(2)} value={amountPaid} onChange={e=>setAmountPaid(e.target.value)}/>{Number(amountPaid)>totalAmount&&<span className="muted fee-off-note">Change: {money(Number(amountPaid)-totalAmount)}</span>}</div>}
 
           <label className="field-label toggle-label discount-toggle">
             <input
@@ -607,11 +581,11 @@ export default function TransactionManagement({ profile }) {
             Apply PWD / Senior Citizen Discount (20%)
           </label>
 
-          <label className="field-label inventory-label">
+          <label className="field-label">
             Add Tests / Medicines / Products from Inventory (optional)
           </label>
 
-          <div className="search-box inventory-search">
+          <div className="search-box">
             <Search size={16} />
             <input
               placeholder="Search inventory by item name or SKU"
@@ -623,7 +597,7 @@ export default function TransactionManagement({ profile }) {
           </div>
 
           {(itemSearch.trim() || itemFocused) && (
-            <div className="results-list inventory-results">
+            <div className="results-list">
               {itemLoading && <div className="results-empty">Searching…</div>}
               {!itemLoading && itemResults.length === 0 && (
                 <div className="results-empty">No inventory items found.</div>
@@ -650,7 +624,7 @@ export default function TransactionManagement({ profile }) {
             </div>
           )}
 
-          <label className="field-label cart-label">Cart</label>
+          <label className="field-label">Cart</label>
 
           {cart.length === 0 ? (
             <div className="results-empty cart-empty">
@@ -773,10 +747,41 @@ export default function TransactionManagement({ profile }) {
           </button>
         </div>
 
-      </div>
+        <div className="card pos-side">
+          <h2>
+            <Receipt size={18} /> Recent Transactions
+          </h2>
 
-      <div id="payment-transaction-history">
-        <PaymentTransactionHistory key={historyRefreshKey} profile={profile} />
+          {recentLoading && <div className="results-empty">Loading…</div>}
+
+          {!recentLoading && recent.length === 0 && (
+            <div className="results-empty">No transactions yet.</div>
+          )}
+
+          <ul className="recent-list">
+            {recent.map((tx) => (
+              <li key={tx.id}>
+                <span>{new Date(tx.created_at).toLocaleString()}</span>
+                <strong>{money(tx.total_amount)}</strong>
+                <div className="recent-row-bottom">
+                  <span className={`status-pill status-${tx.payment_status.toLowerCase()}`}>
+                    {tx.payment_status}
+                  </span>
+                  {(tx.payment_status === "Paid" || tx.payment_status === "Pending") && (
+                    <button
+                      type="button"
+                      className="void-btn"
+                      disabled={voidingId === tx.id}
+                      onClick={() => handleVoidTransaction(tx)}
+                    >
+                      {voidingId === tx.id ? "Voiding…" : "Void"}
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
 
       {successReceipt && (
@@ -791,9 +796,6 @@ export default function TransactionManagement({ profile }) {
             </button>
 
             <h2>Transaction Complete</h2>
-            <p className="receipt-redirect">
-              Redirecting to payment history in {redirectSeconds} second{redirectSeconds === 1 ? "" : "s"}...
-            </p>
             <p className="muted">
               {successReceipt.petName} · {successReceipt.ownerName || "—"}
             </p>
@@ -919,52 +921,47 @@ export default function TransactionManagement({ profile }) {
       )}
 
       <style>{`
-        .pos-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;align-items:start}
+        .pos-grid{display:grid;grid-template-columns:2fr 1fr;gap:18px;align-items:start}
         .card{background:white;border-radius:18px;padding:22px;box-shadow:0 8px 24px rgba(47,117,150,.09)}
-        .pos-main{display:flex;flex-direction:column}
-        .card h2{display:flex;align-items:center;gap:8px;margin:0 0 16px;font-size:24px}
-        .field-label{display:block;font-size:15px;font-weight:700;color:#536c79;text-transform:uppercase;letter-spacing:0;margin:18px 0 8px}
-        .inventory-label{order:10}.inventory-search{order:11}.inventory-results{order:12}.cart-label{order:13}.cart-empty,.cart-table{order:14}
-        .fee-row{order:20}.amount-paid-row{order:21}.discount-toggle{order:22}.notes-input{order:23}.totals{order:24}.checkout-btn{order:25}
-        .search-box{display:flex;align-items:center;gap:10px;border:1px solid #cbdde5;border-radius:10px;padding:13px 14px;background:#f8fbfc}
-        .search-box input{border:none;background:transparent;outline:none;width:100%;font-size:17px}
-        .search-box input::placeholder,.notes-input::placeholder,input::placeholder{font-size:16px;color:#758b97;opacity:1}
+        .card h2{display:flex;align-items:center;gap:8px;margin:0 0 16px}
+        .field-label{display:block;font-size:12px;font-weight:600;color:#6F7F88;text-transform:uppercase;letter-spacing:.4px;margin:16px 0 6px}
+        .search-box{display:flex;align-items:center;gap:8px;border:1px solid #dbe7ec;border-radius:12px;padding:10px 12px;background:#f8fbfc}
+        .search-box input{border:none;background:transparent;outline:none;width:100%;font-size:14px}
         .results-list{margin-top:8px;border:1px solid #eef3f5;border-radius:12px;overflow:hidden}
-        .result-row{display:flex;justify-content:space-between;width:100%;padding:13px 14px;background:white;border:none;border-bottom:1px solid #f2f6f8;cursor:pointer;text-align:left;font-size:15px}
+        .result-row{display:flex;justify-content:space-between;width:100%;padding:10px 12px;background:white;border:none;border-bottom:1px solid #f2f6f8;cursor:pointer;text-align:left;font-size:13px}
         .result-row:last-child{border-bottom:none}
         .result-row:hover{background:#f5fbfd}
         .result-row:disabled{opacity:.45;cursor:not-allowed}
-        .results-empty{padding:14px 8px;color:#718894;font-size:15px;display:flex;align-items:center;gap:8px}
+        .results-empty{padding:10px 4px;color:#8fa0a8;font-size:13px;display:flex;align-items:center;gap:6px}
         .cart-empty{border:1px dashed #dbe7ec;border-radius:12px;justify-content:center}
-        .muted{color:#718894;font-size:14px}
-        .selected-pets{display:grid;gap:8px;margin-top:10px}.selected-pet{display:flex;justify-content:space-between;align-items:center;border:1px solid #dbe7ec;border-radius:8px;padding:12px 14px;background:#f5fbfd}
-        .selected-pet strong{font-size:17px}.selected-pet span{display:block;color:#607985;font-size:15px;margin-top:3px}
-        .link-btn{display:flex;align-items:center;gap:5px;background:none;border:none;color:#318fbe;cursor:pointer;font-size:15px}
-        .fee-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+        .muted{color:#8fa0a8;font-size:12px}
+        .selected-pet{display:flex;justify-content:space-between;align-items:center;border:1px solid #dbe7ec;border-radius:12px;padding:12px;background:#f5fbfd}
+        .selected-pet span{display:block;color:#6F7F88;font-size:12px}
+        .link-btn{display:flex;align-items:center;gap:4px;background:none;border:none;color:#318fbe;cursor:pointer;font-size:13px}
+        .fee-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
         .toggle-label{display:flex;align-items:center;gap:6px;cursor:pointer}
         .inline-checkbox{width:auto;accent-color:#318fbe;cursor:pointer}
         .fee-off-note{display:block;margin-top:4px}
-        .discount-toggle{margin-top:16px;text-transform:none;font-size:15px;color:#1c2b33;letter-spacing:0}
+        .discount-toggle{margin-top:14px;text-transform:none;font-size:13px;color:#1c2b33;letter-spacing:0}
         input:disabled{background:#f2f6f8;color:#9fb0b8;cursor:not-allowed}
         input.fee-disabled{background:#e9eef1!important;color:#9aa8b0!important;border-color:#dce4e8!important;cursor:not-allowed}
-        input[type=number],input[type=text],select,textarea{width:100%;border:1px solid #cbdde5;border-radius:9px;padding:11px 12px;font-size:16px}
-        .notes-input{margin-top:18px;min-height:76px;resize:vertical}
-        .cart-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:15px}
-        .cart-table th{text-align:left;color:#536c79;font-size:13px;text-transform:uppercase;padding:10px 8px;letter-spacing:0}
-        .cart-table td{padding:11px 8px;border-top:1px solid #f2f6f8}
+        input[type=number],input[type=text],select,textarea{width:100%;border:1px solid #dbe7ec;border-radius:10px;padding:8px 10px;font-size:14px}
+        .notes-input{margin-top:16px;min-height:60px;resize:vertical}
+        .cart-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}
+        .cart-table th{text-align:left;color:#6F7F88;font-size:11px;text-transform:uppercase;padding:6px}
+        .cart-table td{padding:8px 6px;border-top:1px solid #f2f6f8}
         .qty-stepper{display:flex;align-items:center;gap:6px}
         .qty-stepper button{border:1px solid #dbe7ec;background:white;border-radius:6px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer}
         .qty-stepper input{width:48px;text-align:center;padding:4px}
         .icon-btn{border:none;background:none;color:#c0392b;cursor:pointer}
         .totals{margin-top:18px;border-top:1px solid #eef3f5;padding-top:12px}
-        .totals div{display:flex;justify-content:space-between;font-size:15px;color:#536c79;padding:5px 0}
-        .grand-total{font-size:18px!important;color:#318fbe!important;font-weight:700}
-        .checkout-btn{margin-top:18px;width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#318fbe,#2c5c74);color:white;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:600;cursor:pointer}
+        .totals div{display:flex;justify-content:space-between;font-size:13px;color:#6F7F88;padding:3px 0}
+        .grand-total{font-size:16px!important;color:#318fbe!important;font-weight:700}
+        .checkout-btn{margin-top:16px;width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#318fbe,#2c5c74);color:white;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
         .checkout-btn:disabled{opacity:.6;cursor:wait}
         .recent-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
         .recent-list li{display:flex;flex-direction:column;gap:2px;border-bottom:1px solid #f2f6f8;padding-bottom:8px;font-size:13px}
         .recent-row-bottom{display:flex;justify-content:space-between;align-items:center}
-        .receipt-redirect{margin:8px 0 16px;color:#318fbe;font-size:13px;font-weight:600;text-align:center}
         .void-btn{border:1px solid #f0c4c4;background:white;color:#c0392b;border-radius:8px;font-size:11px;padding:2px 8px;cursor:pointer}
         .void-btn:disabled{opacity:.5;cursor:wait}
         .void-confirm-card{background:white;border-radius:18px;padding:26px;width:340px;text-align:center}

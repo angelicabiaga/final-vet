@@ -1,13 +1,10 @@
 import { supabase } from "../config/supabaseClient";
 
 const TRANSACTION_FIELDS =
-  "id,or_number,pet_id,owner_id,medical_record_id,appointment_id,staff_id,checkup_fee,items_subtotal,subtotal,discount_amount,total_amount,amount_paid,change_amount,payment_method,payment_status,notes,status_reason,status_changed_by,status_changed_at,paymongo_source_id,paymongo_payment_id,paymongo_checkout_url,created_by,created_at,updated_at";
+  "id,pet_id,owner_id,medical_record_id,appointment_id,staff_id,checkup_fee,items_subtotal,total_amount,payment_method,payment_status,notes,paymongo_source_id,paymongo_payment_id,paymongo_checkout_url,created_by,created_at,updated_at";
 
 const TRANSACTION_ITEM_FIELDS =
-  "id,transaction_id,inventory_item_id,item_type,item_name,quantity,unit_price,discount_amount,line_total,inventory_transaction_id,created_at";
-
-const TRANSACTION_RELATIONS =
-  "pet:pets!transactions_pet_id_fkey(id,pet_name),transaction_pets(pet:pets!transaction_pets_pet_id_fkey(id,pet_name,species)),owner:profiles!transactions_owner_id_fkey(id,full_name),staff:profiles!transactions_staff_id_fkey(id,full_name),transaction_items(" + TRANSACTION_ITEM_FIELDS + "),transaction_audit_log(id,action,previous_status,new_status,reason,performed_by,created_at,staff:profiles!transaction_audit_log_performed_by_fkey(full_name))";
+  "id,transaction_id,inventory_item_id,item_type,item_name,quantity,unit_price,line_total,inventory_transaction_id,created_at";
 
 function friendly(error, fallback) {
   console.error(fallback, error);
@@ -37,22 +34,7 @@ function friendly(error, fallback) {
     );
   }
 
-  const detail = error?.message || error?.details || error?.hint;
-  return new Error(detail ? `${fallback} ${detail}` : fallback);
-}
-
-async function runTransactionListQuery({ paymentStatus, paymentMethod, dateFrom, dateTo, limit }, select) {
-  let query = supabase
-    .from("transactions")
-    .select(select)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (paymentStatus) query = query.eq("payment_status", paymentStatus);
-  if (paymentMethod) query = query.eq("payment_method", paymentMethod);
-  if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
-  if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999`);
-  return query;
+  return new Error(fallback);
 }
 
 function normalizeCartItem(item) {
@@ -181,8 +163,6 @@ export async function checkoutTransaction(
       p_created_by:
         profile?.id ||
         null,
-      p_discount_amount: Number(values.discountAmount || 0),
-      p_amount_paid: values.amountPaid == null ? null : Number(values.amountPaid),
     }
   );
 
@@ -191,14 +171,6 @@ export async function checkoutTransaction(
       error,
       "Unable to complete the transaction."
     );
-  }
-
-  const petIds = [...new Set((values.petIds || [values.petId]).filter(Boolean))];
-  const { error: petLinkError } = await supabase.from("transaction_pets").insert(
-    petIds.map((petId) => ({ transaction_id: data, pet_id: petId }))
-  );
-  if (petLinkError) {
-    throw friendly(petLinkError, "Transaction completed, but its pet list could not be saved.");
   }
 
   return data;
@@ -291,7 +263,7 @@ export async function getTransactionById(
   } = await supabase
     .from("transactions")
     .select(
-      `${TRANSACTION_FIELDS},${TRANSACTION_RELATIONS}`
+      `${TRANSACTION_FIELDS},transaction_items(${TRANSACTION_ITEM_FIELDS})`
     )
     .eq("id", transactionId)
     .single();
@@ -335,25 +307,34 @@ export async function getTransactionsByPet(
 export async function getTransactions({
   search = "",
   paymentStatus = "",
-  paymentMethod = "",
-  dateFrom = "",
-  dateTo = "",
   limit = 100,
 } = {}) {
-  const options = { paymentStatus, paymentMethod, dateFrom, dateTo, limit };
-  let { data, error } = await runTransactionListQuery(
-    options,
-    `${TRANSACTION_FIELDS},${TRANSACTION_RELATIONS}`
-  );
-
-  // PostgREST can briefly retain stale relationship metadata after a migration.
-  // The history list remains usable while its schema cache catches up.
-  if (error?.code === "PGRST200" || error?.code === "PGRST201") {
-    ({ data, error } = await runTransactionListQuery(
-      options,
+  let query = supabase
+    .from("transactions")
+    .select(
       `${TRANSACTION_FIELDS},transaction_items(${TRANSACTION_ITEM_FIELDS})`
-    ));
+    )
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (paymentStatus) {
+    query = query.eq(
+      "payment_status",
+      paymentStatus
+    );
   }
+
+  if (search.trim()) {
+    query = query.eq(
+      "id",
+      search.trim()
+    );
+  }
+
+  const {
+    data,
+    error,
+  } = await query;
 
   if (error) {
     throw friendly(
@@ -362,12 +343,7 @@ export async function getTransactions({
     );
   }
 
-  const rows = data || [];
-  if (!search.trim()) return rows;
-  const needle = search.trim().toLowerCase();
-  return rows.filter((row) => [row.or_number, row.id, row.owner?.full_name, row.pet?.pet_name, row.staff?.full_name,
-    ...(row.transaction_pets || []).map((link) => link.pet?.pet_name)]
-    .some((value) => String(value || "").toLowerCase().includes(needle)));
+  return data || [];
 }
 
 export async function updatePaymentStatus(
@@ -391,17 +367,5 @@ export async function updatePaymentStatus(
     );
   }
 
-  return data;
-}
-
-export async function changeTransactionStatus(transactionId, status, reason, profile) {
-  if (!reason?.trim()) throw new Error("A void or refund reason is required.");
-  const { data, error } = await supabase.rpc("pawcruz_change_transaction_status", {
-    p_transaction_id: transactionId,
-    p_new_status: status,
-    p_reason: reason.trim(),
-    p_staff_id: profile?.id || null,
-  });
-  if (error) throw friendly(error, `Unable to ${status.toLowerCase()} the transaction.`);
   return data;
 }

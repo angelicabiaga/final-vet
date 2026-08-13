@@ -108,12 +108,13 @@ Deno.serve(async (req) => {
       const paymentId = paymentData?.data?.id;
       const paymentStatus = paymentData?.data?.attributes?.status;
 
-      if (paymentStatus === "paid") {
-        const { data: transaction } = await supabase.from("transactions").select("id").eq("paymongo_source_id", sourceId).single();
-        if (!transaction?.id) return json({ error: "Transaction was not found." }, 404);
-        const { error: finalizeError } = await supabase.rpc("pawcruz_finalize_pending_transaction", { p_transaction_id: transaction.id, p_payment_id: paymentId });
-        if (finalizeError) return json({ error: "Payment collected but transaction finalization failed.", details: finalizeError.message }, 500);
-      }
+      await supabase
+        .from("transactions")
+        .update({
+          paymongo_payment_id: paymentId,
+          payment_status: paymentStatus === "paid" ? "Paid" : "Pending",
+        })
+        .eq("paymongo_source_id", sourceId);
 
       return json({ received: true, paymentId });
     }

@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[6540],{6540(e,t,a){a.r(t),a.d(t,{default:()=>s});a(5043);var n=a(8584),r=a(3661),i=a(579);function s(e){let t=e.profile;return(0,i.jsx)(n.A,{profile:t,title:"Animal Patient Management",children:(0,i.jsx)(r.A,{profile:t})})}}}]);
+//# sourceMappingURL=6540.ffa1ae02.chunk.js.map
