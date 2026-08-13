@@ -61,6 +61,7 @@ export default function AppShell({ profile, title, children }) {
       { label: "Animal Patients", to: "/staff/patients", type: "pet" },
       { label: "Medical Records", to: "/staff/medical-records", type: "medical" },
       { label: "Inventory", to: "/staff/inventory", type: "inventory" },
+      { label: "Transactions", to: "/staff/transactions", type: "payment" },
       { label: "Messages", to: "/staff/messages", type: "message" },
 
     ],
