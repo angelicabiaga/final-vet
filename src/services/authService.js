@@ -194,7 +194,7 @@ export async function logoutUser() {
 export async function getCurrentProfile(userId) {
   const session = getStoredSession();
   if (session?.profile?.id === userId) return session.profile;
-  const { data, error } = await supabase.from("profiles").select("id, full_name, username, email, phone, address, role, avatar_url, account_status, last_login_at, created_at, updated_at").eq("id", userId).single();
+  const { data, error } = await supabase.from("profiles").select("id, full_name, username, email, phone, address, role, avatar_url, account_status, must_change_password, last_login_at, created_at, updated_at").eq("id", userId).single();
   if (error) throw error;
   return data;
 }

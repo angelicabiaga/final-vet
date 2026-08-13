@@ -24,6 +24,40 @@ function normalizeRole(role) {
     .toLowerCase();
 }
 
+const OPTIONAL_TEMPLATE_COLUMNS = new Set([
+  "parasite_treatments",
+  "heartworm_tests",
+  "vaccination_records",
+  "record_template",
+  "template_data",
+]);
+
+function missingOptionalTemplateColumn(error) {
+  if (!error || !["PGRST204", "42703"].includes(error.code)) {
+    return "";
+  }
+
+  const message = [
+    error.message,
+    error.details,
+    error.hint,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return [...OPTIONAL_TEMPLATE_COLUMNS].find((column) =>
+    message.includes(column)
+  ) || "";
+}
+
+function templateBackup(record, columns) {
+  return `[pawcruz-template-backup]${JSON.stringify(
+    Object.fromEntries(
+      columns.map((column) => [column, record[column]])
+    )
+  )}`;
+}
+
 function cleanAiResponse(text) {
   if (!text) return "";
 
@@ -683,6 +717,26 @@ export async function saveMedicalRecord(
       values.vaccination
         ?.trim() || null,
 
+    parasite_treatments:
+      values.parasiteTreatments ||
+      [],
+
+    heartworm_tests:
+      values.heartwormTests ||
+      [],
+
+    vaccination_records:
+      values.vaccinationRecords ||
+      [],
+
+    record_template:
+      values.recordTemplate ||
+      "health-record",
+
+    template_data:
+      values.templateData ||
+      {},
+
     follow_up_date:
       values.followUpDate ||
       null,
@@ -703,34 +757,50 @@ export async function saveMedicalRecord(
       profile.id,
   };
 
-  let result;
+  async function directSave(payload) {
+    if (values.id) {
+      return supabase
+        .from("medical_records")
+        .update(payload)
+        .eq("id", values.id)
+        .select("*")
+        .single();
+    }
 
-  if (values.id) {
-    result =
-      await supabase
-        .from(
-          "medical_records"
-        )
-        .update(record)
-        .eq(
-          "id",
-          values.id
-        )
-        .select("*")
-        .single();
-  } else {
-    result =
-      await supabase
-        .from(
-          "medical_records"
-        )
-        .insert({
-          ...record,
-          created_by:
-            profile.id,
-        })
-        .select("*")
-        .single();
+    return supabase
+      .from("medical_records")
+      .insert({
+        ...payload,
+        created_by: profile.id,
+      })
+      .select("*")
+      .single();
+  }
+
+  let payload = { ...record };
+  const removedTemplateColumns = [];
+  let result = await directSave(payload);
+  let missingColumn = missingOptionalTemplateColumn(result.error);
+
+  // The app remains usable before the additive template migration is run.
+  // Retry only missing optional columns, retaining every column supported by
+  // the deployed database and preserving stripped values in existing notes.
+  while (missingColumn) {
+    removedTemplateColumns.push(missingColumn);
+    delete payload[missingColumn];
+
+    payload = {
+      ...payload,
+      veterinarian_notes: [
+        payload.veterinarian_notes,
+        templateBackup(record, removedTemplateColumns),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    };
+
+    result = await directSave(payload);
+    missingColumn = missingOptionalTemplateColumn(result.error);
   }
 
   if (

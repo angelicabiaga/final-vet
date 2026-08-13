@@ -7,7 +7,7 @@ const CLINIC_OPEN_TIME = "09:00";
 const CLINIC_CLOSE_TIME = "19:00";
 const pad = value => String(value).padStart(2, "0");
 const normalizeTime = value => String(value || "").slice(0, 5);
-const addTenMinutes = value => {
+export const addTenMinutes = value => {
   const [hour, minute] = normalizeTime(value).split(":").map(Number);
   const date = new Date(2000, 0, 1, hour, minute + 10);
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -16,6 +16,11 @@ const addTenMinutes = value => {
 export function todayLocal() {
   const now = new Date();
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function nowMinutesLocal() {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
 }
 
 export function formatTime(time) {
@@ -95,11 +100,27 @@ export async function getAvailableSlots(veterinarianId, appointmentDate, exclude
   // PawCruz clinic accepts appointments until closing time.
   // The last 10-minute appointment starts at 6:50 PM and ends at 7:00 PM.
   const end = CLINIC_CLOSE_TIME;
+  const isToday = appointmentDate === todayLocal();
+  const nowMinutes = isToday ? nowMinutesLocal() : -1;
   while (current < end) {
-    if (!bookedTimes.has(current)) slots.push(current);
+    const [slotHour, slotMinute] = current.split(":").map(Number);
+    const isPast = isToday && (slotHour * 60 + slotMinute) <= nowMinutes;
+    if (!bookedTimes.has(current) && !isPast) slots.push(current);
     current = addTenMinutes(current);
   }
   return slots;
+}
+
+export async function getVeterinarianAvailability(appointmentDate, excludeAppointmentId = null) {
+  const vets = await getVeterinarians();
+  const perVet = await Promise.all(vets.map(vet => getAvailableSlots(vet.id, appointmentDate, excludeAppointmentId)));
+  const slotMap = {};
+  const timeSet = new Set();
+  vets.forEach((vet, index) => {
+    slotMap[vet.id] = perVet[index];
+    perVet[index].forEach(time => timeSet.add(time));
+  });
+  return { vets, slotMap, times: Array.from(timeSet).sort() };
 }
 
 function validatePayload(payload) {
@@ -133,9 +154,10 @@ export async function createAppointment(payload) {
     visit_reason: payload.visitReason?.trim() || null,
     notes: payload.notes?.trim() || null,
     status: payload.status || "Confirmed",
-    created_by: payload.createdBy
+    created_by: payload.createdBy,
+    visit_group_id: payload.visitGroupId || null
   };
-  const { data, error } = await supabase.from("appointments").insert(row).select("id").single();
+  const { data, error } = await supabase.from("appointments").insert(row).select("id, queue_number").single();
   if (error) {
     if (error.code === "23505") throw new Error("That appointment time was just booked. Please choose another slot.");
     throw new Error(error.message?.includes("outside") || error.message?.includes("schedule") ? error.message : "Unable to book the appointment.");
@@ -143,10 +165,24 @@ export async function createAppointment(payload) {
   return data;
 }
 
+export async function sendGuestBookingConfirmationEmail(details) {
+  const { data, error } = await supabase.functions.invoke("send-booking-confirmation-email", { body: details });
+  if (error) {
+    let message = error.message || "Unable to send the confirmation email.";
+    try {
+      const body = await error.context?.json();
+      message = body?.error || body?.message || message;
+    } catch {}
+    throw new Error(message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
 export async function getAppointments(filters = {}) {
   let query = supabase.from("appointments").select(`
     id, appointment_date, start_time, end_time, appointment_source, consultation_type,
-    visit_reason, notes, status, created_at, updated_at,
+    visit_reason, notes, status, visit_group_id, created_at, updated_at,
     pet:pets(id, pet_name, species, breed),
     owner:profiles!appointments_owner_id_fkey(id, full_name, email, username),
     veterinarian:profiles!appointments_veterinarian_id_fkey(id, full_name)
@@ -198,6 +234,52 @@ export async function rescheduleAppointment(id, values, ownerId, changedBy) {
     if (error.code === "23505") throw new Error("That time is already booked.");
     throw new Error("Unable to reschedule the appointment.");
   }
+}
+
+function generateTempPassword() {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  let value = "";
+  for (let i = 0; i < 10; i++) value += chars[Math.floor(Math.random() * chars.length)];
+  return value;
+}
+
+export async function createGuestOwner({ fullName, phone, email }) {
+  const trimmedName = fullName?.trim();
+  const trimmedEmail = email?.trim().toLowerCase();
+  const trimmedPhone = phone?.trim();
+  if (!trimmedName || !trimmedEmail || !trimmedPhone) throw new Error("Full name, phone, and email are required.");
+  const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16) || "guest";
+  const username = `${slug}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const tempPassword = generateTempPassword();
+  const { data, error } = await supabase.from("profiles").insert({
+    full_name: trimmedName,
+    username,
+    email: trimmedEmail,
+    phone: trimmedPhone,
+    role: "pet_owner",
+    account_status: "active",
+    password: tempPassword,
+    must_change_password: true
+  }).select("id, full_name, username, email, phone").single();
+  if (error) {
+    if (error.code === "23505") throw new Error("That email is already registered. Search for them as an existing pet owner instead.");
+    throw new Error("Unable to register the guest.");
+  }
+  return { ...data, tempPassword };
+}
+
+export async function sendGuestAccountEmail(details) {
+  const { data, error } = await supabase.functions.invoke("send-guest-account-email", { body: details });
+  if (error) {
+    let message = error.message || "Unable to send the account email.";
+    try {
+      const body = await error.context?.json();
+      message = body?.error || body?.message || message;
+    } catch {}
+    throw new Error(message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
 }
 
 export async function createPet(ownerId, values) {

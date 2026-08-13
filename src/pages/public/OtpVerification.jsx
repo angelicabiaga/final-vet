@@ -60,8 +60,9 @@ export default function OtpVerification() {
         const result = await completeLoginOtp(code);
         const role = result.profile?.role;
         const rolePath = role === 'pet_owner' ? 'pet-owner' : role;
-        const destination =
-          location.state?.from || `/${rolePath}/dashboard`;
+        const destination = result.profile?.must_change_password
+          ? `/${rolePath}/profile?forcePasswordChange=1`
+          : location.state?.from || `/${rolePath}/dashboard`;
 
         navigate(destination, { replace: true });
       }

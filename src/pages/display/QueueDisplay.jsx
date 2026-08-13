@@ -11,6 +11,8 @@ import {
   subscribeToQueue,
 } from '../../services/queueService';
 
+const QUEUE_REFRESH_INTERVAL_MS = 15_000;
+
 export default function QueueDisplay() {
   const [rows, setRows] = useState([]);
   const [now, setNow] = useState(new Date());
@@ -31,10 +33,14 @@ export default function QueueDisplay() {
     load();
     const unsubscribe = subscribeToQueue(load);
     const clock = setInterval(() => setNow(new Date()), 1000);
+    // Realtime provides immediate updates; this keeps unattended displays in
+    // sync even if an event is missed or Realtime is unavailable.
+    const queueRefresh = setInterval(load, QUEUE_REFRESH_INTERVAL_MS);
 
     return () => {
       unsubscribe();
       clearInterval(clock);
+      clearInterval(queueRefresh);
       document.documentElement.style.overflow = previousHtmlOverflow;
       document.body.style.overflow = previousBodyOverflow;
     };
@@ -43,10 +49,12 @@ export default function QueueDisplay() {
   const lanes = useMemo(() => {
     const groupedLanes = {};
 
-    rows.forEach((row) => {
+    rows
+      .filter((row) => ['Waiting', 'Serving'].includes(row.status))
+      .forEach((row) => {
       const doctor = row.veterinarian?.full_name || 'Veterinarian';
       (groupedLanes[doctor] ??= []).push(row);
-    });
+      });
 
     return Object.entries(groupedLanes);
   }, [rows]);
@@ -633,8 +641,11 @@ export default function QueueDisplay() {
                     {serving?.queue_number || '---'}
                   </strong>
                   <h3 className='queue-serving-pet'>
-                    {serving?.pet?.pet_name ||
-                      'Waiting for next patient'}
+                    {serving
+                      ? (serving.pets?.length
+                        ? serving.pets.map((pet) => pet.pet_name).join(', ')
+                        : serving.pet?.pet_name)
+                      : 'Waiting for next patient'}
                   </h3>
                 </div>
 
@@ -647,7 +658,9 @@ export default function QueueDisplay() {
                   <div className='queue-next-list'>
                     {waiting.slice(0, 5).map((row) => (
                       <span className='queue-next-item' key={row.id}>
-                        {row.queue_number} • {row.pet?.pet_name || 'Pet'}
+                        {row.queue_number} • {row.pets?.length
+                          ? row.pets.map((pet) => pet.pet_name).join(', ')
+                          : (row.pet?.pet_name || 'Pet')}
                       </span>
                     ))}
 

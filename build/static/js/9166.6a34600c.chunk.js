@@ -1,2 +1,0 @@
-"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[9166],{9166(e,r,s){s.r(r),s.d(r,{default:()=>i});s(5043);var t=s(8584),a=s(4627),n=s(579);function i(e){let r=e.profile;return(0,n.jsx)(t.A,{profile:r,title:"Messages",children:(0,n.jsx)(a.A,{profile:r})})}}}]);
-//# sourceMappingURL=9166.6a34600c.chunk.js.map

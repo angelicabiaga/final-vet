@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[9239],{99239(e,r,t){t.r(r),t.d(r,{default:()=>i});t(65043);var a=t(97152),n=t(70579);function i(e){let r=e.profile;return(0,n.jsx)(a.A,{profile:r,title:"Veterinarian Profile"})}}}]);
+//# sourceMappingURL=9239.ec5d22df.chunk.js.map

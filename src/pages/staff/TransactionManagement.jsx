@@ -519,10 +519,7 @@ export default function TransactionManagement({ profile }) {
                   type="button"
                   key={pet.id}
                   className="result-row"
-                  onMouseDown={(e) => {
-  e.preventDefault();
-  selectPet(pet);
-}}
+                  onMouseDown={() => selectPet(pet)}
                 >
                   <span>
                     <strong>{pet.pet_name}</strong> · {pet.species}
@@ -608,10 +605,7 @@ export default function TransactionManagement({ profile }) {
                   key={item.id}
                   className="result-row"
                   disabled={Number(item.quantity) <= 0}
-                  onMouseDown={(e) => {
-  e.preventDefault();
-  addToCart(item);
-}}
+                  onClick={() => addToCart(item)}
                 >
                   <span>
                     <strong>{item.item_name}</strong> · {item.category}

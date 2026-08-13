@@ -4,10 +4,17 @@ import React, {
   useState,
 } from "react";
 
+import { useLocation } from "react-router-dom";
+
+import {
+  DEFAULT_MEDICAL_RECORD_TEMPLATE,
+  getMedicalRecordTemplate,
+  MEDICAL_RECORD_TEMPLATES,
+} from "../constants/medicalRecordTemplates";
+
 import {
   BrainCircuit,
   FileDown,
-  FileText,
   Plus,
   Printer,
   RefreshCw,
@@ -30,6 +37,8 @@ import {
   saveMedicalRecord,
   uploadMedicalAttachment,
 } from "../services/medicalRecordService";
+
+import { completeQueueEntry } from "../services/queueService";
 
 const blank = {
   id: "",
@@ -56,10 +65,42 @@ const blank = {
   laboratoryRequest: "",
   laboratoryResult: "",
   vaccination: "",
+  parasiteTreatments: [],
+  heartwormTests: [],
+  vaccinationRecords: [],
+  recordTemplate: DEFAULT_MEDICAL_RECORD_TEMPLATE,
+  templateData: {},
   followUpDate: "",
   veterinarianNotes: "",
   attachmentUrl: "",
   recordStatus: "Draft",
+};
+
+const VACCINE_KEYS = [
+  ["distemper", "Distemper"],
+  ["parainfluenza", "Parainfluenza"],
+  ["adenovirus", "Adenovirus"],
+  ["parvovirus", "Parvovirus"],
+  ["leptospirosis", "Leptospirosis"],
+  ["coronavirus", "Coronavirus"],
+  ["bordetella", "Bordetella"],
+  ["rabies", "Rabies"],
+];
+
+const BLANK_VACCINATION_ROW = {
+  date: "",
+  age: "",
+  weight: "",
+  distemper: false,
+  parainfluenza: false,
+  adenovirus: false,
+  parvovirus: false,
+  leptospirosis: false,
+  coronavirus: false,
+  bordetella: false,
+  rabies: false,
+  others: "",
+  administeredBy: "",
 };
 
 function cleanAiText(text) {
@@ -200,6 +241,27 @@ export default function MedicalRecordsModule({
     setAiError,
   ] = useState("");
 
+  const [
+    queueContext,
+    setQueueContext,
+  ] = useState(null);
+
+  const [
+    pendingQueueCompletion,
+    setPendingQueueCompletion,
+  ] = useState(null);
+
+  const location = useLocation();
+
+  const activeTemplate = getMedicalRecordTemplate(
+    form.recordTemplate
+  );
+
+  const selectedPet = useMemo(
+    () => pets.find((pet) => pet.id === form.petId),
+    [pets, form.petId]
+  );
+
   const canEdit = [
     "admin",
     "staff",
@@ -207,6 +269,52 @@ export default function MedicalRecordsModule({
   ].includes(
     profile?.role
   );
+
+  const queueLaunch = useMemo(() => {
+    const params = new URLSearchParams(
+      location.search
+    );
+
+    const queueEntryId =
+      params.get("queueEntryId");
+
+    const petIds = (
+      params.get("petIds") ||
+      params.get("petId") ||
+      ""
+    )
+      .split(",")
+      .filter(Boolean);
+
+    if (!queueEntryId || !petIds.length) {
+      return null;
+    }
+
+    const appointmentIds = (
+      params.get("appointmentIds") ||
+      params.get("appointmentId") ||
+      ""
+    ).split(",");
+
+    return {
+      queueEntryId,
+      petIds,
+      appointmentIds,
+      ownerId: params.get("ownerId") || "",
+      veterinarianId:
+        params.get("veterinarianId") ||
+        (profile?.role === "veterinarian"
+          ? profile.id
+          : ""),
+      recordTemplate: getMedicalRecordTemplate(
+        params.get("template")
+      ).value,
+    };
+  }, [
+    location.search,
+    profile?.id,
+    profile?.role,
+  ]);
 
   async function load() {
     setLoading(true);
@@ -261,6 +369,42 @@ export default function MedicalRecordsModule({
   useEffect(() => {
     load();
   }, [status]);
+
+  useEffect(() => {
+    if (!canEdit) return;
+
+    if (!queueLaunch) {
+      setQueueContext(null);
+      setPendingQueueCompletion(null);
+      return;
+    }
+
+    setQueueContext({
+      ...queueLaunch,
+      currentIndex: 0,
+    });
+
+    setPendingQueueCompletion(null);
+
+    setForm({
+      ...blank,
+      petId: queueLaunch.petIds[0],
+      ownerId: queueLaunch.ownerId,
+      veterinarianId:
+        queueLaunch.veterinarianId,
+      appointmentId:
+        queueLaunch.appointmentIds[0] || "",
+      recordTemplate:
+        queueLaunch.recordTemplate,
+      templateData: {},
+    });
+
+    getAppointmentsForPet(queueLaunch.petIds[0])
+      .then(setAppointments)
+      .catch(() => setAppointments([]));
+
+    setShow(true);
+  }, [canEdit, queueLaunch]);
 
   const shown = useMemo(() => {
     const value =
@@ -379,6 +523,21 @@ export default function MedicalRecordsModule({
       vaccination:
         record.vaccination ||
         "",
+      parasiteTreatments:
+        record.parasite_treatments ||
+        [],
+      heartwormTests:
+        record.heartworm_tests ||
+        [],
+      vaccinationRecords:
+        record.vaccination_records ||
+        [],
+      recordTemplate:
+        record.record_template ||
+        DEFAULT_MEDICAL_RECORD_TEMPLATE,
+      templateData:
+        record.template_data ||
+        {},
       followUpDate:
         record.follow_up_date ||
         "",
@@ -403,35 +562,185 @@ export default function MedicalRecordsModule({
         setAppointments([])
       );
 
+    setQueueContext(null);
+    setPendingQueueCompletion(null);
     setShow(true);
   }
 
-  async function submit(
-    event
-  ) {
-    event.preventDefault();
+  function updateListItem(field, index, patch) {
+    setForm((current) => {
+      const list = [...(current[field] || [])];
+      list[index] = { ...list[index], ...patch };
+      return { ...current, [field]: list };
+    });
+  }
+
+  function addListItem(field, item) {
+    setForm((current) => ({
+      ...current,
+      [field]: [...(current[field] || []), item],
+    }));
+  }
+
+  function removeListItem(field, index) {
+    setForm((current) => ({
+      ...current,
+      [field]: (current[field] || []).filter(
+        (_, i) => i !== index
+      ),
+    }));
+  }
+
+  function updateTemplateData(patch) {
+    setForm((current) => ({
+      ...current,
+      templateData: {
+        ...(current.templateData || {}),
+        ...patch,
+      },
+    }));
+  }
+
+  function closeQueuedRecordModal() {
+    setPendingQueueCompletion(null);
+    setQueueContext(null);
+    setShow(false);
+    setForm(blank);
+  }
+
+  async function retryQueueCompletion() {
+    if (
+      !queueContext ||
+      !pendingQueueCompletion ||
+      saving
+    ) {
+      return;
+    }
 
     setSaving(true);
     setError("");
+    setSuccess("");
 
     try {
-      await saveMedicalRecord(
-        form,
+      await completeQueueEntry(
+        queueContext.queueEntryId,
         profile
       );
 
       setSuccess(
-        "Medical record saved successfully."
+        "Medical record saved and appointment marked as done. The staff queue and queue display have been updated."
+      );
+      closeQueuedRecordModal();
+    } catch (queueError) {
+      setError(
+        `Medical record is already saved, but the appointment could not be marked as done: ${queueError.message} Click Retry Mark as Done to try again without creating another record.`
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveQueuedTemplate(nextTemplate = "") {
+    if (!queueContext || saving) return;
+
+    if (pendingQueueCompletion) {
+      await retryQueueCompletion();
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const savedRecord = await saveMedicalRecord(
+        {
+          ...form,
+          recordStatus: "Finalized",
+        },
+        profile
       );
 
-      setShow(false);
-      setForm(blank);
+      setForm((current) => ({
+        ...current,
+        id: savedRecord?.id || current.id,
+        recordStatus: "Finalized",
+      }));
 
       await load();
+
+      if (nextTemplate) {
+        const nextContext = {
+          ...queueContext,
+          selectedPetId: form.petId,
+          selectedAppointmentId: form.appointmentId,
+          currentIndex: Math.max(
+            0,
+            queueContext.petIds.indexOf(form.petId)
+          ),
+        };
+
+        setQueueContext(nextContext);
+        setPendingQueueCompletion(null);
+        setSuccess(
+          `${activeTemplate.label} saved. Add the next record for this appointment.`
+        );
+        openAdditionalTemplate(nextTemplate, nextContext);
+        return;
+      }
+
+      try {
+        await completeQueueEntry(
+          queueContext.queueEntryId,
+          profile
+        );
+
+        setSuccess(
+          "Medical record saved and appointment marked as done. The staff queue and queue display have been updated."
+        );
+        closeQueuedRecordModal();
+      } catch (queueError) {
+        setPendingQueueCompletion({
+          recordId: savedRecord?.id || form.id || null,
+          templateLabel: activeTemplate.label,
+        });
+        setError(
+          `Medical record saved, but the appointment could not be marked as done: ${queueError.message} Click Retry Mark as Done to try again without creating another record.`
+        );
+      }
     } catch (e) {
-      setError(
-        e.message
-      );
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+
+    if (queueContext) {
+      if (pendingQueueCompletion) {
+        await retryQueueCompletion();
+        return;
+      }
+
+      await saveQueuedTemplate();
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      await saveMedicalRecord(form, profile);
+      await load();
+      setSuccess("Medical record saved successfully.");
+      setPendingQueueCompletion(null);
+      setShow(false);
+      setForm(blank);
+    } catch (e) {
+      setError(e.message);
     } finally {
       setSaving(false);
     }
@@ -471,6 +780,38 @@ export default function MedicalRecordsModule({
     } finally {
       setSaving(false);
     }
+  }
+
+  function openAdditionalTemplate(template, context = queueContext) {
+    if (!context) return;
+
+    const petId =
+      context.selectedPetId ||
+      context.petIds[0];
+
+    const appointmentId =
+      context.selectedAppointmentId ||
+      context.appointmentIds[
+        context.petIds.indexOf(petId)
+      ] ||
+      "";
+
+    setForm({
+      ...blank,
+      petId,
+      ownerId: context.ownerId,
+      veterinarianId:
+        context.veterinarianId,
+      appointmentId,
+      recordTemplate: template,
+      templateData: {},
+    });
+
+    getAppointmentsForPet(petId)
+      .then(setAppointments)
+      .catch(() => setAppointments([]));
+
+    setShow(true);
   }
 
   function printRecord(
@@ -1489,6 +1830,8 @@ export default function MedicalRecordsModule({
                     : "",
               });
 
+              setQueueContext(null);
+              setPendingQueueCompletion(null);
               setShow(true);
             }}
           >
@@ -1671,19 +2014,40 @@ export default function MedicalRecordsModule({
             <button
               type="button"
               className="close"
-              onClick={() =>
-                setShow(false)
-              }
+              onClick={() => {
+                setPendingQueueCompletion(null);
+                setQueueContext(null);
+                setShow(false);
+              }}
             >
               <X />
             </button>
 
+            {queueContext && (
+              <div className="queue-context-banner">
+                {pendingQueueCompletion
+                  ? `${pendingQueueCompletion.templateLabel} is already saved. Retry Mark as Done to complete this appointment without creating another record.`
+                  : <>
+                      Adding {activeTemplate.label} for pet{" "}
+                      {queueContext.currentIndex + 1}{" "}
+                      of {queueContext.petIds.length}{" "}
+                      in this visit. Add more
+                      templates as needed, then
+                      choose Mark as Done to
+                      complete this appointment.
+                    </>}
+              </div>
+            )}
+
             <h2>
-              {form.id
-                ? "Update"
-                : "Create"}{" "}
-              Medical Record
+              {form.id ? "Update" : "Create"}{" "}
+              {activeTemplate.label}
             </h2>
+
+            <div className="template-intro">
+              <b>{activeTemplate.label}</b>
+              <span>{activeTemplate.description}</span>
+            </div>
 
             <div className="fields">
               <label>
@@ -1837,6 +2201,8 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
+              {form.recordTemplate === "health-record" && (
+                <>
               <label className="wide">
                 Chief Complaint
 
@@ -2093,23 +2459,366 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
-              <label className="wide">
-                Vaccination
+                </>
+              )}
 
-                <textarea
-                  value={
-                    form.vaccination
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      vaccination:
-                        e.target
-                          .value,
-                    })
-                  }
-                />
-              </label>
+              {form.recordTemplate === "parasite-prevention" && (
+              <div className="wide record-section">
+                <div className="section-head">
+                  <h3>Parasite Prevention</h3>
+                  <button
+                    type="button"
+                    className="add-row"
+                    onClick={() =>
+                      addListItem(
+                        "parasiteTreatments",
+                        { date: "", treatment: "" }
+                      )
+                    }
+                  >
+                    <Plus size={14} /> Add Entry
+                  </button>
+                </div>
+
+                {form.parasiteTreatments.length === 0 && (
+                  <p className="section-empty">
+                    No parasite prevention entries yet.
+                  </p>
+                )}
+
+                {form.parasiteTreatments.map((row, index) => (
+                  <div className="row-grid two" key={index}>
+                    <input
+                      type="date"
+                      value={row.date}
+                      onChange={(e) =>
+                        updateListItem("parasiteTreatments", index, {
+                          date: e.target.value,
+                        })
+                      }
+                    />
+                    <input
+                      value={row.treatment}
+                      placeholder="Treatment"
+                      onChange={(e) =>
+                        updateListItem("parasiteTreatments", index, {
+                          treatment: e.target.value,
+                        })
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="remove-row"
+                      aria-label="Remove entry"
+                      onClick={() =>
+                        removeListItem("parasiteTreatments", index)
+                      }
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              )}
+
+              {form.recordTemplate === "heartworm" && (
+              <div className="wide record-section">
+                <div className="section-head">
+                  <h3>Heartworm Tests and Prevention</h3>
+                  <button
+                    type="button"
+                    className="add-row"
+                    onClick={() =>
+                      addListItem("heartwormTests", {
+                        date: "",
+                        result: "Negative",
+                      })
+                    }
+                  >
+                    <Plus size={14} /> Add Test
+                  </button>
+                </div>
+
+                {form.heartwormTests.length === 0 && (
+                  <p className="section-empty">
+                    No heartworm test results yet.
+                  </p>
+                )}
+
+                {form.heartwormTests.map((row, index) => (
+                  <div className="row-grid two" key={index}>
+                    <input
+                      type="date"
+                      value={row.date}
+                      onChange={(e) =>
+                        updateListItem("heartwormTests", index, {
+                          date: e.target.value,
+                        })
+                      }
+                    />
+                    <select
+                      value={row.result}
+                      onChange={(e) =>
+                        updateListItem("heartwormTests", index, {
+                          result: e.target.value,
+                        })
+                      }
+                    >
+                      <option>Negative</option>
+                      <option>Positive</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="remove-row"
+                      aria-label="Remove test"
+                      onClick={() =>
+                        removeListItem("heartwormTests", index)
+                      }
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              )}
+
+              {form.recordTemplate === "vaccination" && (
+              <div className="wide record-section">
+                <div className="section-head">
+                  <h3>Vaccination Record</h3>
+                  <button
+                    type="button"
+                    className="add-row"
+                    onClick={() =>
+                      addListItem(
+                        "vaccinationRecords",
+                        { ...BLANK_VACCINATION_ROW }
+                      )
+                    }
+                  >
+                    <Plus size={14} /> Add Vaccination
+                  </button>
+                </div>
+
+                {form.vaccinationRecords.length === 0 && (
+                  <p className="section-empty">
+                    No vaccinations recorded yet.
+                  </p>
+                )}
+
+                {form.vaccinationRecords.map((row, index) => (
+                  <div className="vaccine-card" key={index}>
+                    <button
+                      type="button"
+                      className="remove-row"
+                      aria-label="Remove vaccination"
+                      onClick={() =>
+                        removeListItem("vaccinationRecords", index)
+                      }
+                    >
+                      <X size={14} />
+                    </button>
+
+                    <div className="row-grid three">
+                      <label className="mini">
+                        Date
+                        <input
+                          type="date"
+                          value={row.date}
+                          onChange={(e) =>
+                            updateListItem(
+                              "vaccinationRecords",
+                              index,
+                              { date: e.target.value }
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="mini">
+                        Age
+                        <input
+                          value={row.age}
+                          onChange={(e) =>
+                            updateListItem(
+                              "vaccinationRecords",
+                              index,
+                              { age: e.target.value }
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="mini">
+                        Weight
+                        <input
+                          value={row.weight}
+                          onChange={(e) =>
+                            updateListItem(
+                              "vaccinationRecords",
+                              index,
+                              { weight: e.target.value }
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="vaccine-checks">
+                      {VACCINE_KEYS.map(([key, label]) => (
+                        <label className="vaccine-check" key={key}>
+                          <input
+                            type="checkbox"
+                            checked={!!row[key]}
+                            onChange={(e) =>
+                              updateListItem(
+                                "vaccinationRecords",
+                                index,
+                                { [key]: e.target.checked }
+                              )
+                            }
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="row-grid two">
+                      <input
+                        value={row.others}
+                        placeholder="Others"
+                        onChange={(e) =>
+                          updateListItem(
+                            "vaccinationRecords",
+                            index,
+                            { others: e.target.value }
+                          )
+                        }
+                      />
+                      <input
+                        value={row.administeredBy}
+                        placeholder="Veterinarian's Signature"
+                        onChange={(e) =>
+                          updateListItem(
+                            "vaccinationRecords",
+                            index,
+                            { administeredBy: e.target.value }
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              )}
+
+              {form.recordTemplate === "pet-profile" && (
+                <>
+                  <div className="wide record-section pet-profile-summary">
+                    <h3>Pet Details</h3>
+                    <dl>
+                      <div><dt>Name of Pet</dt><dd>{selectedPet?.pet_name || "—"}</dd></div>
+                      <div><dt>Date of Birth</dt><dd>{selectedPet?.date_of_birth || "—"}</dd></div>
+                      <div><dt>Breed</dt><dd>{selectedPet?.breed || "—"}</dd></div>
+                      <div><dt>Sex</dt><dd>{selectedPet?.sex || "—"}</dd></div>
+                      <div><dt>Markings</dt><dd>{selectedPet?.color || "—"}</dd></div>
+                      <div><dt>Microchip No.</dt><dd>{selectedPet?.microchip_number || "—"}</dd></div>
+                      <div><dt>Guardian</dt><dd>{selectedPet?.owner?.full_name || "—"}</dd></div>
+                      <div><dt>Phone No.</dt><dd>{selectedPet?.owner?.phone || "—"}</dd></div>
+                    </dl>
+                  </div>
+
+                  <label>
+                    Patient No.
+
+                    <input
+                      value={form.templateData?.patientNumber || ""}
+                      onChange={(e) =>
+                        updateTemplateData({ patientNumber: e.target.value })
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Profile / Record No.
+
+                    <input
+                      value={form.templateData?.recordNumber || ""}
+                      onChange={(e) =>
+                        updateTemplateData({ recordNumber: e.target.value })
+                      }
+                    />
+                  </label>
+                </>
+              )}
+
+              {form.recordTemplate === "dental" && (
+                <>
+                  <label>
+                    Gingiva
+
+                    <input
+                      value={form.templateData?.gingiva || ""}
+                      onChange={(e) => updateTemplateData({ gingiva: e.target.value })}
+                    />
+                  </label>
+
+                  <label>
+                    Occlusion
+
+                    <input
+                      value={form.templateData?.occlusion || ""}
+                      onChange={(e) => updateTemplateData({ occlusion: e.target.value })}
+                    />
+                  </label>
+
+                  <label>
+                    Salivation
+
+                    <input
+                      value={form.templateData?.salivation || ""}
+                      onChange={(e) => updateTemplateData({ salivation: e.target.value })}
+                    />
+                  </label>
+
+                  <label>
+                    Halitosis
+
+                    <input
+                      value={form.templateData?.halitosis || ""}
+                      onChange={(e) => updateTemplateData({ halitosis: e.target.value })}
+                    />
+                  </label>
+
+                  <label className="wide">
+                    Dental Chart and Findings
+
+                    <textarea
+                      value={form.templateData?.dentalChart || ""}
+                      placeholder="Record missing, displaced, injured, or decayed teeth and other observations."
+                      onChange={(e) => updateTemplateData({ dentalChart: e.target.value })}
+                    />
+                  </label>
+
+                  <label className="wide">
+                    Periodontal Disease / Other Comment
+
+                    <textarea
+                      value={form.templateData?.periodontalNotes || ""}
+                      onChange={(e) => updateTemplateData({ periodontalNotes: e.target.value })}
+                    />
+                  </label>
+
+                  <label className="wide">
+                    Dental Treatment
+
+                    <textarea
+                      value={form.treatment}
+                      onChange={(e) =>
+                        setForm({ ...form, treatment: e.target.value })
+                      }
+                    />
+                  </label>
+                </>
+              )}
 
               <label>
                 Follow-up Date
@@ -2130,6 +2839,7 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
+              {!queueContext && (
               <label>
                 Status
 
@@ -2155,6 +2865,7 @@ export default function MedicalRecordsModule({
                   </option>
                 </select>
               </label>
+              )}
 
               <label className="wide">
                 Veterinarian Notes
@@ -2203,16 +2914,72 @@ export default function MedicalRecordsModule({
               </label>
             </div>
 
-            <button
-              className="save"
-              disabled={
-                saving
-              }
-            >
-              {saving
-                ? "Saving..."
-                : "Save Medical Record"}
-            </button>
+            {queueContext ? (
+              <div className="template-actions">
+                <select
+                  className="add-template-action"
+                  aria-label="Add another record"
+                  defaultValue=""
+                  disabled={
+                    saving ||
+                    Boolean(pendingQueueCompletion)
+                  }
+                  onChange={(event) => {
+                    const template = event.target.value;
+                    if (!template) return;
+
+                    if (!event.currentTarget.form?.reportValidity()) {
+                      event.currentTarget.value = "";
+                      return;
+                    }
+
+                    event.target.value = "";
+                    saveQueuedTemplate(template);
+                  }}
+                >
+                  <option value="" disabled>
+                    {pendingQueueCompletion
+                      ? "Record saved — retry completion"
+                      : saving
+                        ? "Saving..."
+                        : "Add Another Record"}
+                  </option>
+
+                  {MEDICAL_RECORD_TEMPLATES.map((template) => (
+                    <option
+                      key={template.value}
+                      value={template.value}
+                    >
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="submit"
+                  className="save mark-done-action"
+                  disabled={saving}
+                  formNoValidate={
+                    Boolean(pendingQueueCompletion)
+                  }
+                >
+                  {saving
+                    ? "Saving..."
+                    : pendingQueueCompletion
+                      ? "Retry Mark as Done"
+                      : "Mark as Done"}
+                </button>
+              </div>
+            ) : (
+              <button
+                className="save"
+                disabled={saving}
+              >
+                {saving
+                  ? "Saving..."
+                  : "Save Medical Record"}
+              </button>
+            )}
           </form>
         </div>
       )}
@@ -2550,6 +3317,24 @@ export default function MedicalRecordsModule({
           cursor: pointer;
         }
 
+        .mr .template-intro {
+          display: grid;
+          gap: 4px;
+          margin: 0 0 22px;
+          padding: 13px 15px;
+          border: 1px solid #d7eaf2;
+          border-radius: 12px;
+          background: #f4fbfe;
+          color: #48717f;
+          font-size: 13px;
+          line-height: 1.45;
+        }
+
+        .mr .template-intro b {
+          color: #267da3;
+          font-size: 14px;
+        }
+
         .mr-panel .fields {
           display: grid;
           grid-template-columns: repeat(2, minmax(0,1fr));
@@ -2621,6 +3406,218 @@ export default function MedicalRecordsModule({
         .mr-panel .save:disabled {
           opacity: .65;
           cursor: not-allowed;
+        }
+
+        .mr-panel .template-actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          margin-top: 22px;
+        }
+
+        .mr-panel .template-actions button,
+        .mr-panel .template-actions select {
+          min-height: 50px;
+          border-radius: 11px;
+          padding: 12px 15px;
+          font: inherit;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .mr-panel .add-template-action {
+          border: 1px solid #98d3e8;
+          background: #eaf8fd;
+          color: #267da3;
+        }
+
+        .mr-panel .mark-done-action {
+          margin: 0;
+          background: #318fbe;
+        }
+
+        .mr-panel .template-actions button:disabled,
+        .mr-panel .template-actions select:disabled {
+          opacity: .65;
+          cursor: not-allowed;
+        }
+
+        .queue-context-banner {
+          margin: 0 0 18px;
+          padding: 12px 15px;
+          border-radius: 12px;
+          background: #eaf7fc;
+          color: #267da3;
+          font-weight: 700;
+          font-size: 13px;
+          line-height: 1.5;
+          clear: both;
+        }
+
+        .mr-panel .record-section {
+          border: 1px solid #e1eef3;
+          border-radius: 14px;
+          padding: 16px;
+          background: #f9fdff;
+        }
+
+        .mr-panel .section-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+
+        .mr-panel .section-head h3 {
+          margin: 0;
+          font-size: 15px;
+          color: #20313b;
+        }
+
+        .mr-panel .add-row {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          border: 1px solid #a9dff0;
+          border-radius: 10px;
+          padding: 7px 12px;
+          background: #eaf8fd;
+          color: #267da3;
+          font-weight: 700;
+          font-size: 12px;
+          cursor: pointer;
+        }
+
+        .mr-panel .add-row:hover {
+          background: #dcf1fa;
+        }
+
+        .mr-panel .section-empty {
+          margin: 0 0 6px;
+          color: #7c8c94;
+          font-size: 13px;
+        }
+
+        .mr-panel .pet-profile-summary h3 {
+          margin: 0 0 12px;
+          color: #20313b;
+          font-size: 15px;
+        }
+
+        .mr-panel .pet-profile-summary dl {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px 18px;
+          margin: 0;
+        }
+
+        .mr-panel .pet-profile-summary dl div {
+          display: grid;
+          gap: 2px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid #e1eef3;
+        }
+
+        .mr-panel .pet-profile-summary dt {
+          color: #718891;
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+        }
+
+        .mr-panel .pet-profile-summary dd {
+          margin: 0;
+          color: #294653;
+          font-weight: 700;
+        }
+
+        .mr-panel .row-grid {
+          display: grid;
+          gap: 8px;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+
+        .mr-panel .row-grid.two {
+          grid-template-columns: 1fr 1fr auto;
+        }
+
+        .mr-panel .row-grid.three {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .mr-panel .row-grid input,
+        .mr-panel .row-grid select {
+          height: 42px;
+          padding: 8px 11px;
+          border: 1px solid #cfe2ea;
+          border-radius: 9px;
+          font: inherit;
+        }
+
+        .mr-panel .remove-row {
+          display: grid;
+          place-items: center;
+          border: 0;
+          border-radius: 8px;
+          padding: 8px;
+          background: #fff0f0;
+          color: #b34848;
+          cursor: pointer;
+        }
+
+        .mr-panel .vaccine-card {
+          position: relative;
+          border: 1px solid #e1eef3;
+          border-radius: 12px;
+          padding: 14px 42px 14px 14px;
+          margin-bottom: 12px;
+          background: #fff;
+        }
+
+        .mr-panel .vaccine-card:last-child {
+          margin-bottom: 0;
+        }
+
+        .mr-panel .vaccine-card .remove-row {
+          position: absolute;
+          top: 12px;
+          right: 12px;
+        }
+
+        .mr-panel .vaccine-card .mini {
+          display: grid;
+          gap: 4px;
+          font-weight: 700;
+          font-size: 12px;
+          color: #556c76;
+        }
+
+        .mr-panel .vaccine-checks {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+          margin: 10px 0;
+          padding: 10px;
+          background: #f4fbfd;
+          border-radius: 10px;
+        }
+
+        .mr-panel .vaccine-check {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-weight: 400;
+          font-size: 12px;
+          color: #294653;
+        }
+
+        .mr-panel .vaccine-check input {
+          width: 15px;
+          height: 15px;
+          accent-color: #4da8da;
         }
 
         .ai-panel {
@@ -2843,6 +3840,23 @@ export default function MedicalRecordsModule({
 
           .mr-panel .wide {
             grid-column: auto;
+          }
+
+          .mr-panel .row-grid.two,
+          .mr-panel .row-grid.three {
+            grid-template-columns: 1fr;
+          }
+
+          .mr-panel .vaccine-checks {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .mr-panel .template-actions {
+            grid-template-columns: 1fr;
+          }
+
+          .mr-panel .pet-profile-summary dl {
+            grid-template-columns: 1fr;
           }
 
           .mr-panel .close {

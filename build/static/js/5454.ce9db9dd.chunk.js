@@ -1,2 +1,0 @@
-"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[5454],{5454(e,r,t){t.r(r),t.d(r,{default:()=>i});t(5043);var n=t(8584),a=t(7305),s=t(579);function i(e){let r=e.profile;return(0,s.jsx)(n.A,{profile:r,title:"Book Appointment",children:(0,s.jsx)(a.A,{profile:r,mode:"owner"})})}}}]);
-//# sourceMappingURL=5454.ce9db9dd.chunk.js.map

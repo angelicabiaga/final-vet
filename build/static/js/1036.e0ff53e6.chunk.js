@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[1036],{21036(e,n,r){r.r(n),r.d(n,{default:()=>s});r(65043);var t=r(68584),a=r(63321),i=r(70579);function s(e){let n=e.profile;return(0,i.jsx)(t.A,{profile:n,title:"My Appointments",children:(0,i.jsx)(a.A,{profile:n,veterinarianOnly:!0})})}}}]);
+//# sourceMappingURL=1036.e0ff53e6.chunk.js.map

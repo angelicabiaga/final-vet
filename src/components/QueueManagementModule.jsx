@@ -1,33 +1,76 @@
 import React,{useCallback,useEffect,useMemo,useState}from"react";
+import {useNavigate}from"react-router-dom";
 import AppShell from"./AppShell";
-import {getQueue,getTodayCheckinAppointments,checkInAppointment,updateQueueStatus,reorderQueue,subscribeToQueue,QUEUE_STATUSES}from"../services/queueService";
+import {getQueue,getTodayCheckinAppointments,checkInAppointment,updateQueueStatus,requeueToNextAvailable,subscribeToQueue,QUEUE_STATUSES}from"../services/queueService";
 import {getVeterinarians,formatTime}from"../services/appointmentService";
+import {MEDICAL_RECORD_TEMPLATES}from"../constants/medicalRecordTemplates";
+
+function bookingTime(r){
+ if(r.original_appointment_time)return formatTime(r.original_appointment_time);
+ if(r.arrived_at)return new Date(r.arrived_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+ return "—";
+}
 
 export default function QueueManagementModule({profile,mode="staff"}){
- const [rows,setRows]=useState([]),[appointments,setAppointments]=useState([]),[vets,setVets]=useState([]),[vet,setVet]=useState(""),[status,setStatus]=useState(""),[loading,setLoading]=useState(true),[message,setMessage]=useState(""),[error,setError]=useState(""),[checkingIn,setCheckingIn]=useState(null);
+ const [rows,setRows]=useState([]),[appointments,setAppointments]=useState([]),[vets,setVets]=useState([]),[vet,setVet]=useState(""),[status,setStatus]=useState(""),[loading,setLoading]=useState(true),[message,setMessage]=useState(""),[error,setError]=useState(""),[checkingIn,setCheckingIn]=useState(null),[updatingId,setUpdatingId]=useState(null);
  const canManage=["admin","staff"].includes(profile?.role);
- const nextStatus=current=>current==="Waiting"?"Serving":current==="Serving"?"Completed":null;
+ const isVet=profile?.role==="veterinarian";
+ const navigate=useNavigate();
+ function openRecordTemplate(r,template){
+  if(!template)return;
+  const petIds=(r.pets?.length?r.pets:[{id:r.pet_id,appointmentId:r.appointment_id}]).map(p=>p.id).join(",");
+  const appointmentIds=(r.pets?.length?r.pets:[{id:r.pet_id,appointmentId:r.appointment_id}]).map(p=>p.appointmentId||"").join(",");
+  const params=new URLSearchParams({queueEntryId:r.id,ownerId:r.owner_id||"",veterinarianId:r.veterinarian_id||"",petIds,appointmentIds,template});
+  navigate(`/veterinarian/medical-records?${params.toString()}`);
+ }
  const load=useCallback(async()=>{try{setLoading(true);setError("");const vid=profile?.role==="veterinarian"?profile.id:vet;const [q,v,a]=await Promise.all([getQueue({veterinarianId:vid,status}),getVeterinarians(),profile?.role==="veterinarian"?Promise.resolve([]):getTodayCheckinAppointments()]);setRows(q);setVets(v);setAppointments(a);}catch(e){setError(e.message)}finally{setLoading(false)}},[profile,vet,status]);
  useEffect(()=>{load();const off=subscribeToQueue(load);return()=>off();},[load]);
  const stats=useMemo(()=>({waiting:rows.filter(r=>r.status==="Waiting").length,serving:rows.filter(r=>r.status==="Serving").length,completed:rows.filter(r=>r.status==="Completed").length,late:rows.filter(r=>r.late_arrival).length}),[rows]);
- async function act(fn,ok){try{setError("");await fn();setMessage(ok);await load()}catch(e){setError(e.message)}}
- async function handleCheckIn(appointment){
+ // Once the vet marks a ticket Completed it drops off the live queue - it's
+ // tracked from the Appointment Management page from there. Selecting
+ // "Completed" from the status filter still shows it on request.
+ const tableRows=useMemo(()=>status==="Completed"?rows:rows.filter(r=>r.status!=="Completed"),[rows,status]);
+ async function act(id,fn,ok){
+  if(updatingId)return;
+  try{
+   setUpdatingId(id);setError("");
+   const result=await fn();
+   setMessage(typeof ok==="function"?ok(result):ok);
+   await load();
+  }catch(e){setError(e.message)}
+  finally{setUpdatingId(null)}
+ }
+ async function handleCheckIn(card){
   if(checkingIn)return;
   try{
-   setCheckingIn(appointment.appointment_id);
+   setCheckingIn(card.id);
    setError("");
-   await checkInAppointment({...appointment,id:appointment.appointment_id},profile);
-   setAppointments(current=>current.filter(item=>item.appointment_id!==appointment.appointment_id));
-   setMessage("Appointment checked in and added to the queue.");
+   await checkInAppointment(card,profile);
+   setAppointments(current=>current.filter(item=>item.id!==card.id));
+   setMessage(card.pets?.length>1?"Visit checked in and added to the queue.":"Appointment checked in and added to the queue.");
    await load();
-  }catch(e){setError(e.message)}finally{setCheckingIn(null)}
+  }catch(e){
+   if(e.shouldRefreshQueue)await load();
+   setError(e.message);
+  }finally{setCheckingIn(null)}
  }
  return <AppShell profile={profile} title={profile?.role==="veterinarian"?"My Queue":"Queue Management"}>
   {message&&<div className="ok">{message}</div>}{error&&<div className="err">{error}</div>}
   <div className="stats">{Object.entries(stats).map(([k,v])=><div className="stat" key={k}><strong>{v}</strong><span>{k}</span></div>)}</div>
   {profile?.role!=="veterinarian"&&<div className="card filters"><select value={vet} onChange={e=>setVet(e.target.value)}><option value="">All veterinarians</option>{vets.map(v=><option key={v.id} value={v.id}>{v.full_name}</option>)}</select><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{QUEUE_STATUSES.map(s=><option key={s}>{s}</option>)}</select><button onClick={load}>Refresh</button></div>}
-  {profile?.role!=="veterinarian"&&appointments.length>0&&<div className="card"><h3>Today's appointments ready for check-in</h3><div className="apptgrid">{appointments.map(a=><div className="appt" key={a.appointment_id}><b>{a.pet?.pet_name||"Pet"}</b><span>{formatTime(a.start_time)} · {a.veterinarian?.full_name||"Veterinarian"}</span><button disabled={checkingIn===a.appointment_id} onClick={()=>handleCheckIn(a)}>{checkingIn===a.appointment_id?"Checking In...":"Check In"}</button></div>)}</div></div>}
-  <div className="card"><h3>Live queue</h3>{loading?<p>Loading queue…</p>:rows.length===0?<p>No queue entries today.</p>:<div className="table"><table><thead><tr><th>No.</th><th>Pet</th><th>Veterinarian</th><th>Source</th><th>Status</th><th>Ahead / ETA</th><th>Actions</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td><b>{r.queue_number}</b>{r.late_arrival&&<small className="late">Late Arrival</small>}</td><td>{r.pet?.pet_name||"—"}<small>{r.owner?.full_name||""}</small></td><td>{r.veterinarian?.full_name||"—"}</td><td>{r.source}</td><td><span className={`pill ${r.status.replaceAll(" ","").toLowerCase()}`}>{r.status}</span></td><td>{r.clientsAhead??0} ahead<br/><small>~{r.estimatedWaitMinutes??0} min</small></td><td>{canManage&&<div className="actions"><select value="" disabled={!nextStatus(r.status)} onChange={e=>e.target.value&&act(()=>updateQueueStatus(r.id,e.target.value,profile),"Queue updated.")}><option value="">{nextStatus(r.status)?`Mark as ${nextStatus(r.status)}`:"Completed"}</option>{nextStatus(r.status)&&<option value={nextStatus(r.status)}>{nextStatus(r.status)}</option>}</select>{profile?.role!=="veterinarian"&&<button className="link" onClick={()=>{const order=prompt("Manual order number:",r.manual_order||1);if(!order)return;const reason=prompt("Required reason:");if(!reason)return;act(()=>reorderQueue(r.id,order,reason,profile),"Queue reordered.")}}>Reorder</button>}</div>}</td></tr>)}</tbody></table></div>}</div>
-  <style>{`.ok,.err{padding:12px 15px;border-radius:12px;margin-bottom:14px}.ok{background:#e9f8ef;color:#26754a}.err{background:#fff0f0;color:#b34b4b}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}.stat{background:#fff;border-radius:16px;padding:18px;box-shadow:0 7px 20px #d9edf5}.stat strong{display:block;font-size:27px;color:#318fbe;text-transform:capitalize}.stat span{text-transform:capitalize;color:#6f7f88}.filters{display:flex;gap:10px;margin-bottom:16px}.filters select,.filters button,.actions select,.actions button{padding:10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.filters button,.appt button{background:#4DA8DA;color:#fff;border:0}.appt button:disabled{opacity:.65;cursor:not-allowed}.apptgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.appt{border:1px solid #e2f0f5;border-radius:12px;padding:12px;display:grid;gap:8px}.table{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #e6f1f5;text-align:left;white-space:nowrap}td small{display:block;color:#72838c}.late{color:#d88416!important}.pill{padding:5px 9px;border-radius:999px;background:#eaf7fb;font-size:12px}.serving{background:#e7f7ed;color:#26754a}.waiting{background:#fff5d9;color:#9a7015}.actions{display:flex;gap:6px}.link{color:#318fbe}@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.filters{display:grid}}`}</style>
+  {profile?.role!=="veterinarian"&&appointments.length>0&&<div className="card"><h3>Today's appointments ready for check-in</h3><div className="apptgrid">{appointments.map(a=><div className="appt" key={a.id}><b>{a.pets?.length?a.pets.map(p=>p.pet_name).join(", "):(a.pet?.pet_name||"Pet")}</b><span>{formatTime(a.start_time)} · {a.veterinarian?.full_name||"Veterinarian"}{a.pets?.length>1&&` · ${a.pets.length} pets · ${a.visitDurationMinutes} min`}</span><button disabled={checkingIn===a.id} onClick={()=>handleCheckIn(a)}>{checkingIn===a.id?"Checking In...":"Check In"}</button></div>)}</div></div>}
+  <div className="card"><h3>Live queue</h3>{loading?<p>Loading queue…</p>:tableRows.length===0?<p>No queue entries today.</p>:<div className="table"><table><thead><tr><th>No.</th><th>Pet</th><th>Veterinarian</th><th>Time</th><th>Status</th><th>Ahead / ETA</th><th>Actions</th></tr></thead><tbody>{tableRows.map(r=><tr key={r.id}><td><b>{r.queue_number}</b>{r.late_arrival&&<small className="late">Late Arrival</small>}</td><td>{r.pets?.length?r.pets.map(p=>p.pet_name).join(", "):(r.pet?.pet_name||"—")}{r.pets?.length>1&&<small className="petcount">{r.pets.length} pets · {r.visitDurationMinutes} min</small>}<small>{r.owner?.full_name||""}</small></td><td>{r.veterinarian?.full_name||"—"}</td><td>{bookingTime(r)}</td><td><span className={`pill ${r.status.replaceAll(" ","").toLowerCase()}`}>{r.status}</span></td><td>{r.clientsAhead??0} ahead<br/><small>~{r.estimatedWaitMinutes??0} min</small></td><td>
+   {canManage&&<div className="actions">
+    <button className="serve-btn" disabled={r.status!=="Waiting"||updatingId===r.id} onClick={()=>act(r.id,()=>updateQueueStatus(r.id,"Serving",profile),"Marked as serving.")}>{updatingId===r.id?"Updating…":"Serving"}</button>
+    <button className="link" disabled={r.status!=="Waiting"||updatingId===r.id} onClick={()=>act(r.id,()=>requeueToNextAvailable(r.id,profile),time=>`Re-queued to ${formatTime(time)}.`)}>Re-queue</button>
+   </div>}
+   {isVet&&<div className="actions">
+    <select className="template-select" aria-label="Choose medical record template" defaultValue="" disabled={!['Waiting','Serving'].includes(r.status)} onChange={e=>openRecordTemplate(r,e.target.value)}>
+     <option value="">Choose template</option>
+     {MEDICAL_RECORD_TEMPLATES.map(template=><option key={template.value} value={template.value}>{template.label}</option>)}
+    </select>
+   </div>}
+  </td></tr>)}</tbody></table></div>}</div>
+  <style>{`.ok,.err{padding:12px 15px;border-radius:12px;margin-bottom:14px}.ok{background:#e9f8ef;color:#26754a}.err{background:#fff0f0;color:#b34b4b}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}.stat{background:#fff;border-radius:16px;padding:18px;box-shadow:0 7px 20px #d9edf5}.stat strong{display:block;font-size:27px;color:#318fbe;text-transform:capitalize}.stat span{text-transform:capitalize;color:#6f7f88}.filters{display:flex;gap:10px;margin-bottom:16px}.filters select,.filters button,.actions button,.actions select{padding:10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.filters button,.appt button{background:#4DA8DA;color:#fff;border:0}.appt button:disabled,.template-select:disabled{opacity:.65;cursor:not-allowed}.apptgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.appt{border:1px solid #e2f0f5;border-radius:12px;padding:12px;display:grid;gap:8px}.table{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #e6f1f5;text-align:left;white-space:nowrap}td small{display:block;color:#72838c}.late{color:#d88416!important}.petcount{color:#318fbe!important;font-weight:700}.pill{padding:5px 9px;border-radius:999px;background:#eaf7fb;font-size:12px}.serving{background:#e7f7ed;color:#26754a}.waiting{background:#fff5d9;color:#9a7015}.actions{display:flex;gap:6px}.serve-btn{background:#4DA8DA!important;color:#fff!important;border:0!important;font-weight:700;cursor:pointer}.serve-btn:disabled{opacity:.55;cursor:not-allowed}.template-select{max-width:215px;color:#247ba5;font-weight:700;cursor:pointer}.link{color:#318fbe;cursor:pointer}.link:disabled{opacity:.5;cursor:not-allowed;color:#8fa3ab}@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.filters{display:grid}}`}</style>
  </AppShell>
 }

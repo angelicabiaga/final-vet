@@ -124,6 +124,11 @@ create table if not exists public.medical_records (
   laboratory_request text,
   laboratory_result text,
   vaccination text,
+  parasite_treatments jsonb not null default '[]'::jsonb,
+  heartworm_tests jsonb not null default '[]'::jsonb,
+  vaccination_records jsonb not null default '[]'::jsonb,
+  record_template text not null default 'health-record',
+  template_data jsonb not null default '{}'::jsonb,
   follow_up_date date,
   veterinarian_notes text,
   attachment_url text,
@@ -155,6 +160,11 @@ alter table public.medical_records add column if not exists duration text;
 alter table public.medical_records add column if not exists laboratory_request text;
 alter table public.medical_records add column if not exists laboratory_result text;
 alter table public.medical_records add column if not exists vaccination text;
+alter table public.medical_records add column if not exists parasite_treatments jsonb not null default '[]'::jsonb;
+alter table public.medical_records add column if not exists heartworm_tests jsonb not null default '[]'::jsonb;
+alter table public.medical_records add column if not exists vaccination_records jsonb not null default '[]'::jsonb;
+alter table public.medical_records add column if not exists record_template text not null default 'health-record';
+alter table public.medical_records add column if not exists template_data jsonb not null default '{}'::jsonb;
 alter table public.medical_records add column if not exists follow_up_date date;
 alter table public.medical_records add column if not exists veterinarian_notes text;
 alter table public.medical_records add column if not exists attachment_url text;
@@ -245,6 +255,8 @@ begin
       weight, temperature, diagnosis, treatment, treatment_plan,
       medication, dosage, frequency, duration,
       laboratory_request, laboratory_result, vaccination,
+      parasite_treatments, heartworm_tests, vaccination_records,
+      record_template, template_data,
       follow_up_date, veterinarian_notes, attachment_url,
       record_status, created_by, updated_by
     ) values (
@@ -268,6 +280,11 @@ begin
       nullif(payload->>'laboratory_request', ''),
       nullif(payload->>'laboratory_result', ''),
       nullif(payload->>'vaccination', ''),
+      coalesce(payload->'parasite_treatments', '[]'::jsonb),
+      coalesce(payload->'heartworm_tests', '[]'::jsonb),
+      coalesce(payload->'vaccination_records', '[]'::jsonb),
+      coalesce(nullif(payload->>'record_template', ''), 'health-record'),
+      coalesce(payload->'template_data', '{}'::jsonb),
       nullif(payload->>'follow_up_date', '')::date,
       nullif(payload->>'veterinarian_notes', ''),
       nullif(payload->>'attachment_url', ''),
@@ -297,6 +314,11 @@ begin
         laboratory_request = nullif(payload->>'laboratory_request', ''),
         laboratory_result = nullif(payload->>'laboratory_result', ''),
         vaccination = nullif(payload->>'vaccination', ''),
+        parasite_treatments = coalesce(payload->'parasite_treatments', parasite_treatments),
+        heartworm_tests = coalesce(payload->'heartworm_tests', heartworm_tests),
+        vaccination_records = coalesce(payload->'vaccination_records', vaccination_records),
+        record_template = coalesce(nullif(payload->>'record_template', ''), record_template),
+        template_data = coalesce(payload->'template_data', template_data),
         follow_up_date = nullif(payload->>'follow_up_date', '')::date,
         veterinarian_notes = nullif(payload->>'veterinarian_notes', ''),
         attachment_url = nullif(payload->>'attachment_url', ''),
