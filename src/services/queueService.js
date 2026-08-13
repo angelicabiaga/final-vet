@@ -80,16 +80,15 @@ export async function createWalkInQueue({petId,ownerId,veterinarianId,priorityLe
 export async function updateQueueStatus(id,status,profile,reason=null){
   if(!QUEUE_STATUSES.includes(status)) throw new Error("Invalid queue status.");
   const {data:current,error:loadError}=await supabase.from("queue_entries").select("status").eq("id",id).single();
-  if(loadError) throw new Error("Unable to load the queue entry.");
+  if(loadError) throw new Error(`Unable to load the queue entry: ${loadError.message}`);
   const nextStatus={Waiting:"Serving",Serving:"Completed"}[current.status];
   if(!nextStatus || status!==nextStatus) throw new Error(`Queue status must follow ${current.status} → ${nextStatus||"no further status"}.`);
   const patch={status,created_by:profile.id,reorder_reason:reason||null};
   if(status==="Serving")patch.consultation_started_at=new Date().toISOString();
   if(status==="Completed")patch.consultation_ended_at=new Date().toISOString();
   const {error}=await supabase.from("queue_entries").update(patch).eq("id",id);
-  if(error)throw new Error("Unable to update queue status.");
+  if(error)throw new Error(`Unable to update queue status: ${error.message}`);
 }
-
 export async function reorderQueue(id,manualOrder,reason,profile){
   if(!reason?.trim())throw new Error("A reason is required when changing queue order.");
   const {error}=await supabase.from("queue_entries").update({manual_order:Number(manualOrder),reorder_reason:reason.trim(),created_by:profile.id}).eq("id",id);
