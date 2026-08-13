@@ -1,2 +1,0 @@
-"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[2201],{92201(e,r,t){t.r(r),t.d(r,{default:()=>i});t(65043);var a=t(68584),n=t(69172),s=t(70579);function i(e){let r=e.profile;return(0,s.jsx)(a.A,{profile:r,title:"Medical Records",children:(0,s.jsx)(n.A,{profile:r})})}}}]);
-//# sourceMappingURL=2201.8d6dc2ec.chunk.js.map
