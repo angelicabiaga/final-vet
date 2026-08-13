@@ -146,6 +146,35 @@ export async function getInventoryItems({
   return data || [];
 }
 
+export async function getInventoryItemsByIds(ids = []) {
+  const uniqueIds = [
+    ...new Set(
+      (ids || []).filter(Boolean)
+    ),
+  ];
+
+  if (!uniqueIds.length) {
+    return [];
+  }
+
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("inventory_items")
+    .select(ITEM_FIELDS)
+    .in("id", uniqueIds);
+
+  if (error) {
+    throw friendly(
+      error,
+      "Unable to load the selected inventory items."
+    );
+  }
+
+  return data || [];
+}
+
 export async function getInventorySummary() {
   const {
     data,

@@ -1,17 +1,22 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { RefreshCw, Search, X } from "lucide-react";
 import { APPOINTMENT_STATUSES, formatTime, getAppointments, updateAppointmentStatus, getVeterinarianAvailability, rescheduleAppointment, todayLocal } from "../services/appointmentService";
-import { getQueueStatusForAppointments } from "../services/queueService";
 import { supabase } from "../config/supabaseClient";
 
 const PAGE_SIZE = 10;
+
+// Once an appointment's date is today (or has passed), it's handed off to
+// Queue Management for check-in, so it no longer needs to show in this table.
+function isHandedOffToQueue(row) {
+  if (row.status !== "Confirmed") return false;
+  return row.appointment_date <= todayLocal();
+}
 
 export default function AppointmentManagementTable({ profile, veterinarianOnly = false }) {
   const [rows,setRows]=useState([]), [loading,setLoading]=useState(true), [status,setStatus]=useState(""), [date,setDate]=useState("");
   const [search,setSearch]=useState(""), [page,setPage]=useState(1);
   const [message,setMessage]=useState("");
   const [notesModal,setNotesModal]=useState(null);
-  const [queueStatusMap,setQueueStatusMap]=useState({});
   const [actingId,setActingId]=useState(null);
   const [rebookModal,setRebookModal]=useState(null);
   const [rebookDate,setRebookDate]=useState("");
@@ -29,7 +34,6 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       setLoading(true);
       const data = await getAppointments({ veterinarianId: veterinarianOnly ? profile.id : null, status, date });
       setRows(data);
-      setQueueStatusMap(await getQueueStatusForAppointments(data.map(row => row.id)));
     } catch (e) {
       setMessage(e.message);
     } finally {
@@ -129,14 +133,13 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
   function rowAction(row) {
     if (row.status === "Completed") return { kind: "badge", label: "Completed", className: "badge-completed" };
     if (row.status === "Cancelled") return { kind: "badge", label: "Cancelled", className: "badge-cancelled" };
-    const queueStatus = queueStatusMap[row.id];
-    const started = queueStatus === "Serving" || queueStatus === "Completed";
-    return started ? { kind: "complete" } : { kind: "pending" };
+    return { kind: "pending" };
   }
 
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const base = !query ? rows : rows.filter(row => [
+    const visible = rows.filter(row => !isHandedOffToQueue(row));
+    const base = !query ? visible : visible.filter(row => [
       row.pet?.pet_name, row.owner?.full_name, row.owner?.username, row.owner?.email,
       row.veterinarian?.full_name, row.notes, row.appointment_source
     ].some(value => String(value || "").toLowerCase().includes(query)));
@@ -174,7 +177,6 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
         <td>{row.notes?<button type="button" className="view-notes" onClick={()=>setNotesModal(row)}>View Notes</button>:"N/A"}</td>
         <td>
           {action.kind==="badge"&&<span className={`action-badge ${action.className}`}>{action.label}</span>}
-          {action.kind==="complete"&&<button type="button" className="action-btn complete" disabled={actingId===row.id} onClick={()=>doAction(row.id,"Completed","marked completed")}>{actingId===row.id?"Saving…":"Completed"}</button>}
           {action.kind==="pending"&&<div className="action-group">
             <button type="button" className="action-btn cancel" disabled={actingId===row.id} onClick={()=>doAction(row.id,"Cancelled","cancelled")}>Cancel</button>
             <button type="button" className="action-btn rebook" disabled={actingId===row.id} onClick={()=>openRebook(row)}>Rebook</button>

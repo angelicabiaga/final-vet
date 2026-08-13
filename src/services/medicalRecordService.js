@@ -627,6 +627,14 @@ export async function saveMedicalRecord(
     );
   }
 
+  if (
+    !(values.templateData?.inventoryItems || []).length
+  ) {
+    throw new Error(
+      "Select at least one test/medicine/vaccine given, or choose N/A, before saving."
+    );
+  }
+
   const record = {
     pet_id:
       values.petId,
@@ -922,6 +930,40 @@ export async function uploadMedicalAttachment(
       );
 
   return data.publicUrl;
+}
+
+export async function getLatestMedicalRecordForPet(
+  petId
+) {
+  if (!petId) {
+    return null;
+  }
+
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("medical_records")
+    .select(
+      "id,pet_id,appointment_id,consultation_date,created_at,record_status,template_data"
+    )
+    .eq("pet_id", petId)
+    .eq("record_status", "Finalized")
+    .order("consultation_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.warn(
+      "Unable to load the latest medical record for this pet:",
+      error
+    );
+
+    return null;
+  }
+
+  return data || null;
 }
 
 export async function getAppointmentsForPet(

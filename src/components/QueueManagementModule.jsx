@@ -25,11 +25,22 @@ export default function QueueManagementModule({profile,mode="staff"}){
  }
  const load=useCallback(async()=>{try{setLoading(true);setError("");const vid=profile?.role==="veterinarian"?profile.id:vet;const [q,v,a]=await Promise.all([getQueue({veterinarianId:vid,status}),getVeterinarians(),profile?.role==="veterinarian"?Promise.resolve([]):getTodayCheckinAppointments()]);setRows(q);setVets(v);setAppointments(a);}catch(e){setError(e.message)}finally{setLoading(false)}},[profile,vet,status]);
  useEffect(()=>{load();const off=subscribeToQueue(load);return()=>off();},[load]);
+ // Appointments become due for check-in purely because time has passed, with
+ // no database write to trigger the realtime subscription above, so poll too.
+ useEffect(()=>{
+  if(profile?.role==="veterinarian")return;
+  const timer=setInterval(load,60000);
+  return ()=>clearInterval(timer);
+ },[load,profile?.role]);
  const stats=useMemo(()=>({waiting:rows.filter(r=>r.status==="Waiting").length,serving:rows.filter(r=>r.status==="Serving").length,completed:rows.filter(r=>r.status==="Completed").length,late:rows.filter(r=>r.late_arrival).length}),[rows]);
  // Once the vet marks a ticket Completed it drops off the live queue - it's
  // tracked from the Appointment Management page from there. Selecting
  // "Completed" from the status filter still shows it on request.
- const tableRows=useMemo(()=>status==="Completed"?rows:rows.filter(r=>r.status!=="Completed"),[rows,status]);
+ const tableRows=useMemo(()=>{
+  const base=status==="Completed"?rows:rows.filter(r=>r.status!=="Completed");
+  // A ticket only reaches the veterinarian's queue once staff clicks Serving.
+  return isVet?base.filter(r=>r.status==="Serving"):base;
+ },[rows,status,isVet]);
  async function act(id,fn,ok){
   if(updatingId)return;
   try{
@@ -65,7 +76,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
     <button className="link" disabled={r.status!=="Waiting"||updatingId===r.id} onClick={()=>act(r.id,()=>requeueToNextAvailable(r.id,profile),time=>`Re-queued to ${formatTime(time)}.`)}>Re-queue</button>
    </div>}
    {isVet&&<div className="actions">
-    <select className="template-select" aria-label="Choose medical record template" defaultValue="" disabled={!['Waiting','Serving'].includes(r.status)} onChange={e=>openRecordTemplate(r,e.target.value)}>
+    <select className="template-select" aria-label="Choose medical record template" defaultValue="" disabled={r.status!=="Serving"} onChange={e=>openRecordTemplate(r,e.target.value)}>
      <option value="">Choose template</option>
      {MEDICAL_RECORD_TEMPLATES.map(template=><option key={template.value} value={template.value}>{template.label}</option>)}
     </select>

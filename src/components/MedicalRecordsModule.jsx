@@ -38,6 +38,8 @@ import {
   uploadMedicalAttachment,
 } from "../services/medicalRecordService";
 
+import { getInventoryItems } from "../services/inventoryService";
+
 import { completeQueueEntry } from "../services/queueService";
 
 const blank = {
@@ -172,6 +174,11 @@ export default function MedicalRecordsModule({
   ] = useState([]);
 
   const [
+    inventoryOptions,
+    setInventoryOptions,
+  ] = useState([]);
+
+  const [
     appointments,
     setAppointments,
   ] = useState([]);
@@ -262,9 +269,10 @@ export default function MedicalRecordsModule({
     [pets, form.petId]
   );
 
+  // Staff and pet owners get a read-only view; only the veterinarian who
+  // treats the pet (or an admin) can create or edit a medical record.
   const canEdit = [
     "admin",
-    "staff",
     "veterinarian",
   ].includes(
     profile?.role
@@ -325,6 +333,7 @@ export default function MedicalRecordsModule({
         recordRows,
         petRows,
         vetRows,
+        inventoryRows,
       ] = await Promise.all([
         getMedicalRecords(
           profile,
@@ -337,10 +346,18 @@ export default function MedicalRecordsModule({
         }),
 
         getActiveVeterinarians(),
+
+        getInventoryItems().catch(
+          () => []
+        ),
       ]);
 
       setRecords(
         recordRows
+      );
+
+      setInventoryOptions(
+        inventoryRows
       );
 
       setPets(
@@ -599,6 +616,54 @@ export default function MedicalRecordsModule({
         ...patch,
       },
     }));
+  }
+
+  function pickInventoryItem(event) {
+    const value = event.target.value;
+    event.target.value = "";
+    if (!value) return;
+
+    const current = form.templateData?.inventoryItems || [];
+
+    if (value === "NA") {
+      updateTemplateData({
+        inventoryItems: [
+          { id: "NA", item_name: "N/A", isNA: true },
+        ],
+      });
+      return;
+    }
+
+    const item = inventoryOptions.find(
+      (option) => option.id === value
+    );
+    if (!item) return;
+
+    const withoutNA = current.filter(
+      (entry) => !entry.isNA
+    );
+    if (withoutNA.some((entry) => entry.id === item.id)) return;
+
+    updateTemplateData({
+      inventoryItems: [
+        ...withoutNA,
+        {
+          id: item.id,
+          item_name: item.item_name,
+          category: item.category,
+          unit: item.unit,
+          unit_price: Number(item.unit_price || 0),
+        },
+      ],
+    });
+  }
+
+  function removeInventoryItem(id) {
+    updateTemplateData({
+      inventoryItems: (
+        form.templateData?.inventoryItems || []
+      ).filter((entry) => entry.id !== id),
+    });
   }
 
   function closeQueuedRecordModal() {
@@ -1940,6 +2005,17 @@ export default function MedicalRecordsModule({
                     "—"}
                 </p>
 
+                <p>
+                  <b>
+                    Test / Medicine / Vaccine Given:
+                  </b>{" "}
+                  {(record.template_data?.inventoryItems || []).length
+                    ? record.template_data.inventoryItems
+                        .map((entry) => entry.item_name)
+                        .join(", ")
+                    : "—"}
+                </p>
+
                 <div className="actions">
                   <button
                     type="button"
@@ -2199,6 +2275,68 @@ export default function MedicalRecordsModule({
                     })
                   }
                 />
+              </label>
+
+              <label className="wide">
+                Test / Medicine / Vaccine Given
+                <span className="field-hint">
+                  Required — used by the POS to compute the payment total.
+                </span>
+
+                <select
+                  value=""
+                  onChange={pickInventoryItem}
+                  disabled={!canEdit}
+                >
+                  <option value="">
+                    {(form.templateData?.inventoryItems || []).length
+                      ? "Add another item…"
+                      : "Select test, medicine, or vaccine…"}
+                  </option>
+
+                  <option value="NA">
+                    N/A — nothing given
+                  </option>
+
+                  {inventoryOptions
+                    .filter(
+                      (option) =>
+                        !(form.templateData?.inventoryItems || []).some(
+                          (entry) => entry.id === option.id
+                        )
+                    )
+                    .map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.item_name} — {option.category} (₱{Number(option.unit_price || 0).toFixed(2)})
+                      </option>
+                    ))}
+                </select>
+
+                {!(form.templateData?.inventoryItems || []).length && (
+                  <small className="field-required-note">
+                    Choose at least one item, or N/A, before saving.
+                  </small>
+                )}
+
+                {(form.templateData?.inventoryItems || []).length > 0 && (
+                  <div className="chosen-items">
+                    {form.templateData.inventoryItems.map((entry) => (
+                      <span className="chosen-item-chip" key={entry.id}>
+                        {entry.item_name}
+                        {!entry.isNA && ` — ₱${Number(entry.unit_price || 0).toFixed(2)}`}
+                        {canEdit && (
+                          <button
+                            type="button"
+                            aria-label={`Remove ${entry.item_name}`}
+                            onClick={() => removeInventoryItem(entry.id)}
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </label>
 
               {form.recordTemplate === "health-record" && (
@@ -3382,6 +3520,45 @@ export default function MedicalRecordsModule({
 
         .mr-panel .wide {
           grid-column: 1 / -1;
+        }
+
+        .mr-panel .field-hint {
+          font-weight: 500;
+          font-size: 12px;
+          color: #6f8792;
+        }
+
+        .mr-panel .field-required-note {
+          font-weight: 600;
+          font-size: 12px;
+          color: #b34b4b;
+        }
+
+        .mr-panel .chosen-items {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .mr-panel .chosen-item-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 7px 10px;
+          border-radius: 999px;
+          background: #eaf6fb;
+          color: #21697f;
+          font-weight: 700;
+          font-size: 12px;
+        }
+
+        .mr-panel .chosen-item-chip button {
+          display: inline-flex;
+          border: 0;
+          background: none;
+          color: #21697f;
+          cursor: pointer;
+          padding: 0;
         }
 
         .mr-panel .upload {
