@@ -40,6 +40,8 @@ const OwnerMessages = lazy(() => import("./pages/petOwner/OwnerMessages"));
 const AdminInventory = lazy(() => import("./pages/admin/InventoryManagement"));
 const StaffInventory = lazy(() => import("./pages/staff/InventoryManagement"));
 const VeterinarianInventory = lazy(() => import("./pages/veterinarian/InventoryManagement"));
+const StaffTransactions = lazy(() => import("./pages/staff/TransactionManagement"));
+const StaffGcashReturn = lazy(() => import("./pages/staff/GcashReturn"));
 const StaffQueue = lazy(() => import("./pages/staff/QueueManagement"));
 const VeterinarianQueue = lazy(() => import("./pages/veterinarian/VeterinarianQueue"));
 const OwnerQueue = lazy(() => import("./pages/petOwner/MyQueue"));
@@ -116,6 +118,8 @@ export default function App() {
         <Route path="/pet-owner/messages" element={guarded(["pet_owner"], <OwnerMessages profile={profile} />)} />
         <Route path="/admin/inventory" element={guarded(["admin"], <AdminInventory profile={profile} />)} />
         <Route path="/staff/inventory" element={guarded(["staff"], <StaffInventory profile={profile} />)} />
+        <Route path="/staff/transactions" element={guarded(["staff"], <StaffTransactions profile={profile} />)} />
+        <Route path="/staff/transactions/gcash-return" element={guarded(["staff"], <StaffGcashReturn profile={profile} />)} />
         <Route path="/veterinarian/inventory" element={guarded(["veterinarian"], <VeterinarianInventory profile={profile} />)} />
         <Route path="/admin/queue" element={guarded(["admin"], <StaffQueue profile={profile} />)} />
         <Route path="/staff/queue" element={guarded(["staff"], <StaffQueue profile={profile} />)} />
