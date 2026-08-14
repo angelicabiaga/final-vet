@@ -14,6 +14,9 @@ import {
 
 import {
   BrainCircuit,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
   FileDown,
   Plus,
   Printer,
@@ -260,6 +263,14 @@ export default function MedicalRecordsModule({
     setSearch,
   ] = useState("");
 
+  const [page, setPage] =
+    useState(1);
+
+  const [
+    viewRecord,
+    setViewRecord,
+  ] = useState(null);
+
   const [
     aiModal,
     setAiModal,
@@ -378,6 +389,14 @@ export default function MedicalRecordsModule({
   ].includes(
     profile?.role
   );
+
+  // Staff can only look records up and print them -- no creating or editing.
+  const isStaffView =
+    profile?.role === "staff";
+
+  const canCreate =
+    profile?.role !== "pet_owner" &&
+    !isStaffView;
 
   const queueLaunch = useMemo(() => {
     const params = new URLSearchParams(
@@ -553,6 +572,29 @@ export default function MedicalRecordsModule({
     records,
     search,
   ]);
+
+  const RECORDS_PAGE_SIZE = 10;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, records]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(
+      shown.length / RECORDS_PAGE_SIZE
+    )
+  );
+
+  const currentPage = Math.min(
+    page,
+    totalPages
+  );
+
+  const paginatedShown = shown.slice(
+    (currentPage - 1) * RECORDS_PAGE_SIZE,
+    currentPage * RECORDS_PAGE_SIZE
+  );
 
   function chooseOwner(ownerId) {
     setForm((current) => ({
@@ -1006,6 +1048,18 @@ export default function MedicalRecordsModule({
       return;
     }
 
+    windowRef.document.write(
+      buildRecordDocumentHtml(record)
+    );
+
+    windowRef.document.close();
+
+    windowRef.print();
+  }
+
+  function buildRecordDocumentHtml(
+    record
+  ) {
     const pet = record.pet || {};
     const owner = record.owner || {};
     const vet = record.veterinarian || {};
@@ -1285,7 +1339,7 @@ export default function MedicalRecordsModule({
       bodyByTemplate[template] || healthRecordBody
     )();
 
-    windowRef.document.write(`
+    return (`
       <html>
       <head>
         <title>${escapeHtml(templateLabel)} — ${escapeHtml(
@@ -1513,10 +1567,6 @@ export default function MedicalRecordsModule({
       </body>
       </html>
     `);
-
-    windowRef.document.close();
-
-    windowRef.print();
   }
 
   async function openPredictiveAnalysis(
@@ -2338,7 +2388,7 @@ export default function MedicalRecordsModule({
           }
         />
 
-        {profile?.role !== "pet_owner" && (
+        {canCreate && (
           <select
             className="new-record-select"
             aria-label="Create a new medical record"
@@ -2405,6 +2455,167 @@ export default function MedicalRecordsModule({
           No medical records
           found.
         </div>
+      ) : isStaffView ? (
+        <>
+          <div className="mr-table-wrap">
+            <table className="mr-table">
+              <thead>
+                <tr>
+                  <th>Pet / Owner</th>
+                  <th>Date</th>
+                  <th>Veterinarian</th>
+                  <th>Complaint</th>
+                  <th>Diagnosis</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {paginatedShown.map(
+                  (record) => (
+                    <tr key={record.id}>
+                      <td>
+                        <b>
+                          {record.pet
+                            ?.pet_name}
+                        </b>
+
+                        <div>
+                          {record.pet
+                            ?.species ||
+                            "Pet"}{" "}
+                          •{" "}
+                          {record.owner
+                            ?.full_name ||
+                            "Owner"}
+                        </div>
+                      </td>
+
+                      <td>
+                        {
+                          record.consultation_date
+                        }
+                      </td>
+
+                      <td>
+                        {record
+                          .veterinarian
+                          ?.full_name ||
+                          "—"}
+                      </td>
+
+                      <td>
+                        {record.chief_complaint ||
+                          "—"}
+                      </td>
+
+                      <td>
+                        {record.diagnosis ||
+                          "—"}
+                      </td>
+
+                      <td>
+                        <div className="mr-row-actions">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setViewRecord(
+                                record
+                              )
+                            }
+                          >
+                            <Eye
+                              size={15}
+                            />
+                            View
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              printRecord(
+                                record
+                              )
+                            }
+                          >
+                            <Printer
+                              size={15}
+                            />
+                            Print
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="mr-pagination">
+              <button
+                type="button"
+                className="mr-page-nav"
+                disabled={currentPage === 1}
+                onClick={() =>
+                  setPage(
+                    (p) => p - 1
+                  )
+                }
+                aria-label="Previous page"
+              >
+                <ChevronLeft
+                  size={17}
+                />
+              </button>
+
+              <div className="mr-pagination-pages">
+                {Array.from(
+                  {
+                    length: totalPages,
+                  },
+                  (_, i) => i + 1
+                ).map((num) => (
+                  <button
+                    type="button"
+                    key={num}
+                    className={
+                      num ===
+                      currentPage
+                        ? "active"
+                        : ""
+                    }
+                    onClick={() =>
+                      setPage(num)
+                    }
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="mr-page-nav"
+                disabled={
+                  currentPage ===
+                  totalPages
+                }
+                onClick={() =>
+                  setPage(
+                    (p) => p + 1
+                  )
+                }
+                aria-label="Next page"
+              >
+                <ChevronRight
+                  size={17}
+                />
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <div className="grid">
           {shown.map(
@@ -2538,6 +2749,79 @@ export default function MedicalRecordsModule({
               </article>
             )
           )}
+        </div>
+      )}
+
+      {viewRecord && (
+        <div
+          className="mr-view-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Medical record details"
+        >
+          <div className="mr-view-card">
+            <div className="mr-view-head">
+              <h3>
+                {getMedicalRecordTemplate(
+                  viewRecord.record_template ||
+                    DEFAULT_MEDICAL_RECORD_TEMPLATE
+                ).label}{" "}
+                —{" "}
+                {viewRecord.pet
+                  ?.pet_name ||
+                  "Pet"}
+              </h3>
+
+              <div className="mr-view-actions">
+                {viewRecord.attachment_url && (
+                  <a
+                    href={
+                      viewRecord.attachment_url
+                    }
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Attachment
+                  </a>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    printRecord(
+                      viewRecord
+                    )
+                  }
+                >
+                  <Printer
+                    size={15}
+                  />
+                  Print
+                </button>
+
+                <button
+                  type="button"
+                  className="mr-view-close"
+                  onClick={() =>
+                    setViewRecord(
+                      null
+                    )
+                  }
+                  aria-label="Close"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <iframe
+              title="Medical record preview"
+              className="mr-view-frame"
+              srcDoc={buildRecordDocumentHtml(
+                viewRecord
+              )}
+            />
+          </div>
         </div>
       )}
 
@@ -4648,6 +4932,207 @@ export default function MedicalRecordsModule({
         .ai-download:disabled {
           opacity: .55;
           cursor: not-allowed;
+        }
+
+        .mr-table-wrap {
+          overflow-x: auto;
+          background: #fff;
+          border-radius: 14px;
+          box-shadow: 0 8px 24px rgba(47,117,150,.09);
+        }
+
+        .mr-table {
+          width: 100%;
+          min-width: 780px;
+          border-collapse: collapse;
+          font-size: 14px;
+        }
+
+        .mr-table th {
+          text-align: left;
+          padding: 13px 14px;
+          color: #536b78;
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: .4px;
+          border-bottom: 1px solid #e1edf2;
+        }
+
+        .mr-table td {
+          padding: 13px 14px;
+          border-bottom: 1px solid #edf3f5;
+          color: #334f5d;
+          vertical-align: top;
+        }
+
+        .mr-table tbody tr:last-child td {
+          border-bottom: 0;
+        }
+
+        .mr-table tbody tr:hover {
+          background: #f5fbfd;
+        }
+
+        .mr-table .mr-row-actions {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .mr-row-actions button {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border: 1px solid #cde6f0;
+          background: #edf7fb;
+          color: #247ba5;
+          border-radius: 8px;
+          padding: 7px 11px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .mr-row-actions button:hover {
+          background: #dcf0f8;
+        }
+
+        .mr-pagination {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 14px;
+          margin-top: 18px;
+          padding-top: 16px;
+        }
+
+        .mr-page-nav {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 38px;
+          height: 38px;
+          flex-shrink: 0;
+          border: 1px solid #cfe4ed;
+          border-radius: 50%;
+          background: #fff;
+          color: #2b6f8f;
+          cursor: pointer;
+        }
+
+        .mr-page-nav:hover:not(:disabled) {
+          background: #eaf6fb;
+        }
+
+        .mr-page-nav:disabled {
+          cursor: not-allowed;
+          opacity: .4;
+        }
+
+        .mr-pagination-pages {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+
+        .mr-pagination-pages button {
+          min-width: 38px;
+          min-height: 38px;
+          border: 1px solid transparent;
+          border-radius: 9px;
+          background: transparent;
+          color: #536b78;
+          font-weight: 700;
+          font-size: 14px;
+          cursor: pointer;
+        }
+
+        .mr-pagination-pages button:hover {
+          background: #eaf6fb;
+        }
+
+        .mr-pagination-pages button.active {
+          border-color: #318fbe;
+          background: #318fbe;
+          color: #fff;
+        }
+
+        .mr-view-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(20,40,50,.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 80;
+          padding: 20px;
+        }
+
+        .mr-view-card {
+          background: #fff;
+          border-radius: 16px;
+          width: min(820px, 100%);
+          height: min(82vh, 780px);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          box-shadow: 0 20px 48px rgba(16,50,67,.24);
+        }
+
+        .mr-view-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 16px 20px;
+          border-bottom: 1px solid #e1edf2;
+          flex: 0 0 auto;
+        }
+
+        .mr-view-head h3 {
+          margin: 0;
+          color: #213944;
+          font-size: 17px;
+        }
+
+        .mr-view-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .mr-view-actions button,
+        .mr-view-actions a {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border: 1px solid #cde6f0;
+          background: #edf7fb;
+          color: #247ba5;
+          border-radius: 8px;
+          padding: 8px 12px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: none;
+        }
+
+        .mr-view-actions button.mr-view-close {
+          border: 0;
+          background: transparent;
+          color: #536b78;
+          padding: 8px;
+        }
+
+        .mr-view-frame {
+          flex: 1 1 auto;
+          border: 0;
+          width: 100%;
+          height: 100%;
+          min-height: 0;
+          background: #f7fbfd;
         }
 
         @media(max-width:900px) {

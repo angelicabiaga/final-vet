@@ -468,6 +468,10 @@ export async function saveInventoryItem(
             "Initial stock",
           notes:
             "Opening inventory quantity",
+          batchNumber:
+            payload.batch_number,
+          expiryDate:
+            payload.expiry_date,
         },
         profile
       );
@@ -486,6 +490,11 @@ export async function saveInventoryItem(
   return data;
 }
 
+const BATCH_CREATING_TYPES = [
+  "Stock In",
+  "Adjustment Add",
+];
+
 export async function recordInventoryTransaction(
   values,
   profile
@@ -501,6 +510,20 @@ export async function recordInventoryTransaction(
   ) {
     throw new Error(
       "Select an item and enter a valid quantity greater than zero."
+    );
+  }
+
+  const createsBatch =
+    BATCH_CREATING_TYPES.includes(
+      values.transactionType
+    );
+
+  if (
+    createsBatch &&
+    !values.expiryDate
+  ) {
+    throw new Error(
+      "Expiry date is required for stock received into inventory."
     );
   }
 
@@ -531,6 +554,15 @@ export async function recordInventoryTransaction(
       p_created_by:
         profile?.id ||
         null,
+      p_batch_number: createsBatch
+        ? values.batchNumber?.trim() || null
+        : null,
+      p_date_received: createsBatch
+        ? values.dateReceived || null
+        : null,
+      p_expiry_date: createsBatch
+        ? values.expiryDate || null
+        : null,
     }
   );
 
@@ -1437,7 +1469,14 @@ AI inventory analysis is based on available inventory and transaction records an
 
           temperature: 0.2,
 
-          max_tokens: 1400,
+          // openai/gpt-oss-20b is a reasoning model: part of max_tokens is
+          // spent on an invisible internal "reasoning" pass before it writes
+          // the actual answer into `content`. 1400 was tight enough that the
+          // model could burn its whole budget reasoning and leave nothing
+          // for content, coming back empty -- confirmed live, reasoning-token
+          // usage for the same prompt ranged from ~380 to ~1100 tokens across
+          // runs. Sized generously so that never happens.
+          max_tokens: 4000,
         }),
       }
     );

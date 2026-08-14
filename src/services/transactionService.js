@@ -9,9 +9,6 @@ const TRANSACTION_ITEM_FIELDS =
 const PAYMENT_METHODS = [
   "Cash",
   "GCash",
-  "Maya",
-  "Credit Card",
-  "Debit Card",
   "Split Payment",
 ];
 
@@ -74,7 +71,7 @@ async function decorateTransactions(rows) {
   const profileIds = [
     ...new Set(
       transactionRows
-        .flatMap((row) => [row.owner_id, row.staff_id, row.created_by, row.voided_by, row.refunded_by])
+        .flatMap((row) => [row.owner_id, row.staff_id, row.created_by])
         .filter(Boolean)
     ),
   ];
@@ -100,8 +97,6 @@ async function decorateTransactions(rows) {
     pet: petsById.get(transaction.pet_id) || null,
     owner: profilesById.get(transaction.owner_id) || null,
     cashier: profilesById.get(transaction.staff_id || transaction.created_by) || null,
-    voidedBy: profilesById.get(transaction.voided_by) || null,
-    refundedBy: profilesById.get(transaction.refunded_by) || null,
   }));
 }
 
@@ -193,8 +188,8 @@ export async function getTransactionById(transactionId) {
 
 export async function getTransactionAuditTrail(transactionId) {
   const { data, error } = await supabase
-    .from("transaction_audit_logs")
-    .select("id,transaction_id,action,previous_status,next_status,reason,details,performed_by,created_at")
+    .from("transaction_audit_log")
+    .select("id,transaction_id,action,previous_status,next_status:new_status,reason,details,performed_by,created_at")
     .eq("transaction_id", transactionId)
     .order("created_at", { ascending: false });
 
@@ -238,20 +233,18 @@ export async function getTransactions({
   return decorateTransactions(data || []);
 }
 
-export async function reverseTransaction({ transactionId, action, reason, itemIds = null }, profile) {
-  if (!transactionId || !["Void", "Refund"].includes(action) || !reason?.trim()) {
-    throw new Error("A transaction action and reason are required.");
+export async function reverseTransaction({ transactionId, reason }, profile) {
+  if (!transactionId || !reason?.trim()) {
+    throw new Error("A reason is required to void this transaction.");
   }
 
   const { data, error } = await supabase.rpc("pawcruz_reverse_pos_transaction", {
     p_transaction_id: transactionId,
-    p_action: action,
     p_reason: reason.trim(),
     p_actor_id: profile?.id || null,
-    p_item_ids: itemIds,
   });
 
-  if (error) throw friendly(error, `Unable to ${action.toLowerCase()} this transaction.`);
+  if (error) throw friendly(error, "Unable to void this transaction.");
   return data;
 }
 
@@ -259,7 +252,7 @@ export async function pollTransactionStatus(transactionId, { intervalMs = 2000, 
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const transaction = await getTransactionById(transactionId);
-    if (["Paid", "Cancelled", "Voided", "Refunded"].includes(transaction.payment_status)) return transaction;
+    if (["Paid", "Cancelled", "Voided"].includes(transaction.payment_status)) return transaction;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return getTransactionById(transactionId);

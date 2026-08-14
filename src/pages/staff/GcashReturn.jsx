@@ -82,7 +82,7 @@ export default function GcashReturn({ profile }) {
       setRedirectSeconds((seconds) => Math.max(0, seconds - 1));
     }, 1000);
     const redirect = window.setTimeout(() => {
-      navigate("/staff/transactions#payment-history");
+      navigate("/staff/transactions");
     }, 5000);
 
     return () => {
@@ -135,7 +135,7 @@ export default function GcashReturn({ profile }) {
           </>
         )}
 
-        <Link to={status === "paid" ? "/staff/transactions#payment-history" : "/staff/transactions"} className="back-link">
+        <Link to="/staff/transactions" className="back-link">
           {status === "paid" ? "Go to Payment Transaction History now" : "Back to Transactions"}
         </Link>
       </div>

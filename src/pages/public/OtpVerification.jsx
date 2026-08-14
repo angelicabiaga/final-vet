@@ -145,6 +145,8 @@ export default function OtpVerification() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [resent, setResent] = useState(false);
+  const [resetToken, setResetToken] = useState(0);
+  const [trustDevice, setTrustDevice] = useState(false);
 
   async function submit(event) {
     event.preventDefault();

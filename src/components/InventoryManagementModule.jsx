@@ -64,7 +64,15 @@ const EMPTY_TX = {
   quantity: "",
   reason: "",
   notes: "",
+  batchNumber: "",
+  dateReceived: "",
+  expiryDate: "",
 };
+
+const BATCH_CREATING_TX_TYPES = [
+  "Stock In",
+  "Adjustment Add",
+];
 
 const statuses = [
   "",
@@ -2152,6 +2160,64 @@ export default function InventoryManagementModule({
                 }
               />
             </Field>
+
+            {BATCH_CREATING_TX_TYPES.includes(
+              txForm.transactionType
+            ) && (
+              <>
+                <Field label="Batch/Lot Number">
+                  <input
+                    value={
+                      txForm.batchNumber
+                    }
+                    placeholder="e.g. B-2026-01"
+                    onChange={(e) =>
+                      setTxForm({
+                        ...txForm,
+                        batchNumber:
+                          e.target
+                            .value,
+                      })
+                    }
+                  />
+                </Field>
+
+                <Field label="Date Received">
+                  <input
+                    type="date"
+                    value={
+                      txForm.dateReceived
+                    }
+                    onChange={(e) =>
+                      setTxForm({
+                        ...txForm,
+                        dateReceived:
+                          e.target
+                            .value,
+                      })
+                    }
+                  />
+                </Field>
+
+                <Field label="Expiry Date">
+                  <input
+                    type="date"
+                    required
+                    value={
+                      txForm.expiryDate
+                    }
+                    onChange={(e) =>
+                      setTxForm({
+                        ...txForm,
+                        expiryDate:
+                          e.target
+                            .value,
+                      })
+                    }
+                  />
+                </Field>
+              </>
+            )}
 
             <Field
               label="Reason"
