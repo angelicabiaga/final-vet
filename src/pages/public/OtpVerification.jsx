@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import { LoginLayout } from './Login';
@@ -15,6 +15,116 @@ const PURPOSE_TITLES = {
   login: 'Verify login',
   forgot_password: 'Verify password reset',
 };
+
+const OTP_LENGTH = 6;
+
+function OtpCodeInput({ onChange, disabled, resetKey, blockPaste = false }) {
+  const [digits, setDigits] = useState(() => Array(OTP_LENGTH).fill(''));
+  const inputsRef = useRef([]);
+
+  useEffect(() => {
+    setDigits(Array(OTP_LENGTH).fill(''));
+    inputsRef.current[0]?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
+
+  useEffect(() => {
+    onChange(digits.join(''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [digits]);
+
+  function distribute(rawDigits, startIndex) {
+    const chars = rawDigits.split('').slice(0, OTP_LENGTH - startIndex);
+    setDigits((current) => {
+      const next = [...current];
+      chars.forEach((char, offset) => {
+        next[startIndex + offset] = char;
+      });
+      return next;
+    });
+    const nextIndex = Math.min(startIndex + chars.length, OTP_LENGTH - 1);
+    window.setTimeout(() => inputsRef.current[nextIndex]?.focus(), 0);
+  }
+
+  function handleChange(index, event) {
+    const raw = event.target.value.replace(/\D/g, '');
+
+    if (!raw) {
+      setDigits((current) => {
+        const next = [...current];
+        next[index] = '';
+        return next;
+      });
+      return;
+    }
+
+    if (raw.length > 1) {
+      distribute(raw, index);
+      return;
+    }
+
+    setDigits((current) => {
+      const next = [...current];
+      next[index] = raw;
+      return next;
+    });
+
+    if (index < OTP_LENGTH - 1) inputsRef.current[index + 1]?.focus();
+  }
+
+  function handleKeyDown(index, event) {
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+      setDigits((current) => {
+        const next = [...current];
+        if (next[index]) {
+          next[index] = '';
+        } else if (index > 0) {
+          next[index - 1] = '';
+        }
+        return next;
+      });
+      if (!digits[index] && index > 0) inputsRef.current[index - 1]?.focus();
+    } else if (event.key === 'ArrowLeft' && index > 0) {
+      inputsRef.current[index - 1]?.focus();
+    } else if (event.key === 'ArrowRight' && index < OTP_LENGTH - 1) {
+      inputsRef.current[index + 1]?.focus();
+    }
+  }
+
+  function handlePaste(event) {
+    event.preventDefault();
+    if (blockPaste) return;
+
+    const pasted = event.clipboardData.getData('text').replace(/\D/g, '');
+    if (pasted) distribute(pasted, 0);
+  }
+
+  return (
+    <div className='otp-code-boxes' role='group' aria-label='Verification code'>
+      {digits.map((digit, index) => (
+        <input
+          key={index}
+          ref={(el) => {
+            inputsRef.current[index] = el;
+          }}
+          className='otp-code-box'
+          type='text'
+          inputMode='numeric'
+          maxLength={1}
+          autoComplete={index === 0 ? 'one-time-code' : 'off'}
+          value={digit}
+          onChange={(event) => handleChange(index, event)}
+          onKeyDown={(event) => handleKeyDown(index, event)}
+          onPaste={handlePaste}
+          onFocus={(event) => event.target.select()}
+          disabled={disabled}
+          aria-label={`Digit ${index + 1} of ${OTP_LENGTH}`}
+        />
+      ))}
+    </div>
+  );
+}
 
 export default function OtpVerification() {
   const navigate = useNavigate();
@@ -33,6 +143,7 @@ export default function OtpVerification() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [resent, setResent] = useState(false);
+  const [resetToken, setResetToken] = useState(0);
 
   async function submit(event) {
     event.preventDefault();
@@ -81,6 +192,7 @@ export default function OtpVerification() {
     try {
       await resendAuthOtp(purpose);
       setCode('');
+      setResetToken((token) => token + 1);
       setResent(true);
     } catch (error) {
       setMessage(error.message || 'Unable to resend OTP.');
@@ -114,11 +226,20 @@ export default function OtpVerification() {
       showBackToHome
     >
       <style>{`
-        .otp-code-input {
+        .otp-code-boxes {
+          display: flex;
+          justify-content: center;
+          gap: 10px;
+        }
+
+        .otp-code-box {
+          width: 50px !important;
+          min-height: 58px !important;
+          padding: 0 !important;
           text-align: center;
           font-size: 24px !important;
           font-weight: 800;
-          letter-spacing: 10px !important;
+          letter-spacing: normal !important;
         }
 
         .otp-resend-button {
@@ -135,9 +256,14 @@ export default function OtpVerification() {
         }
 
         @media (max-width: 520px) {
-          .otp-code-input {
-            font-size: 20px !important;
-            letter-spacing: 7px !important;
+          .otp-code-boxes {
+            gap: 7px;
+          }
+
+          .otp-code-box {
+            width: 40px !important;
+            min-height: 48px !important;
+            font-size: 19px !important;
           }
 
           .otp-expiry-note {
@@ -149,19 +275,11 @@ export default function OtpVerification() {
       <form onSubmit={submit}>
         <label>
           Verification Code
-          <input
-            className='otp-code-input'
-            inputMode='numeric'
-            autoComplete='one-time-code'
-            maxLength={6}
-            placeholder='000000'
-            value={code}
-            onChange={(event) =>
-              setCode(
-                event.target.value.replace(/\D/g, '').slice(0, 6),
-              )
-            }
-            required
+          <OtpCodeInput
+            onChange={setCode}
+            disabled={loading}
+            resetKey={resetToken}
+            blockPaste={purpose === 'login'}
           />
         </label>
 

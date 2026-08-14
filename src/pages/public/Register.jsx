@@ -278,46 +278,10 @@ const registerStyles = `
     gap: 11px 16px;
   }
 
-  .register-form > .register-field:nth-of-type(1) {
-    order: 1;
-  }
-
-  .register-middle-name {
-    order: 2;
-  }
-
-  .register-form > .register-field:nth-of-type(2) {
-    order: 3;
-  }
-
-  .register-form > .register-field:nth-of-type(3) {
-    order: 4;
-  }
-
-  .register-form > .register-field:nth-of-type(4) {
-    order: 5;
-  }
-
-  .register-form > .register-field:nth-of-type(5) {
-    order: 6;
-  }
-
   .register-error,
   .register-submit-button,
   .register-form-links {
     grid-column: 1 / -1;
-  }
-
-  .register-error {
-    order: 7;
-  }
-
-  .register-submit-button {
-    order: 8;
-  }
-
-  .register-form-links {
-    order: 9;
   }
 
   .register-field {
@@ -986,8 +950,9 @@ function RegistrationSuccess() {
 
 export default function Register() {
   const [form, setForm] = useState({
+    firstName: "",
     middleName: '',
-    fullName: "",
+    lastName: "",
     username: "",
     email: "",
     password: "",
@@ -1039,16 +1004,13 @@ export default function Register() {
     setLoading(true);
 
     try {
-      const nameParts = form.fullName.trim().split(/\s+/).filter(Boolean);
-      const middleName = form.middleName.trim();
-      const completeName =
-        middleName && nameParts.length > 1
-          ? [
-              ...nameParts.slice(0, -1),
-              middleName,
-              nameParts[nameParts.length - 1],
-            ].join(' ')
-          : [form.fullName.trim(), middleName].filter(Boolean).join(' ');
+      const completeName = [
+        form.firstName.trim(),
+        form.middleName.trim(),
+        form.lastName.trim(),
+      ]
+        .filter(Boolean)
+        .join(' ');
 
       const result = await registerPetOwner({
         ...form,
@@ -1101,17 +1063,50 @@ export default function Register() {
 
             <form className="register-form" onSubmit={submit} noValidate>
               <label className="register-field">
-                <span>First and Last Name</span>
+                <span>First Name</span>
 
                 <input
                   type="text"
-                  name="fullName"
-                  placeholder="Enter your full name"
-                  autoComplete="name"
+                  name="firstName"
+                  placeholder="Enter your first name"
+                  autoComplete="given-name"
                   required
-                  value={form.fullName}
+                  value={form.firstName}
                   onChange={(e) =>
-                    updateField("fullName", e.target.value)
+                    updateField("firstName", e.target.value)
+                  }
+                />
+              </label>
+
+              <label className="register-field">
+                <span>Last Name</span>
+
+                <input
+                  type="text"
+                  name="lastName"
+                  placeholder="Enter your last name"
+                  autoComplete="family-name"
+                  required
+                  value={form.lastName}
+                  onChange={(e) =>
+                    updateField("lastName", e.target.value)
+                  }
+                />
+              </label>
+
+              <label className='register-field'>
+                <span>
+                  Middle Name <small>(Optional)</small>
+                </span>
+
+                <input
+                  type='text'
+                  name='middleName'
+                  placeholder='Enter your middle name'
+                  autoComplete='additional-name'
+                  value={form.middleName}
+                  onChange={(e) =>
+                    updateField('middleName', e.target.value)
                   }
                 />
               </label>
@@ -1176,23 +1171,6 @@ export default function Register() {
                   value={form.confirm}
                   onChange={(e) =>
                     updateField("confirm", e.target.value)
-                  }
-                />
-              </label>
-
-              <label className='register-field register-middle-name'>
-                <span>
-                  Middle Name <small>(Optional)</small>
-                </span>
-
-                <input
-                  type='text'
-                  name='middleName'
-                  placeholder='Enter your middle name'
-                  autoComplete='additional-name'
-                  value={form.middleName}
-                  onChange={(e) =>
-                    updateField('middleName', e.target.value)
                   }
                 />
               </label>

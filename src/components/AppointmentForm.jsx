@@ -26,7 +26,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const [ownerQuery, setOwnerQuery] = useState("");
   const [ownerDropdownOpen, setOwnerDropdownOpen] = useState(false);
   const [ownerRecord, setOwnerRecord] = useState(null);
-  const [guestForm, setGuestForm] = useState({ fullName: "", phone: "", email: "" });
+  const [guestForm, setGuestForm] = useState({ firstName: "", lastName: "", phone: "", email: "" });
   const [petDropdownOpen, setPetDropdownOpen] = useState(false);
   const petSelectRef = useRef(null);
   const [petModalOpen, setPetModalOpen] = useState(false);
@@ -163,10 +163,11 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   async function ensureOwnerId() {
     if (form.ownerId) return form.ownerId;
     if (!guestOwner) throw new Error("Search for and select a pet owner first.");
-    const { fullName, phone, email } = guestForm;
-    if (!fullName.trim() || !phone.trim() || !email.trim()) {
-      throw new Error("Fill in the guest's full name, phone, and email first.");
+    const { firstName, lastName, phone, email } = guestForm;
+    if (!firstName.trim() || !lastName.trim() || !phone.trim() || !email.trim()) {
+      throw new Error("Fill in the guest's first name, last name, phone, and email first.");
     }
+    const fullName = `${firstName.trim()} ${lastName.trim()}`;
     const owner = await createGuestOwner({ fullName, phone, email });
     setOwnerRecord(owner);
     updateForm({ ownerId: owner.id });
@@ -380,10 +381,13 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
         {isStaff && (guestOwner ? (
           <>
-            <label>Full Name<input required value={guestForm.fullName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, fullName: event.target.value }))} placeholder="Enter full name" /></label>
             <div className="two-cols">
-              <label>Phone Number<input required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, phone: event.target.value }))} placeholder="Enter phone number" /></label>
-              <label>Email<input required type="email" value={guestForm.email} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, email: event.target.value }))} placeholder="Enter email address" /></label>
+              <label>First Name<span className="required-mark">*</span><input required value={guestForm.firstName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, firstName: event.target.value }))} placeholder="Enter first name" /></label>
+              <label>Last Name<span className="required-mark">*</span><input required value={guestForm.lastName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, lastName: event.target.value }))} placeholder="Enter last name" /></label>
+            </div>
+            <div className="two-cols">
+              <label>Phone Number<span className="required-mark">*</span><input required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, phone: event.target.value }))} placeholder="Enter phone number" /></label>
+              <label>Email<span className="required-mark">*</span><input required type="email" value={guestForm.email} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, email: event.target.value }))} placeholder="Enter email address" /></label>
             </div>
             {ownerRecord && (
               <p className="help">
@@ -392,7 +396,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
             )}
           </>
         ) : (
-          <label>Pet Owner
+          <label>Pet Owner<span className="required-mark">*</span>
             <div className="appt-owner-select">
               <input
                 type="text"
@@ -420,7 +424,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
           </label>
         ))}
 
-        <label>Pet Selection
+        <label>Pet Selection<span className="required-mark">*</span>
           <div className="appt-pet-select" ref={petSelectRef}>
             <div className="appt-pet-controls">
               <button type="button" className="appt-pet-trigger" disabled={isStaff && !form.ownerId} onClick={() => setPetDropdownOpen(open => !open)}>
@@ -456,14 +460,14 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         </label>
 
         <div className="two-cols">
-          <label>Appointment Date<input type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required /></label>
-          <label>Available Time<select value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={availabilityLoading || !availableTimes.length}>
+          <label>Appointment Date<span className="required-mark">*</span><input type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required /></label>
+          <label>Available Time<span className="required-mark">*</span><select value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={availabilityLoading || !availableTimes.length}>
             <option value="">{availabilityLoading ? "Loading…" : availableTimes.length ? "Select time" : "No available slots"}</option>
             {availableTimes.map(slot => <option key={slot} value={slot}>{formatTime(slot)}</option>)}
           </select></label>
         </div>
 
-        <label>Veterinarian
+        <label>Veterinarian<span className="required-mark">*</span>
           <select value={form.veterinarianId} onChange={event => updateForm({ veterinarianId: event.target.value })} required disabled={!form.startTime}>
             <option value="">{!form.startTime ? "Select a time first" : eligibleVets.length ? "Select veterinarian" : "No veterinarian available at this time"}</option>
             {eligibleVets.map(vet => <option key={vet.id} value={vet.id}>{vet.full_name}</option>)}
@@ -494,9 +498,9 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
             <h3><PawPrint size={18} /> Add Pet</h3>
             <form onSubmit={submitPetModal} className="appt-modal-form">
               {petModalMessage && <div className="notice error">{petModalMessage}</div>}
-              <label>Pet Name<input required value={petModalForm.petName} onChange={event => setPetModalForm(value => ({ ...value, petName: event.target.value }))} placeholder="Enter pet name" /></label>
+              <label>Pet Name<span className="required-mark">*</span><input required value={petModalForm.petName} onChange={event => setPetModalForm(value => ({ ...value, petName: event.target.value }))} placeholder="Enter pet name" /></label>
               <div className="two-cols">
-                <label>Species<input required value={petModalForm.species} onChange={event => setPetModalForm(value => ({ ...value, species: event.target.value }))} placeholder="e.g. Dog, Cat" /></label>
+                <label>Species<span className="required-mark">*</span><input required value={petModalForm.species} onChange={event => setPetModalForm(value => ({ ...value, species: event.target.value }))} placeholder="e.g. Dog, Cat" /></label>
                 <label>Breed <span>(optional)</span><input value={petModalForm.breed} onChange={event => setPetModalForm(value => ({ ...value, breed: event.target.value }))} placeholder="Enter breed" /></label>
               </div>
               <div className="two-cols">
@@ -538,7 +542,7 @@ function formatAppointmentDate(value) {
 }
 
 const styles = `
-.appointment-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:22px;align-items:start}.appointment-card{background:#fff;border-radius:20px;padding:24px;box-shadow:0 10px 30px rgba(55,126,158,.1)}.form-title{display:flex;gap:12px;align-items:center;margin-bottom:20px;color:#318fbe}.form-title h2{margin:0;color:#20313B}.form-title p{margin:3px 0;color:#6F7F88}.appointment-card label{display:grid;gap:7px;font-weight:700;margin-bottom:16px}.appointment-card label span{font-weight:400;color:#7c8c94}.appointment-card input,.appointment-card select,.appointment-card textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;font:inherit;color:#20313B;background:#fbfeff}.appointment-card input:focus,.appointment-card select:focus,.appointment-card textarea:focus{outline:2px solid #a9dff0;border-color:#4DA8DA}.two-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}.book-button{width:100%;border:0;border-radius:13px;padding:14px;background:#4DA8DA;color:white;font-weight:800;font-size:15px;cursor:pointer}.book-button:disabled{opacity:.65;cursor:not-allowed}.notice{padding:12px 14px;border-radius:12px;margin-bottom:16px}.notice.success{background:#eaf8ef;color:#28774b}.notice.error{background:#fff0f0;color:#b34848}.summary{position:sticky;top:105px}.summary h3{margin-top:0}.summary-row{display:flex;gap:11px;padding:13px 0;border-bottom:1px solid #edf4f7}.summary-icon{width:36px;height:36px;background:#eaf8fd;color:#3998c5;border-radius:10px;display:grid;place-items:center;flex-shrink:0}.summary-icon svg{width:18px}.summary-row small,.summary-row strong{display:block}.summary-row small{color:#758891;margin-bottom:3px}.summary-row strong{word-break:break-word}.summary-type{margin-top:18px;padding:14px;background:#f2fafd;border-radius:12px;display:grid;gap:5px}.summary-type span{color:#318fbe}.help{font-size:12px;line-height:1.55;color:#6F7F88}
+.appointment-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:22px;align-items:start}.appointment-card{background:#fff;border-radius:20px;padding:24px;box-shadow:0 10px 30px rgba(55,126,158,.1)}.form-title{display:flex;gap:12px;align-items:center;margin-bottom:20px;color:#318fbe}.form-title h2{margin:0;color:#20313B}.form-title p{margin:3px 0;color:#6F7F88}.appointment-card label{display:grid;gap:7px;font-weight:700;margin-bottom:16px}.appointment-card label span{font-weight:400;color:#7c8c94}.appointment-card label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}.appointment-card input,.appointment-card select,.appointment-card textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;font:inherit;color:#20313B;background:#fbfeff}.appointment-card input:focus,.appointment-card select:focus,.appointment-card textarea:focus{outline:2px solid #a9dff0;border-color:#4DA8DA}.two-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}.book-button{width:100%;border:0;border-radius:13px;padding:14px;background:#4DA8DA;color:white;font-weight:800;font-size:15px;cursor:pointer}.book-button:disabled{opacity:.65;cursor:not-allowed}.notice{padding:12px 14px;border-radius:12px;margin-bottom:16px}.notice.success{background:#eaf8ef;color:#28774b}.notice.error{background:#fff0f0;color:#b34848}.summary{position:sticky;top:105px}.summary h3{margin-top:0}.summary-row{display:flex;gap:11px;padding:13px 0;border-bottom:1px solid #edf4f7}.summary-icon{width:36px;height:36px;background:#eaf8fd;color:#3998c5;border-radius:10px;display:grid;place-items:center;flex-shrink:0}.summary-icon svg{width:18px}.summary-row small,.summary-row strong{display:block}.summary-row small{color:#758891;margin-bottom:3px}.summary-row strong{word-break:break-word}.summary-type{margin-top:18px;padding:14px;background:#f2fafd;border-radius:12px;display:grid;gap:5px}.summary-type span{color:#318fbe}.help{font-size:12px;line-height:1.55;color:#6F7F88}
 
 .appt-owner-select{position:relative}.appt-owner-select input{padding-right:36px}.appt-clear{position:absolute;right:8px;top:12px;border:0;background:#edf5f8;color:#5d7782;border-radius:7px;padding:5px;cursor:pointer;display:grid;place-items:center}
 .appt-linklike{border:0;background:none;padding:0;color:#318fbe;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
@@ -560,10 +564,10 @@ const styles = `
 .appt-modal{position:relative;width:min(520px,100%);max-height:86vh;overflow:auto;border-radius:19px;padding:25px;background:#fff;box-shadow:0 22px 55px rgba(22,56,72,.24)}
 .appt-modal h3{margin:0 0 16px;display:flex;align-items:center;gap:8px;color:#20313B;padding-right:30px}
 .appt-modal-close{position:absolute;top:12px;right:12px;display:grid;place-items:center;border:0;border-radius:9px;padding:7px;background:#edf5f8;color:#456472;cursor:pointer}
-.appt-modal-form label{display:grid;gap:7px;font-weight:700;margin-bottom:14px}.appt-modal-form label span{font-weight:400;color:#7c8c94}
+.appt-modal-form label{display:grid;gap:7px;font-weight:700;margin-bottom:14px}.appt-modal-form label span{font-weight:400;color:#7c8c94}.appt-modal-form label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}
 .appt-modal-form input,.appt-modal-form select{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:11px 13px;font:inherit;color:#20313B;background:#fbfeff}
 
-.walkin-success-view{min-height:calc(100vh - 150px);display:grid;place-items:center;padding:32px 18px;background:radial-gradient(circle at top left,rgba(77,168,218,.13),transparent 38%),linear-gradient(145deg,#f8fcfe 0%,#edf8fc 100%);border-radius:24px}.walkin-success-card{position:relative;width:min(100%,680px);overflow:hidden;background:rgba(255,255,255,.96);border:1px solid rgba(119,189,218,.35);border-radius:28px;padding:42px;box-shadow:0 24px 65px rgba(34,99,128,.16);text-align:center}.walkin-success-card:before{content:"";position:absolute;inset:0 0 auto;height:7px;background:linear-gradient(90deg,#3f9fca,#72c6dc)}.walkin-success-icon{width:88px;height:88px;margin:0 auto 20px;display:grid;place-items:center;border-radius:50%;color:#fff;background:linear-gradient(145deg,#42a6cc,#69c4d9);box-shadow:0 14px 30px rgba(57,157,196,.28)}.walkin-success-label{display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px;padding:7px 13px;border-radius:999px;background:#eaf7fc;color:#267da3;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.walkin-success-card h2{margin:0;color:#183c50;font-size:clamp(27px,4vw,38px);line-height:1.15;letter-spacing:-.025em}.walkin-success-copy{max-width:510px;margin:13px auto 28px;color:#607985;font-size:16px;line-height:1.65}.walkin-success-details{margin:0;padding:8px 22px;background:#f6fbfd;border:1px solid #dceff6;border-radius:18px;text-align:left}.walkin-success-details>div{display:grid;grid-template-columns:150px minmax(0,1fr);gap:18px;align-items:center;padding:15px 4px;border-bottom:1px solid #e1eef3}.walkin-success-details>div:last-child{border-bottom:0}.walkin-success-details dt{color:#6b818b;font-size:13px;font-weight:700}.walkin-success-details dd{margin:0;color:#183c50;font-size:15px;font-weight:800;line-height:1.55}.walkin-success-actions{display:flex;justify-content:center;gap:12px;margin-top:28px}.walkin-success-actions button,.walkin-success-actions a{min-height:46px;display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:13px;padding:12px 18px;font:inherit;font-size:14px;font-weight:800;text-decoration:none;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,background .18s ease}.walkin-success-actions button{border:1px solid #bcdce9;background:#fff;color:#267da3}.walkin-success-actions a{border:1px solid #318fbe;background:#318fbe;color:#fff;box-shadow:0 9px 18px rgba(49,143,190,.22)}.walkin-success-actions button:hover,.walkin-success-actions a:hover{transform:translateY(-2px)}.walkin-success-actions button:hover{background:#f1f9fc}.walkin-success-actions a:hover{background:#287fa9;box-shadow:0 12px 24px rgba(49,143,190,.28)}.walkin-success-actions button:focus-visible,.walkin-success-actions a:focus-visible{outline:3px solid rgba(77,168,218,.32);outline-offset:3px}
+.walkin-success-view{height:calc(100vh - 156px);overflow:hidden;display:grid;place-items:center;padding:24px 18px;background:radial-gradient(circle at top left,rgba(77,168,218,.13),transparent 38%),linear-gradient(145deg,#f8fcfe 0%,#edf8fc 100%);border-radius:24px}.walkin-success-card{position:relative;width:min(100%,680px);max-height:100%;overflow-y:auto;background:rgba(255,255,255,.96);border:1px solid rgba(119,189,218,.35);border-radius:28px;padding:30px 34px;box-shadow:0 24px 65px rgba(34,99,128,.16);text-align:center}.walkin-success-card:before{content:"";position:absolute;inset:0 0 auto;height:7px;background:linear-gradient(90deg,#3f9fca,#72c6dc)}.walkin-success-icon{width:72px;height:72px;margin:0 auto 14px;display:grid;place-items:center;border-radius:50%;color:#fff;background:linear-gradient(145deg,#42a6cc,#69c4d9);box-shadow:0 14px 30px rgba(57,157,196,.28)}.walkin-success-label{display:inline-flex;align-items:center;justify-content:center;margin-bottom:10px;padding:7px 13px;border-radius:999px;background:#eaf7fc;color:#267da3;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.walkin-success-card h2{margin:0;color:#183c50;font-size:clamp(24px,3.4vw,32px);line-height:1.15;letter-spacing:-.025em}.walkin-success-copy{max-width:510px;margin:10px auto 18px;color:#607985;font-size:15px;line-height:1.55}.walkin-success-details{margin:0;padding:4px 22px;background:#f6fbfd;border:1px solid #dceff6;border-radius:18px;text-align:left}.walkin-success-details>div{display:grid;grid-template-columns:150px minmax(0,1fr);gap:18px;align-items:center;padding:11px 4px;border-bottom:1px solid #e1eef3}.walkin-success-details>div:last-child{border-bottom:0}.walkin-success-details dt{color:#6b818b;font-size:13px;font-weight:700}.walkin-success-details dd{margin:0;color:#183c50;font-size:15px;font-weight:800;line-height:1.4}.walkin-success-actions{display:flex;justify-content:center;gap:12px;margin-top:18px}.walkin-success-actions button,.walkin-success-actions a{min-height:46px;display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:13px;padding:12px 18px;font:inherit;font-size:14px;font-weight:800;text-decoration:none;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,background .18s ease}.walkin-success-actions button{border:1px solid #bcdce9;background:#fff;color:#267da3}.walkin-success-actions a{border:1px solid #318fbe;background:#318fbe;color:#fff;box-shadow:0 9px 18px rgba(49,143,190,.22)}.walkin-success-actions button:hover,.walkin-success-actions a:hover{transform:translateY(-2px)}.walkin-success-actions button:hover{background:#f1f9fc}.walkin-success-actions a:hover{background:#287fa9;box-shadow:0 12px 24px rgba(49,143,190,.28)}.walkin-success-actions button:focus-visible,.walkin-success-actions a:focus-visible{outline:3px solid rgba(77,168,218,.32);outline-offset:3px}
 
-@media(max-width:900px){.appointment-grid{grid-template-columns:1fr}.summary{position:static}}@media(max-width:560px){.two-cols{grid-template-columns:1fr}.appointment-card{padding:17px}.appt-pet-controls{flex-direction:column}.walkin-success-view{min-height:auto;padding:14px 0;background:transparent}.walkin-success-card{border-radius:20px;padding:31px 18px 22px}.walkin-success-icon{width:72px;height:72px}.walkin-success-icon svg{width:39px;height:39px}.walkin-success-copy{font-size:14px;margin-bottom:21px}.walkin-success-details{padding:5px 14px}.walkin-success-details>div{grid-template-columns:1fr;gap:4px;padding:12px 2px}.walkin-success-details dt{font-size:12px}.walkin-success-actions{flex-direction:column}.walkin-success-actions button,.walkin-success-actions a{width:100%}}
+@media(max-width:900px){.appointment-grid{grid-template-columns:1fr}.summary{position:static}}@media(max-width:560px){.two-cols{grid-template-columns:1fr}.appointment-card{padding:17px}.appt-pet-controls{flex-direction:column}.walkin-success-view{height:auto;overflow:visible;padding:14px 0;background:transparent}.walkin-success-card{max-height:none;overflow-y:visible;border-radius:20px;padding:31px 18px 22px}.walkin-success-icon{width:72px;height:72px}.walkin-success-icon svg{width:39px;height:39px}.walkin-success-copy{font-size:14px;margin-bottom:21px}.walkin-success-details{padding:5px 14px}.walkin-success-details>div{grid-template-columns:1fr;gap:4px;padding:12px 2px}.walkin-success-details dt{font-size:12px}.walkin-success-actions{flex-direction:column}.walkin-success-actions button,.walkin-success-actions a{width:100%}}
 `;

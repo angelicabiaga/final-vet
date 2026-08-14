@@ -97,9 +97,10 @@ export async function getAvailableSlots(veterinarianId, appointmentDate, exclude
   let current = normalizeTime(schedule.start_time);
   if (current < CLINIC_OPEN_TIME) current = CLINIC_OPEN_TIME;
 
-  // PawCruz clinic accepts appointments until closing time.
-  // The last 10-minute appointment starts at 6:50 PM and ends at 7:00 PM.
-  const end = CLINIC_CLOSE_TIME;
+  // PawCruz clinic accepts appointments until closing time, but a vet's
+  // own schedule (weekly or a date override) can end earlier than that.
+  const scheduleEnd = normalizeTime(schedule.end_time);
+  const end = scheduleEnd < CLINIC_CLOSE_TIME ? scheduleEnd : CLINIC_CLOSE_TIME;
   const isToday = appointmentDate === todayLocal();
   const nowMinutes = isToday ? nowMinutesLocal() : -1;
   while (current < end) {

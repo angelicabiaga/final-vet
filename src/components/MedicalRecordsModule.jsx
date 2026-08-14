@@ -18,6 +18,7 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  Search,
   Sparkles,
   Upload,
   X,
@@ -75,7 +76,7 @@ const blank = {
   followUpDate: "",
   veterinarianNotes: "",
   attachmentUrl: "",
-  recordStatus: "Draft",
+  recordStatus: "Finalized",
 };
 
 const VACCINE_KEYS = [
@@ -155,6 +156,42 @@ function pdfSafeText(value) {
     .trim();
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (ch) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[ch]
+  );
+}
+
+function printDate(value) {
+  if (!value) return "—";
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return escapeHtml(value);
+  return parsed.toLocaleDateString("en-PH", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  });
+}
+
+function printField(label, value) {
+  return `
+    <div class="field">
+      <span class="field-label">${escapeHtml(label)}</span>
+      <span class="field-value">${
+        value ? escapeHtml(value) : "—"
+      }</span>
+    </div>
+  `;
+}
+
 export default function MedicalRecordsModule({
   profile,
 }) {
@@ -177,6 +214,11 @@ export default function MedicalRecordsModule({
     inventoryOptions,
     setInventoryOptions,
   ] = useState([]);
+
+  const [
+    inventorySearch,
+    setInventorySearch,
+  ] = useState("");
 
   const [
     appointments,
@@ -216,11 +258,6 @@ export default function MedicalRecordsModule({
   const [
     search,
     setSearch,
-  ] = useState("");
-
-  const [
-    status,
-    setStatus,
   ] = useState("");
 
   const [
@@ -268,6 +305,70 @@ export default function MedicalRecordsModule({
     () => pets.find((pet) => pet.id === form.petId),
     [pets, form.petId]
   );
+
+  // Sorted by owner first so pets belonging to the same owner sit
+  // together, making the picker faster to scan than scrolling
+  // through every pet alphabetically.
+  const petOptions = useMemo(
+    () =>
+      [...pets].sort((a, b) => {
+        const ownerA = (a.owner?.full_name || "").toLowerCase();
+        const ownerB = (b.owner?.full_name || "").toLowerCase();
+        if (ownerA !== ownerB) return ownerA < ownerB ? -1 : 1;
+
+        const nameA = (a.pet_name || "").toLowerCase();
+        const nameB = (b.pet_name || "").toLowerCase();
+        return nameA < nameB ? -1 : nameA > nameB ? 1 : 0;
+      }),
+    [pets]
+  );
+
+  // Pick the pet owner first, then the pet list narrows to just
+  // that owner's pets instead of one long combined list.
+  const ownerOptions = useMemo(() => {
+    const seen = new Map();
+
+    petOptions.forEach((pet) => {
+      if (pet.owner_id && !seen.has(pet.owner_id)) {
+        seen.set(pet.owner_id, {
+          id: pet.owner_id,
+          full_name: pet.owner?.full_name || "Unnamed Owner",
+        });
+      }
+    });
+
+    return [...seen.values()].sort((a, b) =>
+      a.full_name.toLowerCase() < b.full_name.toLowerCase()
+        ? -1
+        : 1
+    );
+  }, [petOptions]);
+
+  const petOptionsForOwner = useMemo(
+    () =>
+      petOptions.filter(
+        (pet) => pet.owner_id === form.ownerId
+      ),
+    [petOptions, form.ownerId]
+  );
+
+  const filteredInventoryOptions = useMemo(() => {
+    const chosen = form.templateData?.inventoryItems || [];
+    const keyword = inventorySearch.trim().toLowerCase();
+
+    return inventoryOptions
+      .filter(
+        (option) =>
+          !chosen.some((entry) => entry.id === option.id)
+      )
+      .filter(
+        (option) =>
+          !keyword ||
+          `${option.item_name} ${option.category}`
+            .toLowerCase()
+            .includes(keyword)
+      );
+  }, [inventoryOptions, inventorySearch, form.templateData]);
 
   // Staff and pet owners get a read-only view; only the veterinarian who
   // treats the pet (or an admin) can create or edit a medical record.
@@ -336,8 +437,7 @@ export default function MedicalRecordsModule({
         inventoryRows,
       ] = await Promise.all([
         getMedicalRecords(
-          profile,
-          { status }
+          profile
         ),
 
         getPets({
@@ -385,7 +485,8 @@ export default function MedicalRecordsModule({
 
   useEffect(() => {
     load();
-  }, [status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!canEdit) return;
@@ -420,6 +521,7 @@ export default function MedicalRecordsModule({
       .then(setAppointments)
       .catch(() => setAppointments([]));
 
+    setInventorySearch("");
     setShow(true);
   }, [canEdit, queueLaunch]);
 
@@ -452,23 +554,30 @@ export default function MedicalRecordsModule({
     search,
   ]);
 
+  function chooseOwner(ownerId) {
+    setForm((current) => ({
+      ...current,
+      ownerId,
+      petId: "",
+      appointmentId: "",
+    }));
+
+    setAppointments([]);
+  }
+
   async function choosePet(
     id
   ) {
-    const pet =
-      pets.find(
-        (item) =>
-          item.id === id
-      );
-
     setForm((current) => ({
       ...current,
       petId: id,
-      ownerId:
-        pet?.owner_id ||
-        "",
       appointmentId: "",
     }));
+
+    if (!id) {
+      setAppointments([]);
+      return;
+    }
 
     try {
       setAppointments(
@@ -566,7 +675,7 @@ export default function MedicalRecordsModule({
         "",
       recordStatus:
         record.record_status ||
-        "Draft",
+        "Finalized",
     });
 
     getAppointmentsForPet(
@@ -581,6 +690,7 @@ export default function MedicalRecordsModule({
 
     setQueueContext(null);
     setPendingQueueCompletion(null);
+    setInventorySearch("");
     setShow(true);
   }
 
@@ -618,9 +728,7 @@ export default function MedicalRecordsModule({
     }));
   }
 
-  function pickInventoryItem(event) {
-    const value = event.target.value;
-    event.target.value = "";
+  function pickInventoryItem(value) {
     if (!value) return;
 
     const current = form.templateData?.inventoryItems || [];
@@ -631,6 +739,7 @@ export default function MedicalRecordsModule({
           { id: "NA", item_name: "N/A", isNA: true },
         ],
       });
+      setInventorySearch("");
       return;
     }
 
@@ -656,6 +765,7 @@ export default function MedicalRecordsModule({
         },
       ],
     });
+    setInventorySearch("");
   }
 
   function removeInventoryItem(id) {
@@ -798,7 +908,10 @@ export default function MedicalRecordsModule({
     setSuccess("");
 
     try {
-      await saveMedicalRecord(form, profile);
+      await saveMedicalRecord(
+        { ...form, recordStatus: "Finalized" },
+        profile
+      );
       await load();
       setSuccess("Medical record saved successfully.");
       setPendingQueueCompletion(null);
@@ -876,6 +989,7 @@ export default function MedicalRecordsModule({
       .then(setAppointments)
       .catch(() => setAppointments([]));
 
+    setInventorySearch("");
     setShow(true);
   }
 
@@ -892,143 +1006,509 @@ export default function MedicalRecordsModule({
       return;
     }
 
+    const pet = record.pet || {};
+    const owner = record.owner || {};
+    const vet = record.veterinarian || {};
+    const templateData = record.template_data || {};
+    const template =
+      record.record_template ||
+      DEFAULT_MEDICAL_RECORD_TEMPLATE;
+    const templateLabel = getMedicalRecordTemplate(
+      template
+    ).label;
+
+    const patientBar = `
+      <table class="patient-bar">
+        <tr>
+          <td><span class="k">Pet</span>${escapeHtml(pet.pet_name)}</td>
+          <td><span class="k">Species / Breed</span>${escapeHtml(
+            [pet.species, pet.breed].filter(Boolean).join(" / ") || "—"
+          )}</td>
+          <td><span class="k">Sex</span>${escapeHtml(pet.sex || "—")}</td>
+        </tr>
+        <tr>
+          <td><span class="k">Guardian</span>${escapeHtml(
+            owner.full_name
+          )}</td>
+          <td><span class="k">Veterinarian</span>${escapeHtml(
+            vet.full_name
+          )}</td>
+          <td><span class="k">Date</span>${printDate(
+            record.consultation_date
+          )}</td>
+        </tr>
+      </table>
+    `;
+
+    function inventorySection() {
+      const items = templateData.inventoryItems || [];
+      if (!items.length) return "";
+
+      return `
+        <div class="section">
+          <div class="section-title">Test / Medicine / Vaccine Given</div>
+          <p class="plain">
+            ${items
+              .map((item) => escapeHtml(item.item_name))
+              .join(", ")}
+          </p>
+        </div>
+      `;
+    }
+
+    function tailSection() {
+      return `
+        ${
+          record.follow_up_date
+            ? `<div class="section">${printField(
+                "Follow-up Date",
+                printDate(record.follow_up_date)
+              )}</div>`
+            : ""
+        }
+        ${
+          record.veterinarian_notes
+            ? `<div class="section">
+                <div class="section-title">Veterinarian Notes</div>
+                <p class="plain">${escapeHtml(
+                  record.veterinarian_notes
+                )}</p>
+              </div>`
+            : ""
+        }
+      `;
+    }
+
+    function healthRecordBody() {
+      return `
+        <div class="section grid-2">
+          ${printField("Chief Complaint", record.chief_complaint)}
+          ${printField("Symptoms", record.symptoms)}
+          ${printField("Vital Signs", record.vital_signs)}
+          ${printField(
+            "Weight",
+            record.weight ? `${record.weight} kg` : ""
+          )}
+          ${printField(
+            "Temperature",
+            record.temperature
+              ? `${record.temperature} °C`
+              : ""
+          )}
+        </div>
+        <div class="section">
+          ${printField("Diagnosis", record.diagnosis)}
+          ${printField("Treatment", record.treatment)}
+          ${printField("Treatment Plan", record.treatment_plan)}
+        </div>
+        <div class="section grid-2">
+          ${printField("Medication", record.medication)}
+          ${printField("Dosage", record.dosage)}
+          ${printField("Frequency", record.frequency)}
+          ${printField("Duration", record.duration)}
+        </div>
+        <div class="section">
+          ${printField(
+            "Laboratory Request",
+            record.laboratory_request
+          )}
+          ${printField(
+            "Laboratory Result",
+            record.laboratory_result
+          )}
+        </div>
+      `;
+    }
+
+    function petProfileBody() {
+      return `
+        <div class="cover-box">
+          <div class="cover-title">Health Record</div>
+          <div class="cover-subtitle">Your Pet's Passport to Health</div>
+          <div class="cover-fields">
+            ${printField("Name of Pet", pet.pet_name)}
+            ${printField(
+              "Date of Birth",
+              pet.date_of_birth
+                ? printDate(pet.date_of_birth)
+                : ""
+            )}
+            ${printField("Breed", pet.breed)}
+            ${printField("Sex", pet.sex)}
+            ${printField("Markings", pet.color)}
+            ${printField("Microchip No.", pet.microchip_number)}
+            ${printField("Guardian's Name", owner.full_name)}
+            ${printField("Address", owner.address)}
+            ${printField("Phone No.", owner.phone)}
+            ${printField(
+              "Patient No.",
+              templateData.patientNumber
+            )}
+            ${printField(
+              "Record No.",
+              templateData.recordNumber
+            )}
+          </div>
+        </div>
+      `;
+    }
+
+    function vaccinationBody() {
+      const rows = record.vaccination_records || [];
+      const columns = [
+        "Date",
+        "Age",
+        "Weight",
+        ...VACCINE_KEYS.map(([, label]) => label),
+        "Others",
+        "Administered By",
+      ];
+
+      const rowsHtml = rows.length
+        ? rows
+            .map(
+              (row) => `
+              <tr>
+                <td>${printDate(row.date)}</td>
+                <td>${escapeHtml(row.age || "—")}</td>
+                <td>${escapeHtml(row.weight || "—")}</td>
+                ${VACCINE_KEYS.map(
+                  ([key]) =>
+                    `<td class="center">${
+                      row[key] ? "✓" : ""
+                    }</td>`
+                ).join("")}
+                <td>${escapeHtml(row.others || "—")}</td>
+                <td>${escapeHtml(
+                  row.administeredBy || "—"
+                )}</td>
+              </tr>
+            `
+            )
+            .join("")
+        : `<tr><td colspan="${columns.length}" class="empty">No vaccinations recorded.</td></tr>`;
+
+      return `
+        <table class="record-table">
+          <thead>
+            <tr>${columns
+              .map((col) => `<th>${escapeHtml(col)}</th>`)
+              .join("")}</tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      `;
+    }
+
+    function parasiteBody() {
+      const rows = record.parasite_treatments || [];
+      const rowsHtml = rows.length
+        ? rows
+            .map(
+              (row) => `
+              <tr>
+                <td>${printDate(row.date)}</td>
+                <td>${escapeHtml(row.treatment || "—")}</td>
+              </tr>
+            `
+            )
+            .join("")
+        : `<tr><td colspan="2" class="empty">No parasite prevention entries.</td></tr>`;
+
+      return `
+        <table class="record-table">
+          <thead><tr><th>Date</th><th>Treatment</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      `;
+    }
+
+    function heartwormBody() {
+      const rows = record.heartworm_tests || [];
+      const rowsHtml = rows.length
+        ? rows
+            .map(
+              (row) => `
+              <tr>
+                <td>${printDate(row.date)}</td>
+                <td>${escapeHtml(row.result || "—")}</td>
+              </tr>
+            `
+            )
+            .join("")
+        : `<tr><td colspan="2" class="empty">No heartworm test results.</td></tr>`;
+
+      return `
+        <table class="record-table">
+          <thead><tr><th>Date</th><th>Result</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      `;
+    }
+
+    function dentalBody() {
+      return `
+        <p class="legend">
+          KEY: O = Displayed Tooth &nbsp;•&nbsp; X = Missing Tooth
+          &nbsp;•&nbsp; ✕ = Caries, Injury, FX
+        </p>
+        <div class="section grid-2">
+          ${printField("Gingiva", templateData.gingiva)}
+          ${printField("Occlusion", templateData.occlusion)}
+          ${printField("Salivation", templateData.salivation)}
+          ${printField("Halitosis", templateData.halitosis)}
+        </div>
+        <div class="section">
+          ${printField(
+            "Periodontal Disease / Other Comment",
+            templateData.periodontalNotes
+          )}
+          ${printField(
+            "Dental Chart and Findings",
+            templateData.dentalChart
+          )}
+          ${printField("Dental Treatment", record.treatment)}
+        </div>
+      `;
+    }
+
+    const bodyByTemplate = {
+      "health-record": healthRecordBody,
+      "pet-profile": petProfileBody,
+      vaccination: vaccinationBody,
+      "parasite-prevention": parasiteBody,
+      heartworm: heartwormBody,
+      dental: dentalBody,
+    };
+
+    const templateBody = (
+      bodyByTemplate[template] || healthRecordBody
+    )();
+
     windowRef.document.write(`
       <html>
       <head>
-        <title>Medical Record</title>
+        <title>${escapeHtml(templateLabel)} — ${escapeHtml(
+      pet.pet_name || "Pet"
+    )}</title>
         <style>
+          * { box-sizing: border-box; }
+
           body {
+            margin: 0;
+            padding: 36px;
             font-family: Georgia, "Times New Roman", serif;
-            padding: 32px;
-            color: #20313b;
+            color: #2b2320;
           }
 
-          h1 {
-            color: #318fbe;
+          .letterhead {
+            padding-bottom: 14px;
+            margin-bottom: 16px;
+            border-bottom: 3px solid #7a4a5a;
+            text-align: center;
+          }
+
+          .clinic-name {
+            font-size: 24px;
+            font-weight: 700;
+            color: #7a4a5a;
+            letter-spacing: 0.3px;
+          }
+
+          .clinic-address,
+          .clinic-contact {
+            font-size: 12px;
+            color: #5c5450;
+            margin-top: 2px;
+          }
+
+          h2.doc-title {
+            margin: 0 0 16px;
+            padding: 8px 14px;
+            background: #f3e1e6;
+            border: 1px solid #d9b7c1;
+            border-radius: 6px;
+            color: #7a4a5a;
+            font-size: 16px;
+            text-align: center;
+          }
+
+          .patient-bar {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 18px;
+          }
+
+          .patient-bar td {
+            border: 1px solid #d9c6cb;
+            padding: 8px 10px;
+            font-size: 12.5px;
+            vertical-align: top;
+          }
+
+          .patient-bar .k {
+            display: block;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: #8a7a76;
+            margin-bottom: 2px;
+          }
+
+          .section {
+            margin-bottom: 14px;
+          }
+
+          .section-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: #7a4a5a;
+            margin-bottom: 6px;
+          }
+
+          .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 24px;
+          }
+
+          .field {
+            display: flex;
+            gap: 6px;
+            padding: 5px 0;
+            border-bottom: 1px dotted #d9c6cb;
+            font-size: 13px;
+          }
+
+          .field-label {
+            flex: 0 0 auto;
+            font-weight: 700;
+            color: #5c5450;
+            white-space: nowrap;
+          }
+
+          .field-value {
+            flex: 1;
+          }
+
+          .plain {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.6;
+          }
+
+          .cover-box {
+            border: 2px solid #7a4a5a;
+            border-radius: 8px;
+            padding: 18px 22px;
+          }
+
+          .cover-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #7a4a5a;
+          }
+
+          .cover-subtitle {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: #8a7a76;
+            margin-bottom: 12px;
+          }
+
+          .record-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11.5px;
+          }
+
+          .record-table th,
+          .record-table td {
+            border: 1px solid #cbb8bd;
+            padding: 6px 7px;
+            text-align: left;
+          }
+
+          .record-table th {
+            background: #f3e1e6;
+            color: #7a4a5a;
+          }
+
+          .record-table .center {
+            text-align: center;
+          }
+
+          .record-table .empty {
+            text-align: center;
+            color: #8a7a76;
+            padding: 14px;
+          }
+
+          .legend {
+            font-size: 11px;
+            color: #5c5450;
+            margin: 0 0 14px;
+          }
+
+          .signature {
+            margin-top: 46px;
+            width: 260px;
+          }
+
+          .signature .sig-line {
+            border-top: 1px solid #2b2320;
             margin-bottom: 4px;
           }
 
-          h2 {
-            margin-top: 0;
+          .sig-name {
+            font-size: 13px;
+            font-weight: 700;
           }
 
-          .row {
-            margin: 10px 0;
+          .sig-label {
+            font-size: 10.5px;
+            color: #8a7a76;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
           }
 
-          .label {
-            font-weight: bold;
+          @media print {
+            body { padding: 18px; }
           }
         </style>
       </head>
 
       <body>
-        <h1>Cruz Veterinary Clinic</h1>
-
-        <h2>
-          Electronic Pet Medical Record
-        </h2>
-
-        <div class="row">
-          <span class="label">
-            Pet:
-          </span>
-          ${
-            record.pet
-              ?.pet_name ||
-            ""
-          }
+        <div class="letterhead">
+          <div class="clinic-name">Cruz Veterinary Clinic</div>
+          <div class="clinic-address">
+            2189 Stall G, Felimarc Pet Center, A. Luna St., Pasay City
+          </div>
+          <div class="clinic-contact">
+            Sun: 0933 853 7649 &nbsp;•&nbsp; Globe: 0917 116 5379
+            &nbsp;•&nbsp; Tel: 8356 0126
+          </div>
         </div>
 
-        <div class="row">
-          <span class="label">
-            Owner:
-          </span>
-          ${
-            record.owner
-              ?.full_name ||
-            ""
-          }
-        </div>
+        <h2 class="doc-title">${escapeHtml(templateLabel)}</h2>
 
-        <div class="row">
-          <span class="label">
-            Veterinarian:
-          </span>
-          ${
-            record
-              .veterinarian
-              ?.full_name ||
-            ""
-          }
-        </div>
+        ${patientBar}
+        ${templateBody}
+        ${inventorySection()}
+        ${tailSection()}
 
-        <div class="row">
-          <span class="label">
-            Date:
-          </span>
-          ${
-            record.consultation_date ||
-            ""
-          }
-        </div>
-
-        <div class="row">
-          <span class="label">
-            Complaint:
-          </span>
-          ${
-            record.chief_complaint ||
-            "—"
-          }
-        </div>
-
-        <div class="row">
-          <span class="label">
-            Diagnosis:
-          </span>
-          ${
-            record.diagnosis ||
-            "—"
-          }
-        </div>
-
-        <div class="row">
-          <span class="label">
-            Treatment:
-          </span>
-          ${
-            record.treatment ||
-            "—"
-          }
-        </div>
-
-        <div class="row">
-          <span class="label">
-            Medication:
-          </span>
-          ${
-            record.medication ||
-            "—"
-          }
-          ${
-            record.dosage ||
-            ""
-          }
-          ${
-            record.frequency ||
-            ""
-          }
-        </div>
-
-        <div class="row">
-          <span class="label">
-            Follow-up:
-          </span>
-          ${
-            record.follow_up_date ||
-            "—"
-          }
+        <div class="signature">
+          <div class="sig-line"></div>
+          <div class="sig-name">
+            ${escapeHtml(vet.full_name || "")}${
+      vet.full_name ? ", DVM" : ""
+    }
+          </div>
+          <div class="sig-label">Veterinarian's Signature</div>
         </div>
       </body>
       </html>
@@ -1860,31 +2340,14 @@ export default function MedicalRecordsModule({
 
         {canEdit && (
           <select
-            value={status}
-            onChange={(e) =>
-              setStatus(
-                e.target.value
-              )
-            }
-          >
-            <option value="">
-              All statuses
-            </option>
+            className="new-record-select"
+            aria-label="Create a new medical record"
+            defaultValue=""
+            onChange={(event) => {
+              const template = event.target.value;
+              event.target.value = "";
+              if (!template) return;
 
-            <option>
-              Draft
-            </option>
-
-            <option>
-              Finalized
-            </option>
-          </select>
-        )}
-
-        {canEdit && (
-          <button
-            type="button"
-            onClick={() => {
               setForm({
                 ...blank,
 
@@ -1893,17 +2356,29 @@ export default function MedicalRecordsModule({
                   "veterinarian"
                     ? profile.id
                     : "",
+
+                recordTemplate: template,
               });
 
               setQueueContext(null);
               setPendingQueueCompletion(null);
+              setInventorySearch("");
               setShow(true);
             }}
           >
-            <Plus size={16} />
+            <option value="" disabled>
+              + New Record
+            </option>
 
-            New Record
-          </button>
+            {MEDICAL_RECORD_TEMPLATES.map((template) => (
+              <option
+                key={template.value}
+                value={template.value}
+              >
+                {template.label}
+              </option>
+            ))}
+          </select>
         )}
       </div>
 
@@ -1957,19 +2432,6 @@ export default function MedicalRecordsModule({
                         "Owner"}
                     </p>
                   </div>
-
-                  <span
-                    className={
-                      record.record_status ===
-                      "Finalized"
-                        ? "final"
-                        : "draft"
-                    }
-                  >
-                    {
-                      record.record_status
-                    }
-                  </span>
                 </div>
 
                 <p>
@@ -2126,11 +2588,55 @@ export default function MedicalRecordsModule({
             </div>
 
             <div className="fields">
+              <div className="wide context-fields">
+              <label>
+                Pet Owner
+
+                <select
+                  required
+                  disabled={!!queueContext}
+                  value={
+                    form.ownerId
+                  }
+                  onChange={(e) =>
+                    chooseOwner(
+                      e.target
+                        .value
+                    )
+                  }
+                >
+                  <option value="">
+                    Select pet owner
+                  </option>
+
+                  {ownerOptions.map(
+                    (owner) => (
+                      <option
+                        key={
+                          owner.id
+                        }
+                        value={
+                          owner.id
+                        }
+                      >
+                        {
+                          owner.full_name
+                        }
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+
               <label>
                 Pet
 
                 <select
                   required
+                  disabled={
+                    !!queueContext ||
+                    !form.ownerId
+                  }
                   value={
                     form.petId
                   }
@@ -2142,10 +2648,12 @@ export default function MedicalRecordsModule({
                   }
                 >
                   <option value="">
-                    Select pet
+                    {form.ownerId
+                      ? "Select pet"
+                      : "Select pet owner first"}
                   </option>
 
-                  {pets.map(
+                  {petOptionsForOwner.map(
                     (pet) => (
                       <option
                         key={
@@ -2157,11 +2665,10 @@ export default function MedicalRecordsModule({
                       >
                         {
                           pet.pet_name
-                        }{" "}
-                        —{" "}
-                        {pet.owner
-                          ?.full_name ||
-                          "Owner"}
+                        }
+                        {pet.species
+                          ? ` — ${pet.species}`
+                          : ""}
                       </option>
                     )
                   )}
@@ -2173,6 +2680,10 @@ export default function MedicalRecordsModule({
 
                 <select
                   required
+                  disabled={
+                    !!queueContext ||
+                    profile.role === "veterinarian"
+                  }
                   value={
                     form.veterinarianId
                   }
@@ -2212,6 +2723,7 @@ export default function MedicalRecordsModule({
                 Appointment
 
                 <select
+                  disabled={!!queueContext}
                   value={
                     form.appointmentId
                   }
@@ -2246,10 +2758,6 @@ export default function MedicalRecordsModule({
                         }{" "}
                         {
                           appointment.start_time
-                        }{" "}
-                        —{" "}
-                        {
-                          appointment.status
                         }
                       </option>
                     )
@@ -2263,6 +2771,7 @@ export default function MedicalRecordsModule({
                 <input
                   type="date"
                   required
+                  disabled={!!queueContext}
                   value={
                     form.consultationDate
                   }
@@ -2276,68 +2785,7 @@ export default function MedicalRecordsModule({
                   }
                 />
               </label>
-
-              <label className="wide">
-                Test / Medicine / Vaccine Given
-                <span className="field-hint">
-                  Required — used by the POS to compute the payment total.
-                </span>
-
-                <select
-                  value=""
-                  onChange={pickInventoryItem}
-                  disabled={!canEdit}
-                >
-                  <option value="">
-                    {(form.templateData?.inventoryItems || []).length
-                      ? "Add another item…"
-                      : "Select test, medicine, or vaccine…"}
-                  </option>
-
-                  <option value="NA">
-                    N/A — nothing given
-                  </option>
-
-                  {inventoryOptions
-                    .filter(
-                      (option) =>
-                        !(form.templateData?.inventoryItems || []).some(
-                          (entry) => entry.id === option.id
-                        )
-                    )
-                    .map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.item_name} — {option.category} (₱{Number(option.unit_price || 0).toFixed(2)})
-                      </option>
-                    ))}
-                </select>
-
-                {!(form.templateData?.inventoryItems || []).length && (
-                  <small className="field-required-note">
-                    Choose at least one item, or N/A, before saving.
-                  </small>
-                )}
-
-                {(form.templateData?.inventoryItems || []).length > 0 && (
-                  <div className="chosen-items">
-                    {form.templateData.inventoryItems.map((entry) => (
-                      <span className="chosen-item-chip" key={entry.id}>
-                        {entry.item_name}
-                        {!entry.isNA && ` — ₱${Number(entry.unit_price || 0).toFixed(2)}`}
-                        {canEdit && (
-                          <button
-                            type="button"
-                            aria-label={`Remove ${entry.item_name}`}
-                            onClick={() => removeInventoryItem(entry.id)}
-                          >
-                            <X size={12} />
-                          </button>
-                        )}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </label>
+              </div>
 
               {form.recordTemplate === "health-record" && (
                 <>
@@ -2977,34 +3425,6 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
-              {!queueContext && (
-              <label>
-                Status
-
-                <select
-                  value={
-                    form.recordStatus
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      recordStatus:
-                        e.target
-                          .value,
-                    })
-                  }
-                >
-                  <option>
-                    Draft
-                  </option>
-
-                  <option>
-                    Finalized
-                  </option>
-                </select>
-              </label>
-              )}
-
               <label className="wide">
                 Veterinarian Notes
 
@@ -3023,31 +3443,136 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
-              <label className="wide upload">
-                <Upload
-                  size={18}
-                />
-
+              <div className="wide field-block">
                 Attachment
 
-                <input
-                  type="file"
-                  onChange={
-                    fileChange
-                  }
-                />
+                <div className="attachment-box">
+                  <label className="attachment-trigger">
+                    <Upload size={16} />
 
-                {form.attachmentUrl && (
-                  <a
-                    href={
-                      form.attachmentUrl
-                    }
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    View uploaded
-                    file
-                  </a>
+                    <span>
+                      {saving
+                        ? "Uploading…"
+                        : form.attachmentUrl
+                          ? "Replace File"
+                          : "Choose File"}
+                    </span>
+
+                    <input
+                      type="file"
+                      disabled={saving}
+                      onChange={
+                        fileChange
+                      }
+                    />
+                  </label>
+
+                  {form.attachmentUrl ? (
+                    <a
+                      className="attachment-view"
+                      href={
+                        form.attachmentUrl
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <FileDown size={14} />
+                      View uploaded file
+                    </a>
+                  ) : (
+                    <span className="attachment-empty">
+                      No file attached yet.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <label className="wide">
+                Test / Medicine / Vaccine Given
+                <span className="field-hint">
+                  Required — used by the POS to compute the payment total.
+                </span>
+
+                <div className="inventory-picker">
+                  <div className="inventory-picker-search">
+                    <Search size={15} />
+
+                    <input
+                      type="text"
+                      placeholder="Search inventory by name or category…"
+                      value={inventorySearch}
+                      disabled={!canEdit}
+                      onChange={(e) =>
+                        setInventorySearch(e.target.value)
+                      }
+                    />
+                  </div>
+
+                  <div className="inventory-picker-list">
+                    <button
+                      type="button"
+                      className="inventory-picker-na"
+                      disabled={!canEdit}
+                      onClick={() => pickInventoryItem("NA")}
+                    >
+                      N/A — nothing given
+                    </button>
+
+                    {filteredInventoryOptions.length === 0 ? (
+                      <div className="inventory-picker-empty">
+                        No matching inventory items.
+                      </div>
+                    ) : (
+                      filteredInventoryOptions.map((option) => (
+                        <button
+                          type="button"
+                          key={option.id}
+                          className="inventory-picker-item"
+                          disabled={!canEdit}
+                          onClick={() =>
+                            pickInventoryItem(option.id)
+                          }
+                        >
+                          <span className="inventory-picker-item-name">
+                            {option.item_name}
+                          </span>
+
+                          <span className="inventory-picker-item-meta">
+                            {option.category} · ₱
+                            {Number(
+                              option.unit_price || 0
+                            ).toFixed(2)}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {!(form.templateData?.inventoryItems || []).length && (
+                  <small className="field-required-note">
+                    Choose at least one item, or N/A, before saving.
+                  </small>
+                )}
+
+                {(form.templateData?.inventoryItems || []).length > 0 && (
+                  <div className="chosen-items">
+                    {form.templateData.inventoryItems.map((entry) => (
+                      <span className="chosen-item-chip" key={entry.id}>
+                        {entry.item_name}
+                        {!entry.isNA && ` — ₱${Number(entry.unit_price || 0).toFixed(2)}`}
+                        {canEdit && (
+                          <button
+                            type="button"
+                            aria-label={`Remove ${entry.item_name}`}
+                            onClick={() => removeInventoryItem(entry.id)}
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </label>
             </div>
@@ -3268,7 +3793,7 @@ export default function MedicalRecordsModule({
 
         .mr .toolbar {
           display: grid;
-          grid-template-columns: minmax(260px, 1fr) 190px auto;
+          grid-template-columns: minmax(260px, 1fr) auto;
           gap: 12px;
           align-items: center;
           margin-bottom: 20px;
@@ -3319,6 +3844,18 @@ export default function MedicalRecordsModule({
           white-space: nowrap;
         }
 
+        .mr .toolbar select.new-record-select {
+          background: #4da8da;
+          border-color: #4da8da;
+          color: #fff;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .mr .toolbar select.new-record-select:focus {
+          box-shadow: 0 0 0 3px rgba(77,168,218,.28);
+        }
+
         .mr .grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -3326,6 +3863,8 @@ export default function MedicalRecordsModule({
         }
 
         .mr .card {
+          display: flex;
+          flex-direction: column;
           border: 1px solid #e1edf2;
         }
 
@@ -3344,31 +3883,13 @@ export default function MedicalRecordsModule({
           color: #6f7f88;
         }
 
-        .mr .final,
-        .mr .draft {
-          height: max-content;
-          padding: 6px 10px;
-          border-radius: 20px;
-          font-size: 12px;
-          font-weight: 700;
-        }
-
-        .mr .final {
-          background: #e8f7ef;
-          color: #2d8558;
-        }
-
-        .mr .draft {
-          background: #fff4d9;
-          color: #9a6a00;
-        }
-
         .mr .actions {
           display: flex;
           gap: 8px;
           align-items: center;
           flex-wrap: wrap;
-          margin-top: 14px;
+          margin-top: auto;
+          padding-top: 14px;
         }
 
         .mr .actions .ai-record-btn {
@@ -3480,6 +4001,17 @@ export default function MedicalRecordsModule({
           clear: both;
         }
 
+        .mr-panel .context-fields {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0,1fr));
+          gap: 16px 18px;
+          margin-bottom: 4px;
+          padding: 16px 18px;
+          border: 1px solid #e1edf2;
+          border-radius: 14px;
+          background: #f7fbfd;
+        }
+
         .mr-panel .fields label {
           display: grid;
           gap: 7px;
@@ -3511,6 +4043,13 @@ export default function MedicalRecordsModule({
         .mr-panel .fields textarea:focus {
           border-color: #4da8da;
           box-shadow: 0 0 0 3px rgba(77,168,218,.12);
+        }
+
+        .mr-panel .fields input:disabled,
+        .mr-panel .fields select:disabled {
+          background: #f4f7f9;
+          color: #7c8c94;
+          cursor: not-allowed;
         }
 
         .mr-panel .fields textarea {
@@ -3561,16 +4100,158 @@ export default function MedicalRecordsModule({
           padding: 0;
         }
 
-        .mr-panel .upload {
-          padding: 14px;
+        .mr-panel .inventory-picker {
+          border: 1px solid #cfe2ea;
+          border-radius: 12px;
+          background: #fff;
+          overflow: hidden;
+        }
+
+        .mr-panel .inventory-picker-search {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 0 13px;
+          border-bottom: 1px solid #e6f1f5;
+          background: #f8fcfe;
+          color: #7c8c94;
+        }
+
+        .mr-panel .inventory-picker-search input {
+          width: 100%;
+          height: 44px;
+          border: 0 !important;
+          padding: 0 !important;
+          background: transparent !important;
+          color: #20313b;
+          font: inherit;
+          outline: none;
+        }
+
+        .mr-panel .inventory-picker-list {
+          max-height: 220px;
+          overflow-y: auto;
+          padding: 6px;
+        }
+
+        .mr-panel .inventory-picker-na,
+        .mr-panel .inventory-picker-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          width: 100%;
+          border: 0;
+          border-radius: 9px;
+          padding: 10px 11px;
+          background: none;
+          text-align: left;
+          font: inherit;
+          font-weight: 600;
+          color: #20313b;
+          cursor: pointer;
+        }
+
+        .mr-panel .inventory-picker-na {
+          margin-bottom: 4px;
+          color: #718792;
+          border-bottom: 1px solid #edf3f6;
+          border-radius: 9px 9px 0 0;
+        }
+
+        .mr-panel .inventory-picker-na:hover,
+        .mr-panel .inventory-picker-item:hover {
+          background: #eaf6fb;
+        }
+
+        .mr-panel .inventory-picker-na:disabled,
+        .mr-panel .inventory-picker-item:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
+        }
+
+        .mr-panel .inventory-picker-item-name {
+          color: #20313b;
+        }
+
+        .mr-panel .inventory-picker-item-meta {
+          flex-shrink: 0;
+          color: #7c8c94;
+          font-weight: 500;
+          font-size: 12px;
+        }
+
+        .mr-panel .inventory-picker-empty {
+          padding: 16px 11px;
+          color: #8496a0;
+          font-size: 13px;
+          font-weight: 400;
+          text-align: center;
+        }
+
+        .mr-panel .field-block {
+          display: grid;
+          gap: 7px;
+          font-weight: 700;
+          font-size: 13px;
+          color: #294653;
+        }
+
+        .mr-panel .attachment-box {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex-wrap: wrap;
+          padding: 12px 14px;
           border: 1px dashed #9dc9da;
           border-radius: 12px;
           background: #f8fdff;
         }
 
-        .mr-panel .upload input {
-          height: auto;
-          padding: 8px;
+        .mr-panel .attachment-trigger {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          padding: 10px 15px;
+          border: 1px solid #cfe4ec;
+          border-radius: 10px;
+          background: #fff;
+          color: #237da4;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+          transition:
+            background 0.2s ease,
+            border-color 0.2s ease;
+        }
+
+        .mr-panel .attachment-trigger:hover {
+          background: #eaf6fb;
+          border-color: #a9dff0;
+        }
+
+        .mr-panel .attachment-trigger input {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
+          cursor: pointer;
+        }
+
+        .mr-panel .attachment-view {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          color: #21697f;
+          font-weight: 700;
+          font-size: 13px;
+          text-decoration: underline;
+        }
+
+        .mr-panel .attachment-empty {
+          color: #7c8c94;
+          font-weight: 500;
+          font-size: 13px;
         }
 
         .mr-panel .save {
@@ -4013,6 +4694,11 @@ export default function MedicalRecordsModule({
 
           .mr-panel .fields {
             grid-template-columns: 1fr;
+          }
+
+          .mr-panel .context-fields {
+            grid-template-columns: 1fr;
+            padding: 14px;
           }
 
           .mr-panel .wide {

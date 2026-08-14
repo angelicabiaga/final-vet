@@ -2,7 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   Camera,
+  ChevronLeft,
+  ChevronRight,
   Edit3,
+  Eye,
   History,
   PawPrint,
   Plus,
@@ -27,6 +30,7 @@ const EMPTY_FORM = {
   species: "",
   customSpecies: "",
   breed: "",
+  customBreed: "",
   sex: "Unknown",
   dateOfBirth: "",
   weight: "",
@@ -143,6 +147,148 @@ const SEX_OPTIONS = [
   "Female",
 ];
 
+const BREEDS_BY_SPECIES = {
+  Dog: [
+    "Aspin (Askal)",
+    "Labrador Retriever",
+    "Golden Retriever",
+    "German Shepherd",
+    "Poodle",
+    "Shih Tzu",
+    "Chihuahua",
+    "Beagle",
+    "Siberian Husky",
+    "Pomeranian",
+    "Rottweiler",
+    "Dachshund",
+    "Bulldog",
+    "French Bulldog",
+    "Shiba Inu",
+    "Corgi",
+    "Doberman Pinscher",
+    "Great Dane",
+    "Border Collie",
+    "Japanese Spitz",
+    "Mixed Breed",
+  ],
+  Cat: [
+    "Puspin (Domestic Shorthair)",
+    "Persian",
+    "Siamese",
+    "Maine Coon",
+    "British Shorthair",
+    "Ragdoll",
+    "Bengal",
+    "Scottish Fold",
+    "American Shorthair",
+    "Sphynx",
+    "Himalayan",
+    "Mixed Breed",
+  ],
+  Rabbit: [
+    "Holland Lop",
+    "Netherland Dwarf",
+    "Rex",
+    "Angora",
+    "Lionhead",
+    "Dutch",
+    "Flemish Giant",
+    "Mixed Breed",
+  ],
+  "Guinea Pig": [
+    "American",
+    "Abyssinian",
+    "Peruvian",
+    "Silkie",
+    "Teddy",
+    "Texel",
+  ],
+  Hamster: [
+    "Syrian",
+    "Dwarf Campbell Russian",
+    "Winter White",
+    "Roborovski",
+    "Chinese",
+  ],
+  Horse: [
+    "Philippine Native Pony",
+    "Arabian",
+    "Thoroughbred",
+    "Quarter Horse",
+    "Appaloosa",
+  ],
+  Pony: [
+    "Philippine Native Pony",
+    "Shetland Pony",
+    "Welsh Pony",
+  ],
+  Goat: [
+    "Native / Native Cross",
+    "Boer",
+    "Anglo-Nubian",
+    "Saanen",
+  ],
+  Cow: [
+    "Native",
+    "Holstein",
+    "Brahman",
+    "Sahiwal",
+  ],
+  Carabao: [
+    "Native Carabao",
+    "Murrah Buffalo",
+  ],
+  Pig: [
+    "Native",
+    "Landrace",
+    "Large White",
+    "Duroc",
+  ],
+  Chicken: [
+    "Native (Darag)",
+    "Rhode Island Red",
+    "Leghorn",
+    "Broiler",
+  ],
+  Duck: [
+    "Native (Itik)",
+    "Pekin",
+    "Muscovy",
+    "Khaki Campbell",
+  ],
+};
+
+function formatPetAge(dateOfBirth) {
+  if (!dateOfBirth) return "";
+
+  const dob = new Date(`${dateOfBirth}T00:00:00`);
+  if (Number.isNaN(dob.getTime())) return "";
+
+  const now = new Date();
+  if (dob > now) return "";
+
+  let years = now.getFullYear() - dob.getFullYear();
+  let months = now.getMonth() - dob.getMonth();
+
+  if (now.getDate() < dob.getDate()) {
+    months -= 1;
+  }
+
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const totalMonths = years * 12 + months;
+  if (totalMonths < 1) return "Less than a month old";
+
+  const parts = [];
+  if (years > 0) parts.push(`${years} year${years === 1 ? "" : "s"}`);
+  if (months > 0) parts.push(`${months} month${months === 1 ? "" : "s"}`);
+
+  return `${parts.join(", ")} old`;
+}
+
 export default function PetManagementModule({
   profile,
   ownerOnly = false,
@@ -156,12 +302,21 @@ export default function PetManagementModule({
   });
 
   const [file, setFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
   const [search, setSearch] = useState("");
   const [speciesFilter, setSpeciesFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 8;
+
+  const [ownerQuery, setOwnerQuery] = useState("");
+  const [ownerDropdownOpen, setOwnerDropdownOpen] = useState(false);
+  const [speciesQuery, setSpeciesQuery] = useState("");
+  const [speciesDropdownOpen, setSpeciesDropdownOpen] = useState(false);
 
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
 
   const [selectedPet, setSelectedPet] = useState(null);
   const [history, setHistory] = useState([]);
@@ -169,6 +324,48 @@ export default function PetManagementModule({
   const canManageAll =
     !ownerOnly &&
     ["admin", "staff", "veterinarian"].includes(profile.role);
+
+  const filteredOwners = useMemo(() => {
+    const keyword = ownerQuery.trim().toLowerCase();
+    if (!keyword) return owners;
+
+    return owners.filter((owner) =>
+      `${owner.full_name || ""} ${owner.username || ""} ${
+        owner.email || ""
+      }`
+        .toLowerCase()
+        .includes(keyword)
+    );
+  }, [owners, ownerQuery]);
+
+  const filteredSpeciesGroups = useMemo(() => {
+    const keyword = speciesQuery.trim().toLowerCase();
+    if (!keyword) return SPECIES_GROUPS;
+
+    return SPECIES_GROUPS.map((group) => ({
+      ...group,
+      options: group.options.filter((option) =>
+        option.toLowerCase().includes(keyword)
+      ),
+    })).filter((group) => group.options.length > 0);
+  }, [speciesQuery]);
+
+  const breedOptions = BREEDS_BY_SPECIES[form.species] || null;
+
+  const petAge = useMemo(
+    () => formatPetAge(form.dateOfBirth),
+    [form.dateOfBirth]
+  );
+
+  useEffect(() => {
+    if (file) {
+      const objectUrl = URL.createObjectURL(file);
+      setPreviewUrl(objectUrl);
+      return () => URL.revokeObjectURL(objectUrl);
+    }
+
+    setPreviewUrl(form.photoUrl || "");
+  }, [file, form.photoUrl]);
 
   const visiblePets = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -213,9 +410,39 @@ export default function PetManagementModule({
             .includes(keyword)
         );
 
-      return matchesSpecies && matchesSearch;
+      const matchesArchivedState = showArchived
+        ? pet.is_archived
+        : !pet.is_archived;
+
+      return matchesSpecies && matchesSearch && matchesArchivedState;
     });
-  }, [pets, search, speciesFilter]);
+  }, [pets, search, speciesFilter, showArchived]);
+
+  const archivedScopeCount = useMemo(
+    () =>
+      pets.filter((pet) =>
+        showArchived ? pet.is_archived : !pet.is_archived
+      ).length,
+    [pets, showArchived]
+  );
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(visiblePets.length / PAGE_SIZE)
+  );
+  const currentPage = Math.min(page, totalPages);
+  const paginatedPets = useMemo(
+    () =>
+      visiblePets.slice(
+        (currentPage - 1) * PAGE_SIZE,
+        currentPage * PAGE_SIZE
+      ),
+    [visiblePets, currentPage]
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, speciesFilter, showArchived]);
 
   useEffect(() => {
     let active = true;
@@ -226,7 +453,7 @@ export default function PetManagementModule({
       try {
         const petList = await getPets({
           ownerId: ownerOnly ? profile.id : null,
-          includeArchived: showArchived,
+          includeArchived: true,
           search: "",
         });
 
@@ -257,18 +484,13 @@ export default function PetManagementModule({
     return () => {
       active = false;
     };
-  }, [
-    canManageAll,
-    ownerOnly,
-    profile.id,
-    showArchived,
-  ]);
+  }, [canManageAll, ownerOnly, profile.id]);
 
   async function loadPets() {
     try {
       const petList = await getPets({
         ownerId: ownerOnly ? profile.id : null,
-        includeArchived: showArchived,
+        includeArchived: true,
         search: "",
       });
 
@@ -294,43 +516,82 @@ export default function PetManagementModule({
     });
 
     setFile(null);
+    setOwnerQuery("");
+    setOwnerDropdownOpen(false);
+    setSpeciesQuery("");
+    setSpeciesDropdownOpen(false);
   }
 
-  function handleSpeciesChange(event) {
-    const selectedSpecies = event.target.value;
+  function openRegisterModal() {
+    resetForm();
+    setMessage("");
+    setFormOpen(true);
+  }
 
+  function closeForm() {
+    resetForm();
+    setFormOpen(false);
+  }
+
+  function selectOwner(owner) {
+    updateForm("ownerId", owner.id);
+    setOwnerQuery(
+      `${owner.full_name || "Unnamed Owner"}${
+        owner.username ? ` (${owner.username})` : ""
+      }`
+    );
+    setOwnerDropdownOpen(false);
+  }
+
+  function clearOwner() {
+    updateForm("ownerId", "");
+    setOwnerQuery("");
+  }
+
+  function selectSpecies(species) {
     setForm((currentForm) => ({
       ...currentForm,
-      species: selectedSpecies,
+      species,
       customSpecies:
-        selectedSpecies === "Other"
-          ? currentForm.customSpecies
-          : "",
-      breed:
-        selectedSpecies !== currentForm.species
-          ? ""
-          : currentForm.breed,
+        species === "Other" ? currentForm.customSpecies : "",
+      breed: "",
+      customBreed: "",
     }));
+    setSpeciesQuery(species);
+    setSpeciesDropdownOpen(false);
   }
 
   function handleEdit(pet) {
     const isKnownSpecies = SPECIES_OPTIONS.includes(
       pet.species
     );
+    const resolvedSpecies = isKnownSpecies
+      ? pet.species
+      : pet.species
+        ? "Other"
+        : "";
+    const speciesBreedList = BREEDS_BY_SPECIES[resolvedSpecies] || null;
+    const isKnownBreed = speciesBreedList
+      ? speciesBreedList.includes(pet.breed)
+      : false;
 
     setForm({
       id: pet.id,
       ownerId: pet.owner_id,
       petName: pet.pet_name || "",
-      species: isKnownSpecies
-        ? pet.species
-        : pet.species
-          ? "Other"
-          : "",
+      species: resolvedSpecies,
       customSpecies: isKnownSpecies
         ? ""
         : pet.species || "",
-      breed: pet.breed || "",
+      breed: speciesBreedList
+        ? isKnownBreed
+          ? pet.breed
+          : pet.breed
+            ? "Other"
+            : ""
+        : pet.breed || "",
+      customBreed:
+        speciesBreedList && !isKnownBreed ? pet.breed || "" : "",
       sex: pet.sex || "Unknown",
       dateOfBirth: pet.date_of_birth || "",
       weight: pet.weight || "",
@@ -343,11 +604,18 @@ export default function PetManagementModule({
     });
 
     setFile(null);
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    setOwnerQuery(
+      pet.owner
+        ? `${pet.owner.full_name || "Unnamed Owner"}${
+            pet.owner.username ? ` (${pet.owner.username})` : ""
+          }`
+        : ""
+    );
+    setOwnerDropdownOpen(false);
+    setSpeciesQuery(resolvedSpecies);
+    setSpeciesDropdownOpen(false);
+    setMessage("");
+    setFormOpen(true);
   }
 
   async function handleSubmit(event) {
@@ -374,6 +642,17 @@ export default function PetManagementModule({
         );
       }
 
+      const finalBreed =
+        form.breed === "Other"
+          ? form.customBreed.trim()
+          : form.breed.trim();
+
+      if (!finalBreed) {
+        throw new Error(
+          "Please select or enter the pet breed."
+        );
+      }
+
       let photoUrl = form.photoUrl;
 
       if (file) {
@@ -384,6 +663,7 @@ export default function PetManagementModule({
         {
           ...form,
           species: finalSpecies,
+          breed: finalBreed,
           photoUrl,
         },
         ownerId
@@ -396,6 +676,7 @@ export default function PetManagementModule({
       );
 
       resetForm();
+      setFormOpen(false);
       await loadPets();
     } catch (error) {
       setMessage(
@@ -447,328 +728,587 @@ export default function PetManagementModule({
 
   return (
     <div className="pet-module">
-      <form
-        className="card form-card"
-        onSubmit={handleSubmit}
-      >
-        <div className="form-head">
-          <div>
-            <h2>
-              {form.id ? <Edit3 /> : <Plus />}
+      {message && !formOpen && (
+        <div
+          className={`notice ${
+            message.toLowerCase().includes("successfully")
+              ? "success"
+              : "error"
+          }`}
+          role="status"
+        >
+          {message}
+        </div>
+      )}
 
-              {form.id
-                ? "Edit Pet Record"
-                : "Register Animal Patient"}
-            </h2>
-
-            <p className="form-description">
-              Enter the pet's basic profile, health notes,
-              identification details, and owner information.
-            </p>
-          </div>
-
-          {form.id && (
+      {formOpen && (
+        <div className="modal-backdrop" onClick={closeForm}>
+          <div
+            className="modal form-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
             <button
               type="button"
-              className="text-btn"
-              onClick={resetForm}
+              className="close"
+              aria-label="Close pet form"
+              onClick={closeForm}
             >
-              <X size={16} />
-              Cancel Edit
+              <X />
             </button>
-          )}
-        </div>
 
-        {message && (
-          <div
-            className={`notice ${
-              message.toLowerCase().includes("successfully")
-                ? "success"
-                : "error"
-            }`}
-            role="status"
-          >
-            {message}
-          </div>
-        )}
-
-        {canManageAll && (
-          <label>
-            <span>Pet Owner</span>
-
-            <select
-              required
-              value={form.ownerId}
-              onChange={(event) =>
-                updateForm(
-                  "ownerId",
-                  event.target.value
-                )
-              }
+            <form
+              className="form-card"
+              onSubmit={handleSubmit}
             >
-              <option value="">
-                Select pet owner
-              </option>
+              <div className="form-head">
+                <div>
+                  <h2>
+                    {form.id ? <Edit3 /> : <Plus />}
 
-              {owners.map((owner) => (
-                <option
-                  key={owner.id}
-                  value={owner.id}
+                    {form.id
+                      ? "Edit Pet Record"
+                      : "Register Animal Patient"}
+                  </h2>
+
+                  <p className="form-description">
+                    Enter the pet's basic profile, health notes,
+                    identification details, and owner information.
+                  </p>
+                </div>
+              </div>
+
+              {message && (
+                <div
+                  className={`notice ${
+                    message.toLowerCase().includes("successfully")
+                      ? "success"
+                      : "error"
+                  }`}
+                  role="status"
                 >
-                  {owner.full_name || "Unnamed Owner"}
-                  {owner.username
-                    ? ` (${owner.username})`
-                    : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+                  {message}
+                </div>
+              )}
 
-        <div className="grid">
-          <label>
-            <span>Pet Name</span>
+              {canManageAll && (
+                <div className="form-section">
+                  <h3 className="form-section-title">
+                    Pet Owner
+                  </h3>
 
-            <input
-              required
-              value={form.petName}
-              placeholder="Enter pet name"
-              onChange={(event) =>
-                updateForm(
-                  "petName",
-                  event.target.value
-                )
-              }
-            />
-          </label>
+                  <label>
+                    <span>
+                      Pet Owner
+                      <span className="required-mark">*</span>
+                    </span>
 
-          <label>
-            <span>Species</span>
+                    <div className="combo">
+                      <div className="combo-input">
+                        <Search size={15} />
 
-            <select
-              required
-              value={form.species}
-              onChange={handleSpeciesChange}
-            >
-              <option value="">
-                Select pet species
-              </option>
+                        <input
+                          type="text"
+                          role="combobox"
+                          aria-expanded={ownerDropdownOpen}
+                          placeholder="Search pet owner by name or username"
+                          value={ownerQuery}
+                          onChange={(event) => {
+                            setOwnerQuery(event.target.value);
+                            setOwnerDropdownOpen(true);
+                            if (form.ownerId) {
+                              updateForm("ownerId", "");
+                            }
+                          }}
+                          onFocus={() => setOwnerDropdownOpen(true)}
+                          onBlur={() =>
+                            window.setTimeout(
+                              () => setOwnerDropdownOpen(false),
+                              120
+                            )
+                          }
+                        />
 
-              {SPECIES_GROUPS.map((group) => (
-                <optgroup
-                  key={group.label}
-                  label={group.label}
-                >
-                  {group.options.map((species) => (
-                    <option
-                      key={species}
-                      value={species}
+                        {form.ownerId && (
+                          <button
+                            type="button"
+                            className="combo-clear"
+                            aria-label="Clear pet owner"
+                            onClick={clearOwner}
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                      {ownerDropdownOpen && (
+                        <div className="combo-dropdown">
+                          {filteredOwners.length === 0 && (
+                            <div className="combo-empty">
+                              No matching pet owners
+                            </div>
+                          )}
+
+                          {filteredOwners.map((owner) => (
+                            <button
+                              type="button"
+                              key={owner.id}
+                              className="combo-item"
+                              onMouseDown={() => selectOwner(owner)}
+                            >
+                              <strong>
+                                {owner.full_name || "Unnamed Owner"}
+                              </strong>
+                              <span>{owner.username}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              <div className="form-section">
+                <h3 className="form-section-title">
+                  Pet Profile
+                </h3>
+
+                <div className="grid">
+                  <label>
+                    <span>
+                      Pet Name
+                      <span className="required-mark">*</span>
+                    </span>
+
+                    <input
+                      required
+                      value={form.petName}
+                      placeholder="Enter pet name"
+                      onChange={(event) =>
+                        updateForm(
+                          "petName",
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    <span>
+                      Species
+                      <span className="required-mark">*</span>
+                    </span>
+
+                    <div className="combo">
+                      <div className="combo-input">
+                        <Search size={15} />
+
+                        <input
+                          type="text"
+                          role="combobox"
+                          aria-expanded={speciesDropdownOpen}
+                          placeholder="Search species"
+                          value={speciesQuery}
+                          onChange={(event) => {
+                            setSpeciesQuery(event.target.value);
+                            setSpeciesDropdownOpen(true);
+                            if (form.species) {
+                              setForm((current) => ({
+                                ...current,
+                                species: "",
+                                customSpecies: "",
+                                breed: "",
+                                customBreed: "",
+                              }));
+                            }
+                          }}
+                          onFocus={() => setSpeciesDropdownOpen(true)}
+                          onBlur={() =>
+                            window.setTimeout(
+                              () => setSpeciesDropdownOpen(false),
+                              120
+                            )
+                          }
+                        />
+
+                        {form.species && (
+                          <button
+                            type="button"
+                            className="combo-clear"
+                            aria-label="Clear species"
+                            onClick={() => {
+                              setForm((current) => ({
+                                ...current,
+                                species: "",
+                                customSpecies: "",
+                                breed: "",
+                                customBreed: "",
+                              }));
+                              setSpeciesQuery("");
+                            }}
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                      {speciesDropdownOpen && (
+                        <div className="combo-dropdown">
+                          {filteredSpeciesGroups.length === 0 && (
+                            <div className="combo-empty">
+                              No matching species
+                            </div>
+                          )}
+
+                          {filteredSpeciesGroups.map((group) => (
+                            <div
+                              className="combo-group"
+                              key={group.label}
+                            >
+                              <div className="combo-group-label">
+                                {group.label}
+                              </div>
+
+                              {group.options.map((species) => (
+                                <button
+                                  type="button"
+                                  key={species}
+                                  className="combo-item"
+                                  onMouseDown={() =>
+                                    selectSpecies(species)
+                                  }
+                                >
+                                  {species}
+                                </button>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+
+                  {form.species === "Other" && (
+                    <label>
+                      <span>
+                        Specify Species
+                        <span className="required-mark">*</span>
+                      </span>
+
+                      <input
+                        required
+                        maxLength={80}
+                        value={form.customSpecies}
+                        placeholder="Enter the species"
+                        onChange={(event) =>
+                          updateForm(
+                            "customSpecies",
+                            event.target.value
+                          )
+                        }
+                      />
+                    </label>
+                  )}
+
+                  <label>
+                    <span>
+                      Breed
+                      <span className="required-mark">*</span>
+                    </span>
+
+                    {breedOptions ? (
+                      <select
+                        required
+                        value={form.breed}
+                        onChange={(event) => {
+                          const value = event.target.value;
+
+                          setForm((current) => ({
+                            ...current,
+                            breed: value,
+                            customBreed:
+                              value === "Other"
+                                ? current.customBreed
+                                : "",
+                          }));
+                        }}
+                      >
+                        <option value="">Select breed</option>
+
+                        {breedOptions.map((breed) => (
+                          <option key={breed} value={breed}>
+                            {breed}
+                          </option>
+                        ))}
+
+                        <option value="Other">Other</option>
+                      </select>
+                    ) : (
+                      <input
+                        required
+                        value={form.breed}
+                        placeholder="Enter breed"
+                        onChange={(event) =>
+                          updateForm(
+                            "breed",
+                            event.target.value
+                          )
+                        }
+                      />
+                    )}
+                  </label>
+
+                  {breedOptions && form.breed === "Other" && (
+                    <label>
+                      <span>
+                        Specify Breed
+                        <span className="required-mark">*</span>
+                      </span>
+
+                      <input
+                        required
+                        maxLength={80}
+                        value={form.customBreed}
+                        placeholder="Enter the breed"
+                        onChange={(event) =>
+                          updateForm(
+                            "customBreed",
+                            event.target.value
+                          )
+                        }
+                      />
+                    </label>
+                  )}
+
+                  <label>
+                    <span>
+                      Sex
+                      <span className="required-mark">*</span>
+                    </span>
+
+                    <select
+                      required
+                      value={form.sex}
+                      onChange={(event) =>
+                        updateForm(
+                          "sex",
+                          event.target.value
+                        )
+                      }
                     >
-                      {species}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </label>
+                      {SEX_OPTIONS.map((sex) => (
+                        <option
+                          key={sex}
+                          value={sex}
+                        >
+                          {sex}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-          {form.species === "Other" && (
-            <label>
-              <span>Specify Species</span>
+                  <label>
+                    <span>
+                      Date of Birth
+                      <span className="required-mark">*</span>
+                    </span>
 
-              <input
-                required
-                maxLength={80}
-                value={form.customSpecies}
-                placeholder="Enter the species"
-                onChange={(event) =>
-                  updateForm(
-                    "customSpecies",
-                    event.target.value
-                  )
-                }
-              />
-            </label>
-          )}
+                    <input
+                      required
+                      type="date"
+                      max={new Date()
+                        .toISOString()
+                        .slice(0, 10)}
+                      value={form.dateOfBirth}
+                      onChange={(event) =>
+                        updateForm(
+                          "dateOfBirth",
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
 
-          <label>
-            <span>Breed</span>
+                  <label>
+                    <span>Age</span>
 
-            <input
-              value={form.breed}
-              placeholder="Enter breed"
-              onChange={(event) =>
-                updateForm(
-                  "breed",
-                  event.target.value
-                )
-              }
-            />
-          </label>
+                    <input
+                      type="text"
+                      className="age-field"
+                      readOnly
+                      tabIndex={-1}
+                      value={petAge}
+                      placeholder="Fills in from date of birth"
+                    />
+                  </label>
 
-          <label>
-            <span>Sex</span>
+                  <label>
+                    <span>
+                      Weight (kg)
+                      <span className="required-mark">*</span>
+                    </span>
 
-            <select
-              value={form.sex}
-              onChange={(event) =>
-                updateForm(
-                  "sex",
-                  event.target.value
-                )
-              }
-            >
-              {SEX_OPTIONS.map((sex) => (
-                <option
-                  key={sex}
-                  value={sex}
-                >
-                  {sex}
-                </option>
-              ))}
-            </select>
-          </label>
+                    <input
+                      required
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.weight}
+                      placeholder="0.00"
+                      onChange={(event) =>
+                        updateForm(
+                          "weight",
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
 
-          <label>
-            <span>Date of Birth</span>
+              <div className="form-section">
+                <h3 className="form-section-title">
+                  Identification
+                </h3>
 
-            <input
-              type="date"
-              max={new Date()
-                .toISOString()
-                .slice(0, 10)}
-              value={form.dateOfBirth}
-              onChange={(event) =>
-                updateForm(
-                  "dateOfBirth",
-                  event.target.value
-                )
-              }
-            />
-          </label>
+                <div className="grid">
+                  <label>
+                    <span>Color</span>
 
-          <label>
-            <span>Weight (kg)</span>
+                    <input
+                      value={form.color}
+                      placeholder="Enter color or markings"
+                      onChange={(event) =>
+                        updateForm(
+                          "color",
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
 
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.weight}
-              placeholder="0.00"
-              onChange={(event) =>
-                updateForm(
-                  "weight",
-                  event.target.value
-                )
-              }
-            />
-          </label>
+                  <label>
+                    <span>Microchip Number</span>
 
-          <label>
-            <span>Color</span>
+                    <input
+                      value={form.microchipNumber}
+                      placeholder="Enter microchip number"
+                      onChange={(event) =>
+                        updateForm(
+                          "microchipNumber",
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
 
-            <input
-              value={form.color}
-              placeholder="Enter color or markings"
-              onChange={(event) =>
-                updateForm(
-                  "color",
-                  event.target.value
-                )
-              }
-            />
-          </label>
+              <div className="form-section">
+                <h3 className="form-section-title">
+                  Health Notes
+                </h3>
 
-          <label>
-            <span>Microchip Number</span>
+                <label>
+                  <span>Allergies</span>
 
-            <input
-              value={form.microchipNumber}
-              placeholder="Enter microchip number"
-              onChange={(event) =>
-                updateForm(
-                  "microchipNumber",
-                  event.target.value
-                )
-              }
-            />
-          </label>
-        </div>
+                  <textarea
+                    value={form.allergies}
+                    placeholder="Enter known allergies or write none"
+                    onChange={(event) =>
+                      updateForm(
+                        "allergies",
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
 
-        <label>
-          <span>Allergies</span>
+                <label>
+                  <span>Existing Conditions</span>
 
-          <textarea
-            value={form.allergies}
-            placeholder="Enter known allergies or write none"
-            onChange={(event) =>
-              updateForm(
-                "allergies",
-                event.target.value
-              )
-            }
-          />
-        </label>
+                  <textarea
+                    value={form.existingConditions}
+                    placeholder="Enter existing medical conditions"
+                    onChange={(event) =>
+                      updateForm(
+                        "existingConditions",
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
 
-        <label>
-          <span>Existing Conditions</span>
+                <label>
+                  <span>Additional Notes</span>
 
-          <textarea
-            value={form.existingConditions}
-            placeholder="Enter existing medical conditions"
-            onChange={(event) =>
-              updateForm(
-                "existingConditions",
-                event.target.value
-              )
-            }
-          />
-        </label>
+                  <textarea
+                    value={form.notes}
+                    placeholder="Enter relevant care or behavior notes"
+                    onChange={(event) =>
+                      updateForm(
+                        "notes",
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+              </div>
 
-        <label>
-          <span>Additional Notes</span>
+              <div className="form-section">
+                <h3 className="form-section-title">
+                  Photo
+                </h3>
 
-          <textarea
-            value={form.notes}
-            placeholder="Enter relevant care or behavior notes"
-            onChange={(event) =>
-              updateForm(
-                "notes",
-                event.target.value
-              )
-            }
-          />
-        </label>
+                <div className="photo-upload">
+                  <div className="photo-preview">
+                    {previewUrl ? (
+                      <img src={previewUrl} alt="Pet preview" />
+                    ) : (
+                      <PawPrint size={26} />
+                    )}
 
-        <label className="upload">
-          <Camera size={18} />
+                    <label
+                      className="photo-camera"
+                      title="Upload pet photo"
+                    >
+                      <Camera size={15} />
 
-          <div>
-            <strong>Pet Photo</strong>
-            <small>
-              Select a clear image of the pet.
-            </small>
-          </div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) =>
+                          setFile(
+                            event.target.files?.[0] || null
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
 
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(event) =>
-              setFile(
-                event.target.files?.[0] || null
-              )
-            }
-          />
-        </label>
+                  <div className="photo-copy">
+                    <strong>Pet Photo</strong>
 
-        {file && (
-          <div className="selected-file">
-            Selected file: {file.name}
-          </div>
-        )}
+                    <small>
+                      {file
+                        ? file.name
+                        : "Optional — select a clear image of the pet."}
+                    </small>
 
-        <button
+                    {file && (
+                      <button
+                        type="button"
+                        className="photo-remove"
+                        onClick={() => setFile(null)}
+                      >
+                        Remove selected photo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button
           type="submit"
           disabled={saving}
         >
@@ -778,15 +1318,29 @@ export default function PetManagementModule({
               ? "Update Pet"
               : "Register Pet"}
         </button>
-      </form>
+            </form>
+          </div>
+        </div>
+      )}
 
       <section className="card list-card">
         <div className="toolbar">
           <div>
-            <h2>
-              <PawPrint />
-              Animal Patients
-            </h2>
+            <div className="list-heading-row">
+              <h2>
+                <PawPrint />
+                Animal Patients
+              </h2>
+
+              <button
+                type="button"
+                className="register-pet-btn"
+                onClick={openRegisterModal}
+              >
+                <Plus size={16} />
+                Register Pet
+              </button>
+            </div>
 
             <p className="list-description">
               Search and review registered animal patients.
@@ -859,7 +1413,13 @@ export default function PetManagementModule({
               </select>
             </div>
 
-            <label className="archive-check">
+            <label
+              className={
+                showArchived
+                  ? "archive-check active"
+                  : "archive-check"
+              }
+            >
               <input
                 type="checkbox"
                 checked={showArchived}
@@ -870,14 +1430,24 @@ export default function PetManagementModule({
                 }
               />
 
-              <span>Include archived</span>
+              <Archive size={15} />
+              <span>View Archived</span>
             </label>
           </div>
         </div>
 
         <div className="result-summary">
           <span>
-            Showing {visiblePets.length} of {pets.length} pets
+            {visiblePets.length === 0
+              ? `Showing 0 of ${archivedScopeCount} ${
+                  showArchived ? "archived" : "active"
+                } pets`
+              : `Showing ${
+                  (currentPage - 1) * PAGE_SIZE + 1
+                }–${Math.min(
+                  currentPage * PAGE_SIZE,
+                  visiblePets.length
+                )} of ${visiblePets.length} pets`}
           </span>
 
           {(search || speciesFilter !== "all") && (
@@ -897,130 +1467,176 @@ export default function PetManagementModule({
           <div className="empty">
             <PawPrint size={35} />
 
-            <h3>No pet records found</h3>
+            <h3>
+              {showArchived
+                ? "No archived pets found"
+                : "No pet records found"}
+            </h3>
 
             <p>
-              Try changing the search text or species filter.
+              {archivedScopeCount === 0
+                ? showArchived
+                  ? "No pets have been archived yet."
+                  : "Register a pet to see it listed here."
+                : "Try changing the search text or species filter."}
             </p>
           </div>
         ) : (
-          <div className="pet-grid">
-            {visiblePets.map((pet) => (
-              <article
-                key={pet.id}
-                className={
-                  pet.is_archived
-                    ? "pet-card archived"
-                    : "pet-card"
-                }
-              >
-                {pet.photo_url ? (
-                  <img
-                    src={pet.photo_url}
-                    alt={pet.pet_name}
-                  />
-                ) : (
-                  <div className="photo">
-                    <PawPrint />
-                  </div>
-                )}
+          <div className="table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pet</th>
+                  <th>Species / Breed</th>
+                  {canManageAll && <th>Owner</th>}
+                  <th>Details</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
 
-                <div className="pet-info">
-                  <div className="pet-heading">
-                    <h3>
-                      {pet.pet_name || "Unnamed Pet"}
-                    </h3>
+              <tbody>
+                {paginatedPets.map((pet) => (
+                  <tr
+                    key={pet.id}
+                    className={pet.is_archived ? "archived" : ""}
+                  >
+                    <td>
+                      <div className="pet-cell">
+                        {pet.photo_url ? (
+                          <img
+                            src={pet.photo_url}
+                            alt={pet.pet_name}
+                          />
+                        ) : (
+                          <div className="photo">
+                            <PawPrint size={17} />
+                          </div>
+                        )}
 
-                    {pet.is_archived && (
-                      <span className="archived-badge">
-                        Archived
+                        <span>
+                          {pet.pet_name || "Unnamed Pet"}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td>
+                      {pet.species || "Species not recorded"}
+                      {pet.breed && <small>{pet.breed}</small>}
+                    </td>
+
+                    {canManageAll && (
+                      <td>
+                        {pet.owner?.full_name || "Not assigned"}
+                      </td>
+                    )}
+
+                    <td>
+                      <button
+                        type="button"
+                        className="details-btn"
+                        onClick={() => handleOpenHistory(pet)}
+                      >
+                        <Eye size={14} />
+                        View Details
+                      </button>
+                    </td>
+
+                    <td>
+                      <span
+                        className={`pill ${
+                          pet.is_archived ? "archived" : "active"
+                        }`}
+                      >
+                        {pet.is_archived ? "Archived" : "Active"}
                       </span>
-                    )}
-                  </div>
+                    </td>
 
-                  <p>
-                    {pet.species || "Species not recorded"}
-                    {pet.breed
-                      ? ` · ${pet.breed}`
-                      : ""}
-                  </p>
+                    <td>
+                      <div className="actions">
+                        <button
+                          type="button"
+                          disabled={pet.is_archived}
+                          title={
+                            pet.is_archived
+                              ? "Restore this pet to edit its record."
+                              : undefined
+                          }
+                          onClick={() => handleEdit(pet)}
+                        >
+                          <Edit3 size={15} />
+                          Edit
+                        </button>
 
-                  {canManageAll && (
-                    <small>
-                      Owner:{" "}
-                      {pet.owner?.full_name ||
-                        "Not assigned"}
-                    </small>
-                  )}
+                        <button
+                          type="button"
+                          className={
+                            pet.is_archived ? "restore" : "danger"
+                          }
+                          onClick={() => handleArchiveToggle(pet)}
+                        >
+                          {pet.is_archived ? (
+                            <>
+                              <RotateCcw size={15} />
+                              Restore
+                            </>
+                          ) : (
+                            <>
+                              <Archive size={15} />
+                              Archive
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-                  <small>
-                    {pet.sex || "Unknown"}
-                    {pet.weight
-                      ? ` · ${pet.weight} kg`
-                      : ""}
-                  </small>
+        {totalPages > 1 && (
+          <div className="pagination">
+            <button
+              type="button"
+              className="page-nav"
+              aria-label="Previous page"
+              disabled={currentPage === 1}
+              onClick={() => setPage(currentPage - 1)}
+            >
+              <ChevronLeft size={18} />
+            </button>
 
-                  {pet.color && (
-                    <small>
-                      Color: {pet.color}
-                    </small>
-                  )}
-
-                  {pet.microchip_number && (
-                    <small>
-                      Microchip:{" "}
-                      {pet.microchip_number}
-                    </small>
-                  )}
-                </div>
-
-                <div className="actions">
+            <div className="pagination-pages">
+              {Array.from({ length: totalPages }, (_, index) => index + 1).map(
+                (pageNumber) => (
                   <button
+                    key={pageNumber}
                     type="button"
-                    onClick={() =>
-                      handleEdit(pet)
+                    aria-current={
+                      pageNumber === currentPage ? "page" : undefined
                     }
-                  >
-                    <Edit3 size={15} />
-                    Edit
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleOpenHistory(pet)
-                    }
-                  >
-                    <History size={15} />
-                    History
-                  </button>
-
-                  <button
-                    type="button"
                     className={
-                      pet.is_archived
-                        ? "restore"
-                        : "danger"
+                      pageNumber === currentPage ? "active" : ""
                     }
-                    onClick={() =>
-                      handleArchiveToggle(pet)
-                    }
+                    onClick={() => setPage(pageNumber)}
                   >
-                    {pet.is_archived ? (
-                      <>
-                        <RotateCcw size={15} />
-                        Restore
-                      </>
-                    ) : (
-                      <>
-                        <Archive size={15} />
-                        Archive
-                      </>
-                    )}
+                    {pageNumber}
                   </button>
-                </div>
-              </article>
-            ))}
+                )
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="page-nav"
+              aria-label="Next page"
+              disabled={currentPage === totalPages}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              <ChevronRight size={18} />
+            </button>
           </div>
         )}
       </section>
@@ -1041,7 +1657,7 @@ export default function PetManagementModule({
             <button
               type="button"
               className="close"
-              aria-label="Close visit history"
+              aria-label="Close pet details"
               onClick={() =>
                 setSelectedPet(null)
               }
@@ -1049,9 +1665,10 @@ export default function PetManagementModule({
               <X />
             </button>
 
-            <h2>
-              {selectedPet.pet_name} — Visit History
-            </h2>
+            <h2>{selectedPet.pet_name || "Unnamed Pet"}</h2>
+            <p className="modal-subtitle">
+              Pet profile, health notes, and appointment history.
+            </p>
 
             <div className="details">
               <p>
@@ -1063,6 +1680,37 @@ export default function PetManagementModule({
               <p>
                 <strong>Breed:</strong>{" "}
                 {selectedPet.breed ||
+                  "Not recorded"}
+              </p>
+
+              {canManageAll && (
+                <p>
+                  <strong>Owner:</strong>{" "}
+                  {selectedPet.owner?.full_name ||
+                    "Not assigned"}
+                </p>
+              )}
+
+              <p>
+                <strong>Sex:</strong>{" "}
+                {selectedPet.sex || "Unknown"}
+              </p>
+
+              <p>
+                <strong>Weight:</strong>{" "}
+                {selectedPet.weight
+                  ? `${selectedPet.weight} kg`
+                  : "Not recorded"}
+              </p>
+
+              <p>
+                <strong>Color:</strong>{" "}
+                {selectedPet.color || "Not recorded"}
+              </p>
+
+              <p>
+                <strong>Microchip:</strong>{" "}
+                {selectedPet.microchip_number ||
                   "Not recorded"}
               </p>
 
@@ -1083,6 +1731,10 @@ export default function PetManagementModule({
                 {selectedPet.notes || "None"}
               </p>
             </div>
+
+            <h3 className="history-heading">
+              Visit History
+            </h3>
 
             {history.length === 0 ? (
               <div className="history-empty">
@@ -1249,17 +1901,6 @@ export default function PetManagementModule({
           opacity: 0.6;
         }
 
-        .text-btn {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          border: 0;
-          padding: 8px !important;
-          background: transparent !important;
-          color: #4b7182 !important;
-          cursor: pointer;
-        }
-
         .notice {
           margin-bottom: 14px;
           padding: 14px 18px;
@@ -1282,38 +1923,225 @@ export default function PetManagementModule({
           color: #a94444;
         }
 
-        .upload {
-          display: grid !important;
-          grid-template-columns: auto 1fr;
+        .form-section {
+          margin-bottom: 22px;
+          padding-bottom: 18px;
+          border-bottom: 1px solid #edf3f6;
+        }
+
+        .form-section:last-of-type {
+          margin-bottom: 20px;
+          padding-bottom: 0;
+          border-bottom: 0;
+        }
+
+        .form-section-title {
+          margin: 0 0 13px;
+          color: #237da4;
+          font-size: 12px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.6px;
+        }
+
+        .required-mark {
+          display: inline;
+          margin-left: 3px;
+          color: #d14b4b;
+          font-weight: 800;
+        }
+
+        .age-field {
+          background: #f4fafd !important;
+          color: #237da4 !important;
+          font-weight: 700;
+          cursor: default;
+        }
+
+        .age-field::placeholder {
+          color: #9aabb3;
+          font-weight: 400;
+        }
+
+        .combo {
+          position: relative;
+        }
+
+        .combo-input {
+          display: flex;
           align-items: center;
-          gap: 11px;
-          border: 1px dashed #9dc9da;
-          border-radius: 12px;
-          padding: 14px;
-          background: #f8fdff;
+          gap: 8px;
+          padding: 0 12px;
+          border: 1px solid #cfe4ed;
+          border-radius: 11px;
+          background: #ffffff;
+          color: #9aabb3;
+          transition:
+            border-color 0.2s ease,
+            box-shadow 0.2s ease;
         }
 
-        .upload div {
+        .combo-input:focus-within {
+          border-color: #4da8da;
+          box-shadow: 0 0 0 3px rgba(77, 168, 218, 0.13);
+        }
+
+        .combo-input input {
+          width: 100%;
+          border: 0 !important;
+          padding: 12px 0 !important;
+          color: #20313b;
+          background: transparent !important;
+        }
+
+        .combo-input input:focus {
+          box-shadow: none !important;
+        }
+
+        .combo-clear {
           display: grid;
-          gap: 3px;
+          place-items: center;
+          flex-shrink: 0;
+          border: 0;
+          border-radius: 7px;
+          padding: 5px;
+          background: #edf5f8;
+          color: #5d7782;
+          cursor: pointer;
         }
 
-        .upload small {
+        .combo-dropdown {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: calc(100% + 6px);
+          z-index: 20;
+          max-height: 260px;
+          overflow: auto;
+          border: 1px solid #cfe4ed;
+          border-radius: 12px;
+          padding: 6px;
+          background: #ffffff;
+          box-shadow: 0 14px 30px rgba(45, 111, 143, 0.16);
+        }
+
+        .combo-empty {
+          padding: 12px;
+          color: #8496a0;
+          font-size: 13px;
+          font-weight: 400;
+        }
+
+        .combo-group-label {
+          padding: 8px 10px 4px;
+          color: #8496a0;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.4px;
+        }
+
+        .combo-item {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 2px;
+          width: 100%;
+          border: 0;
+          border-radius: 8px;
+          padding: 9px 10px;
+          background: none;
+          text-align: left;
+          font: inherit;
+          font-weight: 400;
+          cursor: pointer;
+        }
+
+        .combo-item:hover {
+          background: #eaf8fd;
+        }
+
+        .combo-item strong {
+          color: #20313b;
+          font-size: 14px;
+          font-weight: 700;
+        }
+
+        .combo-item span {
+          color: #7c8c94;
+          font-size: 12px;
+          font-weight: 400;
+        }
+
+        .photo-upload {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .photo-preview {
+          position: relative;
+          width: 84px;
+          height: 84px;
+          flex: 0 0 auto;
+          display: grid;
+          place-items: center;
+          border-radius: 18px;
+          background: #eaf8fd;
+          color: #4da8da;
+          overflow: visible;
+        }
+
+        .photo-preview img {
+          width: 100%;
+          height: 100%;
+          border-radius: 18px;
+          object-fit: cover;
+        }
+
+        .photo-camera {
+          position: absolute;
+          right: -6px;
+          bottom: -6px;
+          display: grid;
+          place-items: center;
+          width: 32px;
+          height: 32px;
+          border: 3px solid #ffffff;
+          border-radius: 50%;
+          background: #4da8da;
+          color: #ffffff;
+          cursor: pointer;
+          box-shadow: 0 4px 10px rgba(45, 111, 143, 0.28);
+        }
+
+        .photo-camera input {
+          display: none;
+        }
+
+        .photo-copy {
+          display: grid;
+          gap: 4px;
+        }
+
+        .photo-copy strong {
+          color: #20313b;
+        }
+
+        .photo-copy small {
           color: #72858e;
           font-weight: 400;
         }
 
-        .upload input {
-          grid-column: 1 / -1;
-          border: 0 !important;
-          padding: 0 !important;
-          background: transparent !important;
-        }
-
-        .selected-file {
-          margin: -4px 0 14px;
-          color: #507180;
-          font-size: 13px;
+        .photo-remove {
+          justify-self: start;
+          border: 0;
+          background: none;
+          padding: 0;
+          color: #c84f4f;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
         }
 
         .toolbar-controls {
@@ -1384,13 +2212,28 @@ export default function PetManagementModule({
           align-items: center;
           gap: 7px;
           min-height: 43px;
-          padding: 0 11px;
+          padding: 0 14px;
           border: 1px solid #cfe4ed;
           border-radius: 11px;
           background: #ffffff;
           color: #435f6b;
           font-size: 13px;
+          font-weight: 700;
           cursor: pointer;
+          transition:
+            background 0.2s ease,
+            border-color 0.2s ease,
+            color 0.2s ease;
+        }
+
+        .archive-check svg {
+          flex-shrink: 0;
+        }
+
+        .archive-check.active {
+          border-color: #4da8da;
+          background: #eaf8fd;
+          color: #237da4;
         }
 
         .result-summary {
@@ -1411,46 +2254,88 @@ export default function PetManagementModule({
           cursor: pointer;
         }
 
-        .pet-grid {
-          display: grid;
-          grid-template-columns: repeat(
-            auto-fill,
-            minmax(280px, 1fr)
-          );
-          gap: 15px;
-          margin-top: 16px;
-        }
-
-        .pet-card {
-          display: grid;
-          grid-template-columns: 76px minmax(0, 1fr);
-          gap: 13px;
-          padding: 14px;
-          border: 1px solid #dfedf3;
+        .table {
+          overflow: auto;
+          margin-top: 18px;
+          border: 1px solid #e3f2fb;
           border-radius: 16px;
-          background: #ffffff;
-          transition:
-            transform 0.2s ease,
-            box-shadow 0.2s ease,
-            border-color 0.2s ease;
         }
 
-        .pet-card:hover {
-          transform: translateY(-2px);
-          border-color: #bcddea;
-          box-shadow: 0 10px 24px rgba(45, 111, 143, 0.1);
+        .table table {
+          width: 100%;
+          min-width: 720px;
+          border-collapse: collapse;
         }
 
-        .pet-card.archived {
-          background: #f5f6f7;
-          opacity: 0.72;
+        .table th,
+        .table td {
+          padding: 14px 16px;
+          border-bottom: 1px solid #e9f3f8;
+          text-align: left;
+          vertical-align: middle;
         }
 
-        .pet-card img,
+        .table thead th {
+          background: #f4fafd;
+          color: #55707d;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          white-space: nowrap;
+        }
+
+        .table thead th:first-child {
+          border-top-left-radius: 15px;
+        }
+
+        .table thead th:last-child {
+          border-top-right-radius: 15px;
+        }
+
+        .table td {
+          color: #334e5a;
+        }
+
+        .table tbody tr:last-child td {
+          border-bottom: 0;
+        }
+
+        .table tbody tr {
+          transition: background 0.15s ease;
+        }
+
+        .table tbody tr:hover {
+          background: #f9fcfe;
+        }
+
+        .table tbody tr.archived {
+          background: #f7f8f9;
+          opacity: 0.7;
+        }
+
+        .table td small {
+          display: block;
+          margin-top: 3px;
+          color: #71848d;
+          font-weight: 400;
+          white-space: normal;
+        }
+
+        .pet-cell {
+          display: flex;
+          align-items: center;
+          gap: 11px;
+          font-weight: 700;
+          color: #20313b;
+        }
+
+        .pet-cell img,
         .photo {
-          width: 76px;
-          height: 76px;
-          border-radius: 14px;
+          width: 40px;
+          height: 40px;
+          flex: 0 0 auto;
+          border-radius: 11px;
           background: #eaf8fd;
           color: #4da8da;
           object-fit: cover;
@@ -1461,49 +2346,28 @@ export default function PetManagementModule({
           place-items: center;
         }
 
-        .pet-heading {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-        }
-
-        .pet-info h3,
-        .pet-info p {
-          margin: 0;
-        }
-
-        .pet-info h3 {
-          color: #20313b;
-        }
-
-        .pet-info p {
-          margin: 4px 0;
-          color: #607985;
-        }
-
-        .pet-info small {
-          display: block;
-          margin-top: 3px;
-          color: #71848d;
-        }
-
-        .archived-badge {
+        .pill {
+          display: inline-flex;
+          padding: 5px 10px;
           border-radius: 999px;
-          padding: 3px 7px;
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .pill.active {
+          background: #e7f7ed;
+          color: #26754a;
+        }
+
+        .pill.archived {
           background: #e6eaec;
           color: #687b84;
-          font-size: 10px;
-          font-weight: 800;
-          text-transform: uppercase;
         }
 
         .actions {
-          grid-column: 1 / -1;
           display: flex;
           gap: 7px;
           flex-wrap: wrap;
-          padding-top: 3px;
         }
 
         .actions button {
@@ -1522,9 +2386,15 @@ export default function PetManagementModule({
             filter 0.2s ease;
         }
 
-        .actions button:hover {
+        .actions button:hover:not(:disabled) {
           transform: translateY(-1px);
           filter: brightness(0.97);
+        }
+
+        .actions button:disabled {
+          cursor: not-allowed;
+          background: #eef2f4;
+          color: #9aa9b0;
         }
 
         .actions .danger {
@@ -1583,6 +2453,47 @@ export default function PetManagementModule({
           color: #20313b;
         }
 
+        .form-modal {
+          width: min(820px, 100%);
+        }
+
+        .form-modal .form-card {
+          padding-right: 30px;
+        }
+
+        .form-modal .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .list-heading-row {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          flex-wrap: wrap;
+        }
+
+        .register-pet-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          border: 0;
+          border-radius: 11px;
+          padding: 10px 16px;
+          background: #4da8da;
+          color: #ffffff;
+          font-weight: 800;
+          font-size: 13px;
+          cursor: pointer;
+          transition:
+            transform 0.2s ease,
+            box-shadow 0.2s ease;
+        }
+
+        .register-pet-btn:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 18px rgba(77, 168, 218, 0.22);
+        }
+
         .close {
           position: absolute;
           top: 12px;
@@ -1597,15 +2508,38 @@ export default function PetManagementModule({
           cursor: pointer;
         }
 
+        .modal-subtitle {
+          margin: 0 0 16px;
+          color: #6f7f88;
+          font-size: 13px;
+        }
+
         .details {
-          border-radius: 12px;
-          padding: 13px;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 4px 18px;
+          border-radius: 14px;
+          padding: 15px 17px;
           background: #f4fbfd;
+          border: 1px solid #e3f2fb;
         }
 
         .details p {
-          margin: 7px 0;
+          margin: 6px 0;
+          color: #334e5a;
           line-height: 1.5;
+        }
+
+        .details p strong {
+          color: #6f7f88;
+          font-weight: 700;
+          margin-right: 4px;
+        }
+
+        .history-heading {
+          margin: 22px 0 10px;
+          color: #20313b;
+          font-size: 15px;
         }
 
         .history {
@@ -1627,6 +2561,106 @@ export default function PetManagementModule({
           padding: 28px;
           color: #71848d;
           text-align: center;
+        }
+
+        .details-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          border: 0;
+          border-radius: 9px;
+          padding: 9px 14px;
+          background: #eaf8fd;
+          color: #2b83ad;
+          font-weight: 700;
+          font-size: 13px;
+          line-height: 1;
+          white-space: nowrap;
+          cursor: pointer;
+          transition:
+            transform 0.2s ease,
+            filter 0.2s ease;
+        }
+
+        .details-btn svg {
+          flex-shrink: 0;
+        }
+
+        .details-btn:hover {
+          transform: translateY(-1px);
+          filter: brightness(0.97);
+        }
+
+        .pagination {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 14px;
+          margin-top: 18px;
+          padding-top: 17px;
+          border-top: 1px solid #edf3f6;
+        }
+
+        .page-nav {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 38px;
+          height: 38px;
+          flex-shrink: 0;
+          border: 1px solid #cfe4ed;
+          border-radius: 50%;
+          background: #ffffff;
+          color: #2b6f8f;
+          cursor: pointer;
+          transition:
+            background 0.2s ease,
+            border-color 0.2s ease,
+            opacity 0.2s ease;
+        }
+
+        .page-nav:hover:not(:disabled) {
+          background: #eaf8fd;
+          border-color: #a9dff0;
+        }
+
+        .page-nav:disabled {
+          cursor: not-allowed;
+          opacity: 0.4;
+        }
+
+        .pagination-pages {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+
+        .pagination-pages button {
+          min-width: 36px;
+          min-height: 36px;
+          border: 1px solid transparent;
+          border-radius: 9px;
+          background: transparent;
+          color: #55707d;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+          transition:
+            background 0.2s ease,
+            color 0.2s ease;
+        }
+
+        .pagination-pages button:hover {
+          background: #eaf8fd;
+        }
+
+        .pagination-pages button.active {
+          border-color: #4da8da;
+          background: #4da8da;
+          color: #ffffff;
         }
 
         .list-card { padding: 28px 30px; }
@@ -1671,14 +2705,16 @@ export default function PetManagementModule({
             grid-template-columns: 1fr;
           }
 
-          .pet-card {
-            grid-template-columns: 62px minmax(0, 1fr);
+          .pet-cell img,
+          .photo {
+            width: 32px;
+            height: 32px;
           }
 
-          .pet-card img,
-          .photo {
-            width: 62px;
-            height: 62px;
+          .table th,
+          .table td {
+            padding: 10px 8px;
+            font-size: 13px;
           }
 
           .result-summary {

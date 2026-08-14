@@ -4,6 +4,7 @@ import { APPOINTMENT_STATUSES, formatTime, getAppointments, updateAppointmentSta
 import { supabase } from "../config/supabaseClient";
 
 const PAGE_SIZE = 10;
+const STATUS_FILTER_OPTIONS = APPOINTMENT_STATUSES.filter(s => s !== "Confirmed");
 
 // Once an appointment's date is today (or has passed), it's handed off to
 // Queue Management for check-in, so it no longer needs to show in this table.
@@ -162,7 +163,7 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
   return <div className="manage-wrap">
     <div className="filters">
       <div className="search-box"><Search size={16}/><input type="text" placeholder="Search pet, owner, veterinarian, or notes" value={search} onChange={e=>setSearch(e.target.value)}/></div>
-      <select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{APPOINTMENT_STATUSES.map(s=><option key={s}>{s}</option>)}</select>
+      <select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{STATUS_FILTER_OPTIONS.map(s=><option key={s}>{s}</option>)}</select>
       <input type="date" value={date} onChange={e=>setDate(e.target.value)}/>
       <button onClick={load}><RefreshCw size={16}/>Refresh</button>
     </div>
