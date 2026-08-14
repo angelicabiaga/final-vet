@@ -269,14 +269,10 @@ export default function MedicalRecordsModule({
     [pets, form.petId]
   );
 
-  // Staff and pet owners get a read-only view; only the veterinarian who
-  // treats the pet (or an admin) can create or edit a medical record.
-  const canEdit = [
-    "admin",
-    "veterinarian",
-  ].includes(
-    profile?.role
-  );
+  // Everyone else (including admin) gets a read-only view; only the
+  // veterinarian can create or edit a medical record.
+  const canEdit =
+    profile?.role === "veterinarian";
 
   const queueLaunch = useMemo(() => {
     const params = new URLSearchParams(
@@ -1858,7 +1854,7 @@ export default function MedicalRecordsModule({
           }
         />
 
-        {canEdit && (
+        {profile?.role !== "pet_owner" && (
           <select
             value={status}
             onChange={(e) =>
@@ -3267,8 +3263,8 @@ export default function MedicalRecordsModule({
         }
 
         .mr .toolbar {
-          display: grid;
-          grid-template-columns: minmax(260px, 1fr) 190px auto;
+          display: flex;
+          flex-wrap: wrap;
           gap: 12px;
           align-items: center;
           margin-bottom: 20px;
@@ -3277,6 +3273,14 @@ export default function MedicalRecordsModule({
           border: 1px solid #e1edf2;
           border-radius: 16px;
           box-shadow: 0 6px 20px rgba(40, 92, 116, .06);
+        }
+
+        .mr .toolbar input {
+          flex: 1 1 260px;
+        }
+
+        .mr .toolbar select {
+          flex: 0 1 190px;
         }
 
         .mr .toolbar input,
@@ -3317,6 +3321,7 @@ export default function MedicalRecordsModule({
         .mr .toolbar button {
           height: 46px;
           white-space: nowrap;
+          flex: 0 0 auto;
         }
 
         .mr .grid {
@@ -3961,12 +3966,12 @@ export default function MedicalRecordsModule({
         }
 
         @media(max-width:900px) {
-          .mr .toolbar {
-            grid-template-columns: 1fr 180px;
+          .mr .toolbar select {
+            flex-basis: 160px;
           }
 
           .mr .toolbar button {
-            grid-column: 1 / -1;
+            flex-basis: 100%;
           }
 
           .mr-modal {
@@ -3981,12 +3986,12 @@ export default function MedicalRecordsModule({
 
         @media(max-width:650px) {
           .mr .toolbar {
-            grid-template-columns: 1fr;
             padding: 14px;
           }
 
-          .mr .toolbar button {
-            grid-column: auto;
+          .mr .toolbar input,
+          .mr .toolbar select {
+            flex-basis: 100%;
           }
 
           .mr-modal {

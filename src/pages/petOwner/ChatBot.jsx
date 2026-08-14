@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 
 import AppShell from "../../components/AppShell";
+import ConfirmDialog from "../../components/ConfirmDialog";
 
 import chatbotImage from "../../assets/reference/chatbot.png";
 
@@ -469,6 +470,11 @@ export default function ChatBot({
     requestError,
     setRequestError,
   ] = useState(null);
+
+  const [
+    showClearConfirm,
+    setShowClearConfirm,
+  ] = useState(false);
 
   const messageListRef =
     useRef(null);
@@ -960,14 +966,11 @@ export default function ChatBot({
       return;
     }
 
-    const confirmed =
-      window.confirm(
-        "Clear your conversation with the PawCruz Pet Care Assistant?"
-      );
+    setShowClearConfirm(true);
+  }
 
-    if (!confirmed) {
-      return;
-    }
+  function confirmClearConversation() {
+    setShowClearConfirm(false);
 
     if (profile?.id) {
       try {
@@ -2635,6 +2638,17 @@ export default function ChatBot({
           }
         }
       `}</style>
+
+      <ConfirmDialog
+        open={showClearConfirm}
+        tone="danger"
+        title="Clear Conversation?"
+        description="Clear your conversation with the PawCruz Pet Care Assistant? This cannot be undone."
+        confirmLabel="Yes, Clear Conversation"
+        cancelLabel="Keep Conversation"
+        onConfirm={confirmClearConversation}
+        onCancel={() => setShowClearConfirm(false)}
+      />
     </AppShell>
   );
 }

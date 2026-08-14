@@ -3,7 +3,9 @@ import { supabase } from "../config/supabaseClient";
 const SESSION_KEY = "pawcruz_session";
 const OTP_KEY = "pawcruz_pending_otp";
 const RESET_KEY = "pawcruz_password_reset";
+const TRUSTED_DEVICE_KEY = "pawcruz_trusted_devices";
 export const OTP_EXPIRY_MINUTES = 10;
+export const TRUSTED_DEVICE_DAYS = 30;
 
 function normalizeIdentifier(value) {
   return String(value || "").trim().toLowerCase();
@@ -41,6 +43,41 @@ function saveSession(profile) {
   writeJson(SESSION_KEY, session);
   window.dispatchEvent(new Event("pawcruz-auth-change"));
   return session;
+}
+
+// "Don't ask again on this device for 30 days" -- purely client-side, keyed
+// by profile id so multiple accounts on the same browser are tracked
+// separately. There is no server-side device record; trust lives only in
+// this browser's localStorage, same as the rest of this custom auth system.
+function readTrustedDevices() {
+  return readJson(TRUSTED_DEVICE_KEY) || {};
+}
+
+function isDeviceTrusted(profileId) {
+  if (!profileId) return false;
+  const trusted = readTrustedDevices();
+  const expiresAt = Number(trusted[profileId] || 0);
+  if (!expiresAt) return false;
+  if (Date.now() > expiresAt) {
+    delete trusted[profileId];
+    writeJson(TRUSTED_DEVICE_KEY, trusted);
+    return false;
+  }
+  return true;
+}
+
+function trustThisDevice(profileId) {
+  if (!profileId) return;
+  const trusted = readTrustedDevices();
+  trusted[profileId] = Date.now() + TRUSTED_DEVICE_DAYS * 24 * 60 * 60 * 1000;
+  writeJson(TRUSTED_DEVICE_KEY, trusted);
+}
+
+export function forgetTrustedDevice(profileId) {
+  if (!profileId) return;
+  const trusted = readTrustedDevices();
+  delete trusted[profileId];
+  writeJson(TRUSTED_DEVICE_KEY, trusted);
 }
 
 async function writeActivity(profile, action, description) {
@@ -168,11 +205,19 @@ export async function loginUser(identifier, password) {
   }
   if (profile.account_status !== "active") throw new Error("Your account is inactive. Contact the administrator.");
 
+  if (isDeviceTrusted(profile.id)) {
+    const now = new Date().toISOString();
+    await supabase.from("profiles").update({ last_login_at: now }).eq("id", profile.id);
+    const updatedProfile = { ...profile, last_login_at: now };
+    await writeActivity(updatedProfile, "Login", `${profile.full_name} logged in (trusted device, OTP skipped).`);
+    return { requiresOtp: false, ...saveSession(updatedProfile) };
+  }
+
   await createAndSendOtp(profile.email, "login", { profileId: profile.id });
   return { requiresOtp: true, email: profile.email, purpose: "login" };
 }
 
-export async function completeLoginOtp(code) {
+export async function completeLoginOtp(code, trustDevice = false) {
   const pending = verifyOtpCode("login", code);
   const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", pending.payload?.profileId).single();
   if (error || !profile) throw new Error("Unable to complete login.");
@@ -181,6 +226,7 @@ export async function completeLoginOtp(code) {
   const updatedProfile = { ...profile, last_login_at: now };
   localStorage.removeItem(OTP_KEY);
   await writeActivity(updatedProfile, "Login", `${profile.full_name} logged in.`);
+  if (trustDevice) trustThisDevice(profile.id);
   return saveSession(updatedProfile);
 }
 
@@ -189,6 +235,15 @@ export async function logoutUser() {
   if (session?.profile) await writeActivity(session.profile, "Logout", `${session.profile.full_name} logged out.`);
   localStorage.removeItem(SESSION_KEY);
   window.dispatchEvent(new Event("pawcruz-auth-change"));
+}
+
+// Shared by the OTP screen and the trusted-device fast path in Login.jsx so
+// both send a freshly logged-in user to the same place.
+export function resolveLoginDestination(profile, fallback) {
+  const role = profile?.role;
+  const rolePath = role === "pet_owner" ? "pet-owner" : role;
+  if (profile?.must_change_password) return `/${rolePath}/profile?forcePasswordChange=1`;
+  return fallback || `/${rolePath}/dashboard`;
 }
 
 export async function getCurrentProfile(userId) {
