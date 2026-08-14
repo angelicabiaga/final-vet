@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -18,23 +19,28 @@ import {
   Sparkles,
   TriangleAlert,
   Undo2,
+  Upload,
   X,
 } from "lucide-react";
 
 import jsPDF from "jspdf";
 
 import {
+  downloadInventoryImportTemplate,
   exportInventoryCsv,
   getInventoryCategories,
   getInventoryItems,
   getInventorySummary,
   getInventoryTransactions,
   getInventoryForecasts,
+  parseInventoryImportCsv,
   recordInventoryTransaction,
   saveInventoryItem,
   setInventoryArchived,
   summarizeForecastWithGroq,
 } from "../services/inventoryService";
+
+import ConfirmDialog from "./ConfirmDialog";
 
 const EMPTY_ITEM = {
   id: "",
@@ -103,6 +109,26 @@ function cleanAiText(text) {
     .trim();
 }
 
+// Fingerprints the numbers the AI narrative is actually based on, so
+// reopening the forecast modal can skip a fresh Groq call when nothing
+// about the underlying stock/usage picture has changed.
+function forecastSignature(rows) {
+  return (rows || [])
+    .map((row) =>
+      [
+        row.id,
+        row.quantity,
+        row.stockRisk,
+        row.expiryRisk,
+        row.usageTrend,
+        row.recommended,
+        row.daysOfStock,
+      ].join(":")
+    )
+    .sort()
+    .join("|");
+}
+
 export default function InventoryManagementModule({
   profile,
 }) {
@@ -146,6 +172,8 @@ export default function InventoryManagementModule({
     setSummaryError,
   ] = useState("");
 
+  const summarySignatureRef = useRef("");
+
   const [filters, setFilters] = useState({
     search: "",
     category: "",
@@ -167,6 +195,15 @@ export default function InventoryManagementModule({
     setSelectedItem,
   ] = useState(null);
 
+  const [importFileName, setImportFileName] = useState("");
+  const [importPreview, setImportPreview] = useState(null);
+  const [importResults, setImportResults] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState({
+    current: 0,
+    total: 0,
+  });
+
   const [loading, setLoading] =
     useState(true);
 
@@ -177,6 +214,12 @@ export default function InventoryManagementModule({
     type: "",
     text: "",
   });
+
+  const [pendingArchive, setPendingArchive] =
+    useState(null);
+
+  const [archiving, setArchiving] =
+    useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -233,6 +276,96 @@ export default function InventoryManagementModule({
     setModal("item");
   }
 
+  function resetImportState() {
+    setImportFileName("");
+    setImportPreview(null);
+    setImportResults(null);
+  }
+
+  function openImportModal() {
+    resetImportState();
+    setModal("import");
+  }
+
+  function closeImportModal() {
+    setModal("");
+    resetImportState();
+  }
+
+  function handleImportFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setImportFileName(file.name);
+    setImportResults(null);
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      setImportPreview(
+        parseInventoryImportCsv(String(reader.result || ""))
+      );
+    };
+
+    reader.onerror = () => {
+      setImportPreview({
+        items: [],
+        errors: ["Unable to read the selected file."],
+      });
+    };
+
+    reader.readAsText(file);
+  }
+
+  async function runImport() {
+    const rows = importPreview?.items || [];
+    if (!rows.length) return;
+
+    setImporting(true);
+    setImportProgress({ current: 0, total: rows.length });
+
+    const results = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      setImportProgress({ current: i + 1, total: rows.length });
+
+      try {
+        await saveInventoryItem(row, profile);
+        results.push({
+          row: row._row,
+          item_name: row.item_name,
+          success: true,
+          message: "Imported.",
+        });
+      } catch (error) {
+        results.push({
+          row: row._row,
+          item_name: row.item_name,
+          success: false,
+          message: error.message,
+        });
+      }
+    }
+
+    setImportResults(results);
+    setImporting(false);
+
+    const successCount = results.filter(
+      (result) => result.success
+    ).length;
+
+    if (successCount > 0) {
+      setNotice({
+        type: "success",
+        text: `${successCount} of ${results.length} item(s) imported.`,
+      });
+
+      await load();
+    }
+  }
+
   function openEdit(item) {
     setItemForm({
       ...item,
@@ -279,7 +412,17 @@ export default function InventoryManagementModule({
       setForecasts(rows);
       setModal("forecast");
 
-      generateForecastSummary(rows);
+      // Only call the AI service when there's no cached narrative yet or the
+      // underlying stock/usage numbers actually moved since it was generated,
+      // so reopening the modal to glance at it doesn't burn Groq's rate limit.
+      const signature = forecastSignature(rows);
+
+      if (
+        !forecastSummary ||
+        signature !== summarySignatureRef.current
+      ) {
+        generateForecastSummary(rows, signature);
+      }
     } catch (error) {
       setNotice({
         type: "error",
@@ -291,7 +434,8 @@ export default function InventoryManagementModule({
   }
 
   async function generateForecastSummary(
-    rows
+    rows,
+    signature = forecastSignature(rows)
   ) {
     setSummaryLoading(true);
     setSummaryError("");
@@ -306,6 +450,8 @@ export default function InventoryManagementModule({
       setForecastSummary(
         cleanAiText(text)
       );
+
+      summarySignatureRef.current = signature;
     } catch (error) {
       setSummaryError(error.message);
     } finally {
@@ -973,21 +1119,18 @@ export default function InventoryManagementModule({
     }
   }
 
-  async function toggleArchive(
+  function toggleArchive(
     item
   ) {
-    const action =
-      item.is_archived
-        ? "Restore"
-        : "Archive";
+    setPendingArchive(item);
+  }
 
-    if (
-      !window.confirm(
-        `${action} ${item.item_name}?`
-      )
-    ) {
-      return;
-    }
+  async function confirmToggleArchive() {
+    if (!pendingArchive) return;
+
+    const item = pendingArchive;
+
+    setArchiving(true);
 
     try {
       await setInventoryArchived(
@@ -1002,12 +1145,16 @@ export default function InventoryManagementModule({
           : "Item archived.",
       });
 
+      setPendingArchive(null);
+
       await load();
     } catch (error) {
       setNotice({
         type: "error",
         text: error.message,
       });
+    } finally {
+      setArchiving(false);
     }
   }
 
@@ -1200,6 +1347,22 @@ export default function InventoryManagementModule({
             ? "Loading..."
             : "Forecast"}
         </button>
+
+        {canManageItems && (
+          <button
+            type="button"
+            className="secondary"
+            onClick={
+              openImportModal
+            }
+          >
+            <Upload
+              size={17}
+            />
+
+            Import
+          </button>
+        )}
 
         {canManageItems && (
           <button
@@ -1692,6 +1855,208 @@ export default function InventoryManagementModule({
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {modal === "import" && (
+        <Modal
+          title="Import Inventory Items"
+          close={closeImportModal}
+          large
+        >
+          <div className="import-panel">
+            <p className="forecast-note">
+              Upload a CSV file to add multiple items at once. Each
+              row needs at least Item Name, SKU, Category, Unit, and
+              Expiry Date — the same fields required when adding an
+              item manually. Any starting quantity in the file is
+              recorded as an initial Stock In transaction.
+            </p>
+
+            <div className="import-toolbar">
+              <button
+                type="button"
+                className="secondary"
+                onClick={downloadInventoryImportTemplate}
+              >
+                <FileDown size={16} />
+                Download CSV Template
+              </button>
+
+              <label className="file-input">
+                <Upload size={16} />
+                {importFileName || "Choose CSV file…"}
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={handleImportFile}
+                />
+              </label>
+            </div>
+
+            {importPreview?.errors?.length > 0 && (
+              <div className="notice error">
+                <span>{importPreview.errors[0]}</span>
+              </div>
+            )}
+
+            {importPreview?.items?.length > 0 &&
+              !importResults && (
+                <>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Row</th>
+                          <th>Item Name</th>
+                          <th>SKU</th>
+                          <th>Category</th>
+                          <th>Qty</th>
+                          <th>Expiry Date</th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {importPreview.items
+                          .slice(0, 25)
+                          .map((row) => (
+                            <tr key={row._row}>
+                              <td>{row._row}</td>
+                              <td>
+                                {row.item_name || (
+                                  <em>Missing</em>
+                                )}
+                              </td>
+                              <td>
+                                {row.sku || <em>Missing</em>}
+                              </td>
+                              <td>
+                                {row.category || (
+                                  <em>Missing</em>
+                                )}
+                              </td>
+                              <td>{row.quantity}</td>
+                              <td>
+                                {row.expiry_date || (
+                                  <em>Missing</em>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {importPreview.items.length > 25 && (
+                    <small>
+                      …and{" "}
+                      {importPreview.items.length - 25} more
+                      row(s) not shown.
+                    </small>
+                  )}
+
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={closeImportModal}
+                      disabled={importing}
+                    >
+                      Cancel
+                    </button>
+
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={runImport}
+                      disabled={importing}
+                    >
+                      {importing
+                        ? `Importing ${importProgress.current}/${importProgress.total}…`
+                        : `Import ${importPreview.items.length} Item${
+                            importPreview.items.length === 1
+                              ? ""
+                              : "s"
+                          }`}
+                    </button>
+                  </div>
+                </>
+              )}
+
+            {importResults && (
+              <div className="import-results">
+                <div
+                  className={`notice ${
+                    importResults.some(
+                      (result) => !result.success
+                    )
+                      ? "error"
+                      : "success"
+                  }`}
+                >
+                  <span>
+                    {
+                      importResults.filter(
+                        (result) => result.success
+                      ).length
+                    }{" "}
+                    of {importResults.length} item(s)
+                    imported successfully.
+                  </span>
+                </div>
+
+                {importResults.some(
+                  (result) => !result.success
+                ) && (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Row</th>
+                          <th>Item</th>
+                          <th>Reason</th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {importResults
+                          .filter(
+                            (result) => !result.success
+                          )
+                          .map((result) => (
+                            <tr key={result.row}>
+                              <td>{result.row}</td>
+                              <td>
+                                {result.item_name || "—"}
+                              </td>
+                              <td>{result.message}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={resetImportState}
+                  >
+                    Import Another File
+                  </button>
+
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={closeImportModal}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </Modal>
       )}
 
@@ -2455,6 +2820,45 @@ export default function InventoryManagementModule({
           line-height: 1.5;
         }
 
+        .import-panel {
+          display: grid;
+          gap: 16px;
+        }
+
+        .import-toolbar {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+
+        .file-input {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 9px 14px;
+          border: 1px dashed #b9d8e4;
+          border-radius: 9px;
+          background: #f5fbfd;
+          color: #297da8;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .file-input input {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
+          cursor: pointer;
+        }
+
+        .import-results {
+          display: grid;
+          gap: 14px;
+        }
+
         .ai-summary {
           background: #f5fbfd;
           border: 1px solid #d6eaf2;
@@ -2666,6 +3070,34 @@ export default function InventoryManagementModule({
           }
         }
       `}</style>
+
+      <ConfirmDialog
+        open={!!pendingArchive}
+        tone="danger"
+        title={
+          pendingArchive?.is_archived
+            ? "Restore Item?"
+            : "Archive Item?"
+        }
+        description={
+          pendingArchive
+            ? `${
+                pendingArchive.is_archived
+                  ? "Restore"
+                  : "Archive"
+              } ${pendingArchive.item_name}?`
+            : ""
+        }
+        confirmLabel={
+          pendingArchive?.is_archived
+            ? "Yes, Restore Item"
+            : "Yes, Archive Item"
+        }
+        cancelLabel="Cancel"
+        busy={archiving}
+        onConfirm={confirmToggleArchive}
+        onCancel={() => setPendingArchive(null)}
+      />
     </div>
   );
 }

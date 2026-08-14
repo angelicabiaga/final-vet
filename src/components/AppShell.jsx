@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Menu, LogOut, UserCircle, X } from "lucide-react";
 import { logoutUser } from "../services/authService";
+import { reconcileInventoryStatus } from "../services/inventoryService";
 import NotificationBell from "./NotificationBell";
 
 import pawLogo from "../assets/reference/paw.png";
@@ -40,6 +41,16 @@ export default function AppShell({ profile, title, children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const rolePath = profile?.role === "pet_owner" ? "pet-owner" : profile?.role;
+
+  // Inventory statuses (Low Stock / Out of Stock / Near Expiry / Expired)
+  // already update automatically on every write (POS sale, stock
+  // transaction, manual edit). This just catches items that drifted purely
+  // from time passing, so Near Expiry/Expired notifications still fire even
+  // if nobody has touched that item recently. Admin/Staff only, throttled.
+  useEffect(() => {
+    if (!["admin", "staff"].includes(profile?.role)) return;
+    reconcileInventoryStatus().catch(() => {});
+  }, [profile?.role]);
 
   const navByRole = {
     pet_owner: [

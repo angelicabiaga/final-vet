@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { loginUser } from "../../services/authService";
+import { loginUser, resolveLoginDestination } from "../../services/authService";
 import PasswordInput from "../../components/PasswordInput";
 import pawLogo from "../../assets/reference/paw.png";
 
@@ -22,6 +22,16 @@ export default function Login() {
 
     try {
       const result = await loginUser(form.identifier, form.password);
+
+      if (!result.requiresOtp) {
+        // Trusted device: credentials were enough, no OTP needed this time.
+        navigate(
+          resolveLoginDestination(result.profile, location.state?.from?.pathname),
+          { replace: true },
+        );
+        return;
+      }
+
       navigate(`/otp?purpose=login`, {
         state: { from: location.state?.from?.pathname || null, email: result.email },
       });

@@ -8,6 +8,8 @@ import {
   completeRegistrationOtp,
   getPendingOtp,
   resendAuthOtp,
+  resolveLoginDestination,
+  TRUSTED_DEVICE_DAYS,
 } from '../../services/authService';
 
 const PURPOSE_TITLES = {
@@ -143,7 +145,6 @@ export default function OtpVerification() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [resent, setResent] = useState(false);
-  const [resetToken, setResetToken] = useState(0);
 
   async function submit(event) {
     event.preventDefault();
@@ -168,14 +169,12 @@ export default function OtpVerification() {
         completePasswordResetOtp(code);
         navigate('/reset-password', { replace: true });
       } else {
-        const result = await completeLoginOtp(code);
-        const role = result.profile?.role;
-        const rolePath = role === 'pet_owner' ? 'pet-owner' : role;
-        const destination = result.profile?.must_change_password
-          ? `/${rolePath}/profile?forcePasswordChange=1`
-          : location.state?.from || `/${rolePath}/dashboard`;
+        const result = await completeLoginOtp(code, trustDevice);
 
-        navigate(destination, { replace: true });
+        navigate(
+          resolveLoginDestination(result.profile, location.state?.from),
+          { replace: true },
+        );
       }
     } catch (error) {
       setMessage(error.message || 'Unable to verify OTP.');
@@ -255,6 +254,26 @@ export default function OtpVerification() {
           white-space: nowrap;
         }
 
+        .otp-trust-device {
+          display: flex !important;
+          flex-direction: row;
+          align-items: center;
+          gap: 9px;
+          text-transform: none !important;
+          font-weight: 700 !important;
+          font-size: 13px !important;
+          color: #3d5c6c !important;
+          cursor: pointer;
+        }
+
+        .otp-trust-device input[type='checkbox'] {
+          width: 17px;
+          height: 17px;
+          flex-shrink: 0;
+          accent-color: #4da8da;
+          cursor: pointer;
+        }
+
         @media (max-width: 520px) {
           .otp-code-boxes {
             gap: 7px;
@@ -282,6 +301,19 @@ export default function OtpVerification() {
             blockPaste={purpose === 'login'}
           />
         </label>
+
+        {purpose === 'login' && (
+          <label className='otp-trust-device'>
+            <input
+              type='checkbox'
+              checked={trustDevice}
+              onChange={(event) => setTrustDevice(event.target.checked)}
+            />
+            <span>
+              Don't ask again on this device for {TRUSTED_DEVICE_DAYS} days
+            </span>
+          </label>
+        )}
 
         {message && (
           <div className='error' role='alert'>

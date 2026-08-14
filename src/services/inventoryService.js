@@ -12,6 +12,50 @@ const GROQ_MODEL =
 const GROQ_ENDPOINT =
   "https://api.groq.com/openai/v1/chat/completions";
 
+const RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+
+let lastInventoryReconcileAt = 0;
+
+/**
+ * Re-checks every active item's stock/expiry status against today's date and
+ * sends Low Stock / Out of Stock / Near Expiry / Expired notifications to
+ * Admin and Staff for anything that drifted (see
+ * supabase/inventory_stock_notifications.sql). Throttled client-side so
+ * repeated page loads in the same session don't hammer the database; safe
+ * to call as often as needed since the underlying RPC only touches rows
+ * whose stored status is actually stale.
+ */
+export async function reconcileInventoryStatus({
+  force = false,
+} = {}) {
+  const now = Date.now();
+
+  if (
+    !force &&
+    now - lastInventoryReconcileAt <
+      RECONCILE_INTERVAL_MS
+  ) {
+    return null;
+  }
+
+  lastInventoryReconcileAt = now;
+
+  const { data, error } = await supabase.rpc(
+    "pawcruz_reconcile_inventory_status"
+  );
+
+  if (error) {
+    console.warn(
+      "Inventory status reconcile skipped:",
+      error.message
+    );
+
+    return null;
+  }
+
+  return data;
+}
+
 function friendly(error, fallback) {
   console.error(fallback, error);
 
@@ -217,14 +261,16 @@ export async function getInventorySummary() {
     rows.length;
 
   const totalUnits =
-    rows.reduce(
-      (sum, row) =>
-        sum +
-        Number(
-          row.quantity || 0
-        ),
-      0
-    );
+    Math.round(
+      rows.reduce(
+        (sum, row) =>
+          sum +
+          Number(
+            row.quantity || 0
+          ),
+        0
+      ) * 100
+    ) / 100;
 
   const lowStock =
     rows.filter(
@@ -1565,6 +1611,229 @@ export function exportInventoryCsv(
   document.body.removeChild(
     anchor
   );
+
+  URL.revokeObjectURL(url);
+}
+
+const IMPORT_REQUIRED_FIELDS = [
+  "item_name",
+  "category",
+  "sku",
+  "unit",
+  "expiry_date",
+];
+
+const IMPORT_COLUMN_ALIASES = {
+  item_name: ["itemname", "name", "productname"],
+  category: ["category", "productcategory"],
+  sku: ["sku", "itemcode", "code"],
+  description: ["description", "notes"],
+  unit: ["unit", "unitofmeasure", "uom"],
+  quantity: [
+    "quantity",
+    "qty",
+    "currentstockquantity",
+    "stock",
+    "initialquantity",
+  ],
+  unit_price: ["unitprice", "price"],
+  reorder_level: [
+    "reorderlevel",
+    "reorderpoint",
+  ],
+  expiry_date: ["expirydate", "expiry"],
+  supplier_name: ["supplier", "suppliername"],
+  batch_number: ["batch", "batchnumber"],
+};
+
+function normalizeHeaderCell(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeImportDate(value) {
+  const trimmed = String(
+    value || ""
+  ).trim();
+
+  if (!trimmed) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return trimmed;
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+// Minimal CSV reader: handles quoted fields (with embedded commas/quotes)
+// and both \n and \r\n line endings without pulling in a parsing library.
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  const pushField = () => {
+    row.push(field);
+    field = "";
+  };
+
+  const pushRow = () => {
+    pushField();
+    rows.push(row);
+    row = [];
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+    } else if (char === '"') {
+      inQuotes = true;
+    } else if (char === ",") {
+      pushField();
+    } else if (char === "\n") {
+      pushRow();
+    } else if (char === "\r") {
+      // Skip; a following \n (if any) closes the row.
+    } else {
+      field += char;
+    }
+  }
+
+  if (field.length || row.length) pushRow();
+
+  return rows.filter((cells) =>
+    cells.some((cell) => String(cell || "").trim() !== "")
+  );
+}
+
+/**
+ * Parses a staff-uploaded inventory CSV into row objects shaped exactly like
+ * the Add Item form's values, so each row can be handed to saveInventoryItem
+ * unchanged and get the same validation as a manual entry.
+ */
+export function parseInventoryImportCsv(text) {
+  const rows = parseCsvText(text);
+
+  if (!rows.length) {
+    return {
+      items: [],
+      errors: ["The file is empty."],
+    };
+  }
+
+  const header = rows[0].map(normalizeHeaderCell);
+  const columnIndex = {};
+
+  Object.entries(IMPORT_COLUMN_ALIASES).forEach(([field, aliases]) => {
+    const index = header.findIndex((cell) => aliases.includes(cell));
+    if (index !== -1) columnIndex[field] = index;
+  });
+
+  const missingColumns = IMPORT_REQUIRED_FIELDS.filter(
+    (field) => columnIndex[field] === undefined
+  );
+
+  if (missingColumns.length) {
+    return {
+      items: [],
+      errors: [
+        `The file is missing required column(s): ${missingColumns.join(
+          ", "
+        )}. Download the template to see the expected headers.`,
+      ],
+    };
+  }
+
+  const cell = (dataRow, field) =>
+    columnIndex[field] !== undefined
+      ? String(dataRow[columnIndex[field]] ?? "").trim()
+      : "";
+
+  const items = rows.slice(1).map((dataRow, index) => ({
+    _row: index + 2,
+    item_name: cell(dataRow, "item_name"),
+    category: cell(dataRow, "category"),
+    sku: cell(dataRow, "sku"),
+    description: cell(dataRow, "description"),
+    unit: cell(dataRow, "unit"),
+    quantity: cell(dataRow, "quantity") || "0",
+    unit_price: cell(dataRow, "unit_price") || "0",
+    reorder_level: cell(dataRow, "reorder_level") || "0",
+    expiry_date: normalizeImportDate(cell(dataRow, "expiry_date")),
+    supplier_name: cell(dataRow, "supplier_name"),
+    batch_number: cell(dataRow, "batch_number"),
+  }));
+
+  return { items, errors: [] };
+}
+
+export function downloadInventoryImportTemplate() {
+  const headers = [
+    "Item Name",
+    "SKU",
+    "Category",
+    "Unit",
+    "Quantity",
+    "Unit Price",
+    "Reorder Level",
+    "Expiry Date",
+    "Supplier",
+    "Batch",
+    "Description",
+  ];
+
+  const example = [
+    "Amoxicillin 250mg",
+    "AMX-250",
+    "Antibiotics",
+    "box",
+    "50",
+    "8.50",
+    "10",
+    "2026-12-31",
+    "VetSupply Co.",
+    "B-2026-01",
+    "For canine and feline use",
+  ];
+
+  const csv = [headers, example]
+    .map((row) =>
+      row
+        .map(
+          (value) =>
+            `"${String(value ?? "").replace(/"/g, '""')}"`
+        )
+        .join(",")
+    )
+    .join("\n");
+
+  const blob = new Blob([csv], {
+    type: "text/csv;charset=utf-8",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = "pawcruz-inventory-import-template.csv";
+
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
 
   URL.revokeObjectURL(url);
 }

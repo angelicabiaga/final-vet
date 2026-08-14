@@ -2338,7 +2338,7 @@ export default function MedicalRecordsModule({
           }
         />
 
-        {canEdit && (
+        {profile?.role !== "pet_owner" && (
           <select
             className="new-record-select"
             aria-label="Create a new medical record"
@@ -3804,6 +3804,14 @@ export default function MedicalRecordsModule({
           box-shadow: 0 6px 20px rgba(40, 92, 116, .06);
         }
 
+        .mr .toolbar input {
+          flex: 1 1 260px;
+        }
+
+        .mr .toolbar select {
+          flex: 0 1 190px;
+        }
+
         .mr .toolbar input,
         .mr .toolbar select {
           width: 100%;
@@ -3842,6 +3850,7 @@ export default function MedicalRecordsModule({
         .mr .toolbar button {
           height: 46px;
           white-space: nowrap;
+          flex: 0 0 auto;
         }
 
         .mr .toolbar select.new-record-select {
@@ -4642,12 +4651,12 @@ export default function MedicalRecordsModule({
         }
 
         @media(max-width:900px) {
-          .mr .toolbar {
-            grid-template-columns: 1fr 180px;
+          .mr .toolbar select {
+            flex-basis: 160px;
           }
 
           .mr .toolbar button {
-            grid-column: 1 / -1;
+            flex-basis: 100%;
           }
 
           .mr-modal {
@@ -4662,12 +4671,12 @@ export default function MedicalRecordsModule({
 
         @media(max-width:650px) {
           .mr .toolbar {
-            grid-template-columns: 1fr;
             padding: 14px;
           }
 
-          .mr .toolbar button {
-            grid-column: auto;
+          .mr .toolbar input,
+          .mr .toolbar select {
+            flex-basis: 100%;
           }
 
           .mr-modal {
