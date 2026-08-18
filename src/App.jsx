@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { getStoredSession } from "./services/authService";
 import ProtectedRoute from "./components/ProtectedRoute";
 import RoleRoute from "./components/RoleRoute";
+import VeterinarianVerificationGate from "./components/VeterinarianVerificationGate";
 import LoadingSpinner from "./components/LoadingSpinner";
 import GlobalToastCenter from "./components/GlobalToastCenter";
 import LandingPage from "./pages/public/LandingPage";
@@ -29,6 +30,7 @@ const VeterinarianScheduleManagement = lazy(() => import("./pages/staff/Veterina
 const AnimalPatientManagement = lazy(() => import("./pages/staff/AnimalPatientManagement"));
 const VeterinarianPatients = lazy(() => import("./pages/veterinarian/VeterinarianPatients"));
 const AdminPetManagement = lazy(() => import("./pages/admin/PetManagement"));
+const StaffVeterinarians = lazy(() => import("./pages/staff/Veterinarians"));
 const AdminMedicalRecords = lazy(() => import("./pages/admin/AdminMedicalRecords"));
 const StaffMedicalRecords = lazy(() => import("./pages/staff/MedicalRecordsManagement"));
 const VeterinarianMedicalRecords = lazy(() => import("./pages/veterinarian/MedicalRecordsManagement"));
@@ -105,13 +107,14 @@ export default function App() {
         <Route path="/staff/appointments" element={guarded(["staff", "admin"], <AppointmentManagement profile={profile} />)} />
         <Route path="/staff/walk-in" element={guarded(["staff", "admin"], <WalkInRegistration profile={profile} />)} />
         <Route path="/staff/veterinarian-schedules" element={guarded(["staff", "admin"], <VeterinarianScheduleManagement profile={profile} />)} />
+        <Route path="/staff/veterinarians" element={guarded(["staff"], <StaffVeterinarians profile={profile} />)} />
         <Route path="/staff/patients" element={guarded(["staff"], <AnimalPatientManagement profile={profile} />)} />
         <Route path="/admin/pets" element={guarded(["admin"], <AdminPetManagement profile={profile} />)} />
-        <Route path="/veterinarian/appointments" element={guarded(["veterinarian"], <VeterinarianAppointments profile={profile} />)} />
-        <Route path="/veterinarian/patients" element={guarded(["veterinarian"], <VeterinarianPatients profile={profile} />)} />
+        <Route path="/veterinarian/appointments" element={guarded(["veterinarian"], <VeterinarianVerificationGate profile={profile}><VeterinarianAppointments profile={profile} /></VeterinarianVerificationGate>)} />
+        <Route path="/veterinarian/patients" element={guarded(["veterinarian"], <VeterinarianVerificationGate profile={profile}><VeterinarianPatients profile={profile} /></VeterinarianVerificationGate>)} />
         <Route path="/admin/medical-records" element={guarded(["admin"], <AdminMedicalRecords profile={profile} />)} />
         <Route path="/staff/medical-records" element={guarded(["staff"], <StaffMedicalRecords profile={profile} />)} />
-        <Route path="/veterinarian/medical-records" element={guarded(["veterinarian"], <VeterinarianMedicalRecords profile={profile} />)} />
+        <Route path="/veterinarian/medical-records" element={guarded(["veterinarian"], <VeterinarianVerificationGate profile={profile}><VeterinarianMedicalRecords profile={profile} /></VeterinarianVerificationGate>)} />
         <Route path="/pet-owner/medical-records" element={guarded(["pet_owner"], <OwnerMedicalRecords profile={profile} />)} />
         <Route path="/admin/messages" element={guarded(["admin"], <AdminMessages profile={profile} />)} />
         <Route path="/staff/messages" element={guarded(["staff"], <StaffMessages profile={profile} />)} />
@@ -125,7 +128,7 @@ export default function App() {
         <Route path="/veterinarian/inventory" element={guarded(["veterinarian"], <VeterinarianInventory profile={profile} />)} />
         <Route path="/admin/queue" element={guarded(["admin"], <StaffQueue profile={profile} />)} />
         <Route path="/staff/queue" element={guarded(["staff"], <StaffQueue profile={profile} />)} />
-        <Route path="/veterinarian/queue" element={guarded(["veterinarian"], <VeterinarianQueue profile={profile} />)} />
+        <Route path="/veterinarian/queue" element={guarded(["veterinarian"], <VeterinarianVerificationGate profile={profile}><VeterinarianQueue profile={profile} /></VeterinarianVerificationGate>)} />
         <Route path="/pet-owner/queue" element={guarded(["pet_owner"], <OwnerQueue profile={profile} />)} />
         <Route path="/admin/users" element={guarded(["admin"], <UserManagement profile={profile} />)} />
         <Route path="/admin/reports" element={guarded(["admin"], <ReportsAnalytics profile={profile} />)} />

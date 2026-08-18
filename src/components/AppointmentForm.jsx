@@ -106,6 +106,13 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   }, [petDropdownOpen]);
 
   useEffect(() => {
+    if (!petModalOpen) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = original; };
+  }, [petModalOpen]);
+
+  useEffect(() => {
     setForm(value => {
       if (!value.veterinarianId) return value;
       const stillEligible = (slotMap[value.veterinarianId] || []).includes(value.startTime);
@@ -212,6 +219,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
   async function submit(event) {
     event.preventDefault();
+    if (submitting) return;
     if (!form.petIds.length) { setMessage({ type: "error", text: "Select at least one pet." }); return; }
     if (!form.veterinarianId) { setMessage({ type: "error", text: "Select a veterinarian." }); return; }
     if (consecutiveSlots.length < form.petIds.length) {

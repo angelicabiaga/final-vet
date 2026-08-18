@@ -1338,3 +1338,162 @@ AI predictive health analysis is based only on available PawCruz medical records
     text
   );
 }
+
+// Separate from generatePredictiveHealthAnalysis above (left untouched) --
+// this scopes the analysis to exactly one consultation instead of the
+// pet's whole history, for the per-consultation "AI Health Insight" shown
+// on each Medical History card. Nothing here is persisted to the
+// database; it is generated on demand and never creates a record.
+export async function generateConsultationHealthInsight(record, previousRecords = []) {
+  if (!GROQ_API_KEY) {
+    throw new Error(
+      "Groq API key is not configured. Set REACT_APP_GROQ_API_KEY in your .env file and restart npm start."
+    );
+  }
+
+  if (!record?.id) {
+    throw new Error("A finalized consultation is required for an AI health insight.");
+  }
+
+  const pet = record.pet || {};
+
+  const petInformation = `
+PET INFORMATION
+
+Pet Name: ${safe(pet.pet_name)}
+Species: ${safe(pet.species)}
+Breed: ${safe(pet.breed)}
+Sex: ${safe(pet.sex || pet.gender)}
+Date of Birth: ${safe(pet.date_of_birth || pet.birth_date)}
+`;
+
+  const consultationText = formatMedicalRecordForAi(record, "THIS CONSULTATION");
+
+  const historyText = previousRecords.length
+    ? previousRecords
+        .map((previous, index) => formatMedicalRecordForAi(previous, `PREVIOUS FINALIZED CONSULTATION ${index + 1}`))
+        .join("\n")
+    : "No previous finalized consultations are available for this pet.";
+
+  const prompt = `
+You are the AI Predictive Health Analysis assistant for PawCruz Veterinary Clinic.
+
+Analyze ONLY the information supplied below for this ONE consultation. Previous finalized consultations are supplied only for the comparison section -- everything else must describe this consultation alone. Long-term or recurring pattern analysis across the pet's full history is handled separately and is not your job here.
+
+This is NOT an independent diagnosis system.
+
+STRICT RULES
+
+Use only the supplied medical record data and the pet's basic profile (age/date of birth, breed, weight).
+
+Do not invent symptoms, diagnoses, laboratory values, medications, diseases, causes, probabilities, percentages, or medical history that are not present in what is supplied.
+
+Do not state that a pet definitely has or will develop a disease unless the veterinarian's record already states that diagnosis.
+
+Do not replace the veterinarian's diagnosis.
+
+Do not recommend changing or stopping prescribed medication.
+
+Do not prescribe new medication or dosage.
+
+If the available information is insufficient for a section, clearly say so instead of guessing.
+
+When comparing with previous consultations, reference only information present in the supplied previous records. If none were supplied, say there are no previous finalized consultations to compare.
+
+Do not use markdown.
+
+Do not use asterisks.
+
+Do not use hashtags.
+
+Do not use markdown tables.
+
+Use professional but understandable language.
+
+${petInformation}
+
+${consultationText}
+
+PREVIOUS FINALIZED CONSULTATIONS
+
+${historyText}
+
+Write the analysis using exactly these section headings:
+
+CONSULTATION RISK LEVEL
+
+State exactly one word on its own line: Low, Moderate, or High. Base this only on the severity and combination of findings recorded in this consultation.
+
+RECORDED HEALTH FINDINGS
+
+List the symptoms, vital signs, diagnosis, and laboratory results actually documented in this consultation.
+
+POTENTIAL HEALTH RISKS TO MONITOR
+
+Identify possible risks suggested by this consultation's own findings. Use cautious wording such as may, could, warrants monitoring. Do not present a possible risk as a confirmed diagnosis.
+
+WARNING SIGNS
+
+List specific signs the pet owner or clinic staff should watch for that would indicate this condition is worsening, based only on what was recorded in this consultation.
+
+RECOMMENDED MONITORING AND FOLLOW-UP
+
+Provide practical, decision-support monitoring and follow-up steps based on this consultation's treatment plan, medication, and follow-up date. Do not create a new treatment plan.
+
+COMPARISON WITH PREVIOUS CONSULTATIONS
+
+If previous finalized consultations were supplied, compare this visit's findings with them and note anything recurring or new. If none were supplied, state plainly that there are no previous finalized consultations to compare.
+
+Finish with this exact statement:
+
+This AI health insight is based only on this consultation's recorded information and is intended to support, not replace, the veterinarian's diagnosis, treatment decisions, or clinical judgment.
+`;
+
+  let response;
+
+  try {
+    response = await fetch(GROQ_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a veterinary clinical decision-support assistant. Analyze only the supplied single consultation record, never fabricate medical information, and never replace a veterinarian's clinical judgment. Do not use markdown or asterisks.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.15,
+        max_tokens: 900,
+      }),
+    });
+  } catch (networkError) {
+    console.error("Consultation health insight network error:", networkError);
+    throw new Error("Could not reach the AI health insight service. Check your internet connection and try again.");
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    console.error("Consultation health insight error:", response.status, errorText);
+
+    if (response.status === 401) throw new Error("The Groq API key is invalid or missing. Check REACT_APP_GROQ_API_KEY.");
+    if (response.status === 403) throw new Error("The AI request is not authorized. Check the Groq API key permissions.");
+    if (response.status === 404) throw new Error("The configured AI model is unavailable.");
+    if (response.status === 429) throw new Error("The AI health insight service has reached its request limit. Please wait and try again.");
+    throw new Error("Unable to generate the AI health insight right now.");
+  }
+
+  const data = await response.json();
+  const text = data?.choices?.[0]?.message?.content?.trim();
+
+  if (!text) {
+    throw new Error("The AI health insight returned an empty response.");
+  }
+
+  return cleanAiResponse(text);
+}

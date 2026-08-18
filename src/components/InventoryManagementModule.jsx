@@ -41,6 +41,7 @@ import {
 } from "../services/inventoryService";
 
 import ConfirmDialog from "./ConfirmDialog";
+import InventoryForecastReport from "./InventoryForecastReport";
 
 const EMPTY_ITEM = {
   id: "",
@@ -2488,11 +2489,10 @@ export default function InventoryManagementModule({
             {!summaryLoading &&
               !summaryError &&
               forecastSummary && (
-                <div className="ai-summary-text">
-                  {
-                    forecastSummary
-                  }
-                </div>
+                <InventoryForecastReport
+                  forecasts={forecasts}
+                  summaryText={forecastSummary}
+                />
               )}
 
             {!summaryLoading &&
@@ -2817,8 +2817,10 @@ export default function InventoryManagementModule({
           border-radius: 18px;
           width: min(760px, 100%);
           max-height: 90vh;
-          overflow: auto;
-          padding: 22px;
+          padding: 20px 22px;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
         }
 
         .modal-card.large {
@@ -2826,10 +2828,11 @@ export default function InventoryManagementModule({
         }
 
         .modal-head {
+          flex-shrink: 0;
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 18px;
+          margin-bottom: 14px;
         }
 
         .modal-head h2 {
@@ -2843,6 +2846,11 @@ export default function InventoryManagementModule({
           padding: 7px;
           border-radius: 9px;
           cursor: pointer;
+        }
+
+        .modal-body {
+          overflow-y: auto;
+          min-height: 0;
         }
 
         .form-grid {
@@ -2884,6 +2892,7 @@ export default function InventoryManagementModule({
           border-radius: 10px;
           font-size: 13px;
           line-height: 1.5;
+          margin: 0 0 12px;
         }
 
         .import-panel {
@@ -2929,8 +2938,8 @@ export default function InventoryManagementModule({
           background: #f5fbfd;
           border: 1px solid #d6eaf2;
           border-radius: 16px;
-          padding: 18px;
-          margin: 14px 0 22px;
+          padding: 16px;
+          margin: 12px 0 18px;
         }
 
         .ai-summary-head {
@@ -3208,6 +3217,14 @@ function Modal({
   children,
   large,
 }) {
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, []);
+
   return (
     <div
       className="modal-backdrop"
@@ -3236,7 +3253,9 @@ function Modal({
           </button>
         </div>
 
-        {children}
+        <div className="modal-body">
+          {children}
+        </div>
       </div>
     </div>
   );

@@ -936,6 +936,13 @@ export default function MedicalRecordsModule({
   async function submit(event) {
     event.preventDefault();
 
+    // Without this guard a rapid double-click (or a slow request the user
+    // retries by clicking again) fires this handler twice; since form.id is
+    // still empty on the second call, saveMedicalRecord inserts a second,
+    // blank record instead of updating the first. Mirrors the same guard
+    // saveQueuedTemplate already uses below.
+    if (saving) return;
+
     if (queueContext) {
       if (pendingQueueCompletion) {
         await retryQueueCompletion();
