@@ -9,7 +9,7 @@
 --     is live and is the only path that mutates inventory_items.quantity today.
 --   * pawcruz_checkout_pos_transaction's exact behavior (or_number format,
 --     totals math, per-item inventory_transactions logging) was confirmed by
---     running one real test transaction and voiding it immediately.
+--     running one real test transaction and voiding it immediately.a
 --   * pawcruz_settle_pos_transaction (the GCash Pending -> Paid settlement
 --     path) does NOT exist live at all -- created fresh here.
 --   * transactions.split_payment_details does not exist live even though the

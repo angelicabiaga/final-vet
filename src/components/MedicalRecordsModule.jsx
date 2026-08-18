@@ -44,8 +44,9 @@ import {
 
 import { getInventoryItems } from "../services/inventoryService";
 import PredictiveHealthReport from "./PredictiveHealthReport";
+import ConfirmDialog from "./ConfirmDialog";
 
-import { completeQueueEntry } from "../services/queueService";
+import { markConsultationReadyForBilling } from "../services/queueService";
 
 const blank = {
   id: "",
@@ -81,6 +82,7 @@ const blank = {
   veterinarianNotes: "",
   attachmentUrl: "",
   recordStatus: "Finalized",
+  consultationFee: "500",
 };
 
 const VACCINE_KEYS = [
@@ -306,6 +308,11 @@ export default function MedicalRecordsModule({
     pendingQueueCompletion,
     setPendingQueueCompletion,
   ] = useState(null);
+
+  const [
+    showCompleteConfirm,
+    setShowCompleteConfirm,
+  ] = useState(false);
 
   const location = useLocation();
 
@@ -840,18 +847,18 @@ export default function MedicalRecordsModule({
     setSuccess("");
 
     try {
-      await completeQueueEntry(
+      await markConsultationReadyForBilling(
         queueContext.queueEntryId,
         profile
       );
 
       setSuccess(
-        "Medical record saved and appointment marked as done. The staff queue and queue display have been updated."
+        "Consultation completed. The record was finalized and sent to Staff POS for billing."
       );
       closeQueuedRecordModal();
     } catch (queueError) {
       setError(
-        `Medical record is already saved, but the appointment could not be marked as done: ${queueError.message} Click Retry Mark as Done to try again without creating another record.`
+        `Medical record is already saved, but it could not be sent to billing: ${queueError.message} Click Retry Complete to try again without creating another record.`
       );
     } finally {
       setSaving(false);
@@ -875,6 +882,7 @@ export default function MedicalRecordsModule({
         {
           ...form,
           recordStatus: "Finalized",
+          queueEntryId: queueContext.queueEntryId,
         },
         profile
       );
@@ -908,13 +916,13 @@ export default function MedicalRecordsModule({
       }
 
       try {
-        await completeQueueEntry(
+        await markConsultationReadyForBilling(
           queueContext.queueEntryId,
           profile
         );
 
         setSuccess(
-          "Medical record saved and appointment marked as done. The staff queue and queue display have been updated."
+          "Consultation completed. The record was finalized and sent to Staff POS for billing."
         );
         closeQueuedRecordModal();
       } catch (queueError) {
@@ -923,7 +931,7 @@ export default function MedicalRecordsModule({
           templateLabel: activeTemplate.label,
         });
         setError(
-          `Medical record saved, but the appointment could not be marked as done: ${queueError.message} Click Retry Mark as Done to try again without creating another record.`
+          `Medical record saved, but it could not be sent to billing: ${queueError.message} Click Retry Complete to try again without creating another record.`
         );
       }
     } catch (e) {
@@ -931,6 +939,11 @@ export default function MedicalRecordsModule({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function confirmComplete() {
+    setShowCompleteConfirm(false);
+    await saveQueuedTemplate();
   }
 
   async function submit(event) {
@@ -942,7 +955,7 @@ export default function MedicalRecordsModule({
         return;
       }
 
-      await saveQueuedTemplate();
+      setShowCompleteConfirm(true);
       return;
     }
 
@@ -2849,15 +2862,15 @@ export default function MedicalRecordsModule({
             {queueContext && (
               <div className="queue-context-banner">
                 {pendingQueueCompletion
-                  ? `${pendingQueueCompletion.templateLabel} is already saved. Retry Mark as Done to complete this appointment without creating another record.`
+                  ? `${pendingQueueCompletion.templateLabel} is already saved. Retry Complete to send this consultation to billing without creating another record.`
                   : <>
                       Adding {activeTemplate.label} for pet{" "}
                       {queueContext.currentIndex + 1}{" "}
                       of {queueContext.petIds.length}{" "}
                       in this visit. Add more
                       templates as needed, then
-                      choose Mark as Done to
-                      complete this appointment.
+                      choose Complete to
+                      finish this consultation.
                     </>}
               </div>
             )}
@@ -3070,6 +3083,30 @@ export default function MedicalRecordsModule({
                   }
                 />
               </label>
+
+              {queueContext && (
+                <label>
+                  Consultation Fee (₱)
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    disabled={!canEdit}
+                    value={
+                      form.consultationFee
+                    }
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        consultationFee:
+                          e.target
+                            .value,
+                      })
+                    }
+                  />
+                </label>
+              )}
               </div>
 
               {form.recordTemplate === "health-record" && (
@@ -3834,12 +3871,6 @@ export default function MedicalRecordsModule({
                   </div>
                 </div>
 
-                {!(form.templateData?.inventoryItems || []).length && (
-                  <small className="field-required-note">
-                    Choose at least one item, or N/A, before saving.
-                  </small>
-                )}
-
                 {(form.templateData?.inventoryItems || []).length > 0 && (
                   <div className="chosen-items">
                     {form.templateData.inventoryItems.map((entry) => (
@@ -3914,8 +3945,8 @@ export default function MedicalRecordsModule({
                   {saving
                     ? "Saving..."
                     : pendingQueueCompletion
-                      ? "Retry Mark as Done"
-                      : "Mark as Done"}
+                      ? "Retry Complete"
+                      : "Complete"}
                 </button>
               </div>
             ) : (
@@ -3931,6 +3962,18 @@ export default function MedicalRecordsModule({
           </form>
         </div>
       )}
+
+      <ConfirmDialog
+        open={showCompleteConfirm}
+        title="Complete Consultation?"
+        description="This medical record will be finalized and sent to Staff POS for billing."
+        confirmLabel="Complete"
+        cancelLabel="Cancel"
+        tone="primary"
+        busy={saving}
+        onConfirm={confirmComplete}
+        onCancel={() => setShowCompleteConfirm(false)}
+      />
 
       {aiModal && (
         <div className="mr-modal">

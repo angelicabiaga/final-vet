@@ -165,10 +165,14 @@ export async function getQueue(filters={}){
 export async function getTodayCheckinAppointments(){
   const today=todayLocal();
   const [{data:appointments,error:appointmentError},{data:queued,error:queueError}]=await Promise.all([
+    // Every Confirmed appointment not yet in today's queue is eligible for
+    // check-in here, not just ones dated exactly today -- a late arrival
+    // from an earlier date, or an early walk-in for a future date, should
+    // still be reachable from this list.
     supabase.from("appointments")
       .select("id,pet_id,owner_id,veterinarian_id,appointment_date,start_time,status,appointment_source,visit_reason,visit_group_id")
-      .eq("appointment_date",today)
       .eq("status","Confirmed")
+      .order("appointment_date",{ascending:true})
       .order("start_time",{ascending:true}),
     supabase.from("queue_entries")
       .select("id,appointment_id")
@@ -325,6 +329,34 @@ export async function completeQueueEntry(id,profile){
     return {id:latest.id,status:"Completed",alreadyCompleted:true};
   }
   throw new Error("The queue ticket changed before it could be completed. Please try again.");
+}
+
+/**
+ * Sends a just-finalized consultation to Staff POS for billing. This never
+ * touches queue_entries.status (the ticket stays Serving until staff
+ * finishes payment) -- it only flips the separate billing_status lane.
+ * Compare-and-set + an idempotent "already done" return mirrors
+ * completeQueueEntry so a flaky retry can never send the same consultation
+ * to billing twice.
+ */
+export async function markConsultationReadyForBilling(id,profile){
+  if(!id)throw new Error("A queue entry is required to send this consultation to billing.");
+  if(!profile?.id)throw new Error("A signed-in user is required to complete this consultation.");
+  const {data,error}=await supabase
+    .from("queue_entries")
+    .update({billing_status:"Pending Billing",consultation_finalized_at:new Date().toISOString(),consultation_finalized_by:profile.id})
+    .eq("id",id)
+    .eq("billing_status","Not Applicable")
+    .select("id,billing_status");
+  if(error)throw new Error(`Unable to send this consultation to billing: ${error.message}`);
+  if(data?.[0])return {id:data[0].id,billing_status:data[0].billing_status,alreadyDone:false};
+
+  const {data:current,error:loadError}=await supabase.from("queue_entries").select("id,billing_status").eq("id",id).single();
+  if(loadError)throw new Error(`Unable to verify billing status: ${loadError.message}`);
+  if(current.billing_status&&current.billing_status!=="Not Applicable"){
+    return {id:current.id,billing_status:current.billing_status,alreadyDone:true};
+  }
+  throw new Error("The queue ticket changed before it could be sent to billing. Please try again.");
 }
 
 export async function reorderQueue(id,manualOrder,reason,profile){

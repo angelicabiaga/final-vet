@@ -45,6 +45,7 @@ const StaffNewTransaction = lazy(() => import("./pages/staff/TransactionManageme
 const StaffGcashReturn = lazy(() => import("./pages/staff/GcashReturn"));
 const StaffQueue = lazy(() => import("./pages/staff/QueueManagement"));
 const VeterinarianQueue = lazy(() => import("./pages/veterinarian/VeterinarianQueue"));
+const VeterinarianPrescriptions = lazy(() => import("./pages/veterinarian/VeterinarianPrescriptions"));
 const OwnerQueue = lazy(() => import("./pages/petOwner/MyQueue"));
 const UserManagement = lazy(() => import("./pages/admin/UserManagement"));
 const ReportsAnalytics = lazy(() => import("./pages/admin/ReportsAnalytics"));
@@ -126,6 +127,7 @@ export default function App() {
         <Route path="/admin/queue" element={guarded(["admin"], <StaffQueue profile={profile} />)} />
         <Route path="/staff/queue" element={guarded(["staff"], <StaffQueue profile={profile} />)} />
         <Route path="/veterinarian/queue" element={guarded(["veterinarian"], <VeterinarianQueue profile={profile} />)} />
+        <Route path="/veterinarian/prescriptions" element={guarded(["veterinarian"], <VeterinarianPrescriptions profile={profile} />)} />
         <Route path="/pet-owner/queue" element={guarded(["pet_owner"], <OwnerQueue profile={profile} />)} />
         <Route path="/admin/users" element={guarded(["admin"], <UserManagement profile={profile} />)} />
         <Route path="/admin/reports" element={guarded(["admin"], <ReportsAnalytics profile={profile} />)} />

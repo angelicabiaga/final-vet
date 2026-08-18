@@ -627,14 +627,6 @@ export async function saveMedicalRecord(
     );
   }
 
-  if (
-    !(values.templateData?.inventoryItems || []).length
-  ) {
-    throw new Error(
-      "Select at least one test/medicine/vaccine given, or choose N/A, before saving."
-    );
-  }
-
   const record = {
     pet_id:
       values.petId,
@@ -648,6 +640,18 @@ export async function saveMedicalRecord(
     appointment_id:
       values.appointmentId ||
       null,
+
+    queue_entry_id:
+      values.queueEntryId ||
+      null,
+
+    consultation_fee:
+      values.consultationFee === "" ||
+      values.consultationFee == null
+        ? 500
+        : Number(
+            values.consultationFee
+          ),
 
     consultation_date:
       values.consultationDate ||

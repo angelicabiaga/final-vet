@@ -1,10 +1,10 @@
 import { supabase } from "../config/supabaseClient";
 
 const TRANSACTION_FIELDS =
-  "id,or_number,pet_id,owner_id,medical_record_id,appointment_id,staff_id,checkup_fee,items_subtotal,subtotal,discount_amount,total_amount,amount_paid,change_amount,payment_method,payment_status,notes,paymongo_source_id,paymongo_payment_id,paymongo_checkout_url,created_by,created_at,updated_at";
+  "id,or_number,pet_id,owner_id,medical_record_id,appointment_id,queue_entry_id,staff_id,checkup_fee,items_subtotal,subtotal,discount_amount,total_amount,amount_paid,change_amount,payment_method,payment_status,notes,paymongo_source_id,paymongo_payment_id,paymongo_checkout_url,created_by,created_at,updated_at";
 
 const TRANSACTION_ITEM_FIELDS =
-  "id,transaction_id,inventory_item_id,item_type,item_name,quantity,unit_price,line_total,inventory_transaction_id,created_at";
+  "id,transaction_id,inventory_item_id,item_type,item_name,quantity,unit_price,line_total,inventory_transaction_id,prescription_id,created_at";
 
 const PAYMENT_METHODS = [
   "Cash",
@@ -60,6 +60,7 @@ function normalizeCartItem(item) {
     quantity,
     unit_price: unitPrice,
     deduct_inventory: Boolean(deductInventory),
+    prescription_id: item.prescription_id || item.prescriptionId || null,
   };
 }
 
@@ -150,6 +151,8 @@ export async function checkoutTransaction(values, profile) {
     p_split_payment_details: values.splitPaymentDetails || null,
     p_notes: values.notes?.trim() || null,
     p_created_by: profile?.id || null,
+    p_queue_entry_id: values.queueEntryId || null,
+    p_invoice_kind: values.invoiceKind || "Consultation",
   });
 
   if (error) throw friendly(error, "Unable to complete the transaction.");
@@ -215,6 +218,7 @@ export async function getTransactions({
   to = "",
   paymentMethod = "",
   paymentStatus = "",
+  ownerId = "",
   limit = 100,
 } = {}) {
   let query = supabase
@@ -227,6 +231,7 @@ export async function getTransactions({
   if (to) query = query.lte("created_at", `${to}T23:59:59.999`);
   if (paymentMethod) query = query.eq("payment_method", paymentMethod);
   if (paymentStatus) query = query.eq("payment_status", paymentStatus);
+  if (ownerId) query = query.eq("owner_id", ownerId);
 
   const { data, error } = await query;
   if (error) throw friendly(error, "Unable to load payment history.");
@@ -256,4 +261,51 @@ export async function pollTransactionStatus(transactionId, { intervalMs = 2000, 
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return getTransactionById(transactionId);
+}
+
+/**
+ * Adds a payment to an existing invoice (never creates a new transaction
+ * row). The RPC recalculates amount_paid / payment_status and rejects a
+ * payment larger than the remaining balance.
+ */
+export async function collectBalancePayment({ transactionId, amount, paymentMethod }, profile) {
+  const amountValue = Number(amount);
+  if (!transactionId) throw new Error("A transaction is required to collect a payment.");
+  if (!Number.isFinite(amountValue) || amountValue <= 0) throw new Error("Enter a valid payment amount.");
+
+  const { data, error } = await supabase.rpc("pawcruz_collect_balance_payment", {
+    p_transaction_id: transactionId,
+    p_amount: amountValue,
+    p_payment_method: paymentMethod || "Cash",
+    p_actor_id: profile?.id || null,
+  });
+
+  if (error) throw friendly(error, "Unable to collect this payment.");
+  return data;
+}
+
+export async function getTransactionPayments(transactionId) {
+  const { data, error } = await supabase
+    .from("transaction_payments")
+    .select("id,transaction_id,amount,payment_method,cashier_id,created_at")
+    .eq("transaction_id", transactionId)
+    .order("created_at", { ascending: false });
+  if (error) throw friendly(error, "Unable to load this invoice's payment history.");
+
+  const cashierIds = [...new Set((data || []).map((row) => row.cashier_id).filter(Boolean))];
+  if (!cashierIds.length) return data || [];
+  const { data: profiles, error: profileError } = await supabase
+    .from("profiles")
+    .select("id,full_name")
+    .in("id", cashierIds);
+  if (profileError) throw friendly(profileError, "Unable to load cashier names.");
+  const profilesById = new Map((profiles || []).map((profile) => [profile.id, profile]));
+  return (data || []).map((row) => ({ ...row, cashier: profilesById.get(row.cashier_id) || null }));
+}
+
+export function subscribeToTransactions(callback) {
+  const channel = supabase.channel(`transactions-${Date.now()}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "transactions" }, callback)
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
 }
