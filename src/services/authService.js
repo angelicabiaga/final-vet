@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabaseClient";
+import { validatePassword } from "../utils/validators";
 
 const SESSION_KEY = "pawcruz_session";
 const OTP_KEY = "pawcruz_pending_otp";
@@ -159,10 +160,10 @@ function validateRegistration(values) {
   const username = normalizeIdentifier(values.username);
   const email = normalizeIdentifier(values.email);
   const password = String(values.password || "");
-  if (fullName.length < 2) throw new Error("Please enter your complete name.");
+  if (fullName.split(/\s+/).filter(Boolean).length < 2) throw new Error("First name and last name are both required.");
   if (!/^[a-z0-9_.-]{3,30}$/.test(username)) throw new Error("Username must be 3–30 characters and may use letters, numbers, dots, dashes, or underscores.");
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error("Please enter a valid email address.");
-  if (password.length < 6) throw new Error("Password must contain at least 6 characters.");
+  validatePassword(password);
   return { fullName, username, email, password };
 }
 
@@ -272,7 +273,7 @@ export function completePasswordResetOtp(code) {
 
 export async function updatePassword(newPassword) {
   const password = String(newPassword || "");
-  if (password.length < 6) throw new Error("Password must contain at least 6 characters.");
+  validatePassword(password);
   const reset = readJson(RESET_KEY);
   if (!reset?.profileId || Date.now() > Number(reset.expiresAt || 0)) {
     localStorage.removeItem(RESET_KEY);

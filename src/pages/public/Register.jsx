@@ -10,7 +10,9 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import pawLogo from "../../assets/reference/paw.png";
 import dogCatBackground from "../../assets/reference/dog_cat.jpg";
 import PasswordInput from "../../components/PasswordInput";
+import PasswordChecklist from "../../components/PasswordChecklist";
 import { registerPetOwner } from "../../services/authService";
+import { validatePassword, validatePasswordsMatch, validateRequiredName } from "../../utils/validators";
 
 const registerStyles = `
   .register-page,
@@ -996,8 +998,12 @@ export default function Register() {
     e.preventDefault();
     setMessage("");
 
-    if (form.password !== form.confirm) {
-      setMessage("Passwords do not match.");
+    try {
+      validateRequiredName(form.firstName, form.lastName);
+      validatePassword(form.password);
+      validatePasswordsMatch(form.password, form.confirm);
+    } catch (validationError) {
+      setMessage(validationError.message);
       return;
     }
 
@@ -1150,13 +1156,14 @@ export default function Register() {
                   name="password"
                   placeholder="Enter your password"
                   autoComplete="new-password"
-                  minLength={6}
+                  minLength={8}
                   required
                   value={form.password}
                   onChange={(e) =>
                     updateField("password", e.target.value)
                   }
                 />
+                <PasswordChecklist password={form.password} />
               </label>
 
               <label className="register-field">
@@ -1166,7 +1173,7 @@ export default function Register() {
                   name="confirmPassword"
                   placeholder="Re-enter your password"
                   autoComplete="new-password"
-                  minLength={6}
+                  minLength={8}
                   required
                   value={form.confirm}
                   onChange={(e) =>

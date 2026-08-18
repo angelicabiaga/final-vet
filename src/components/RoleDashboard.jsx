@@ -18,7 +18,7 @@ const roleConfig = {
     subtitle: "Monitor clinic operations, users, patients, appointments, queue activity, and inventory.",
     links: [
       ["Manage Appointments", "/staff/appointments"], ["Queue Management", "/admin/queue"],
-      ["Pet Management", "/admin/pets"], ["Inventory", "/admin/inventory"]
+      ["Animal Patients", "/admin/pets"], ["Inventory", "/admin/inventory"]
     ]
   },
   staff: {
@@ -36,7 +36,7 @@ const roleConfig = {
     subtitle: "Review your appointments, assigned queue, patients, records, and medicine availability.",
     links: [
       ["My Appointments", "/veterinarian/appointments"], ["My Queue", "/veterinarian/queue"],
-      ["Medical Records", "/veterinarian/medical-records"], ["Inventory", "/veterinarian/inventory"]
+      ["Animal Patients", "/veterinarian/patients"], ["Inventory", "/veterinarian/inventory"]
     ]
   },
   pet_owner: {
@@ -44,8 +44,8 @@ const roleConfig = {
     eyebrow: "MY PET CARE",
     subtitle: "Keep track of your pets, appointments, queue position, records, and clinic messages.",
     links: [
-      ["My Pets", "/pet-owner/pets"], ["Book Appointment", "/pet-owner/book-appointment"],
-      ["My Queue", "/pet-owner/queue"], ["Medical Records", "/pet-owner/medical-records"]
+      ["Animal Patients", "/pet-owner/pets"], ["Book Appointment", "/pet-owner/book-appointment"],
+      ["My Queue", "/pet-owner/queue"], ["Messages", "/pet-owner/messages"]
     ]
   }
 };
@@ -103,11 +103,11 @@ export default function RoleDashboard({ profile }) {
     if (profile?.role === "admin") {
       cards = [
         [Users, "Total Users", data.profiles.length, `${data.profiles.filter((p) => p.account_status === "active").length} active accounts`],
-        [PawPrint, "Registered Pets", data.pets.filter((p) => !p.is_archived).length, "Active patient profiles"],
+        [PawPrint, "Animal Patients", data.pets.filter((p) => !p.is_archived).length, "Active patient profiles"],
         [CalendarDays, "Today's Appointments", todayAppointments.length, "Across both veterinarians"],
         [Clock3, "Current Queue", activeQueues.length, `${activeQueues.filter((q) => q.queue_status === "Serving").length} currently serving`],
         [PackageSearch, "Stock Alerts", lowStock.length, "Low stock or expiring items"],
-        [FileHeart, "Medical Records", data.medicalRecords.length, "Recent clinical records"]
+        [FileHeart, "Medical History", data.medicalRecords.length, "Recent clinical records"]
       ];
     } else if (profile?.role === "staff") {
       cards = [
@@ -120,16 +120,16 @@ export default function RoleDashboard({ profile }) {
       cards = [
         [CalendarDays, "My Appointments Today", todayAppointments.length, `${todayAppointments.filter((a) => a.status === "Completed").length} completed`],
         [Clock3, "My Active Queue", activeQueues.length, `${activeQueues.filter((q) => q.queue_status === "Waiting").length} waiting`],
-        [FileHeart, "My Medical Records", data.medicalRecords.length, "Recent records handled"],
+        [FileHeart, "My Medical History", data.medicalRecords.length, "Recent records handled"],
         [PackageSearch, "Medicine Alerts", lowStock.length, "Low or unavailable stock"]
       ];
     } else {
       const upcoming = data.appointments.filter((a) => dateKey(a.appointment_date) >= data.currentDate && !["Cancelled", "Completed"].includes(a.status));
       cards = [
-        [PawPrint, "My Pets", data.pets.filter((p) => !p.is_archived).length, "Registered pet profiles"],
+        [PawPrint, "Animal Patients", data.pets.filter((p) => !p.is_archived).length, "Registered pet profiles"],
         [CalendarDays, "Upcoming Appointments", upcoming.length, upcoming[0] ? `${dateKey(upcoming[0].appointment_date)} at ${formatTime(upcoming[0].start_time)}` : "No upcoming booking"],
         [Clock3, "My Queue", activeQueues.length, activeQueues[0]?.queue_number || "Not currently queued"],
-        [FileHeart, "Medical Records", data.medicalRecords.length, "Finalized records available"]
+        [FileHeart, "My Medical History", data.medicalRecords.length, "Finalized records available"]
       ];
     }
 

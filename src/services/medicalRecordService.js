@@ -1002,7 +1002,7 @@ export async function getAppointmentsForPet(
   return data || [];
 }
 
-async function getPreviousMedicalRecordsForAi(
+export async function getPreviousMedicalRecordsForAi(
   petId,
   currentRecordId
 ) {

@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom';
 import { updatePassword } from '../../services/authService';
 import { LoginLayout } from './Login';
 import PasswordInput from '../../components/PasswordInput';
+import PasswordChecklist from '../../components/PasswordChecklist';
+import { validatePassword, validatePasswordsMatch } from '../../utils/validators';
 
 export default function ResetPassword() {
   const [password, setPassword] = useState('');
@@ -14,8 +16,11 @@ export default function ResetPassword() {
   async function submit(event) {
     event.preventDefault();
 
-    if (password !== confirm) {
-      setMessage('Passwords do not match.');
+    try {
+      validatePassword(password);
+      validatePasswordsMatch(password, confirm);
+    } catch (validationError) {
+      setMessage(validationError.message);
       return;
     }
 
@@ -42,17 +47,18 @@ export default function ResetPassword() {
         <label>
           New Password
           <PasswordInput
-            minLength='6'
+            minLength='8'
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
+          <PasswordChecklist password={password} />
         </label>
 
         <label>
           Confirm Password
           <PasswordInput
-            minLength='6'
+            minLength='8'
             required
             value={confirm}
             onChange={(event) => setConfirm(event.target.value)}

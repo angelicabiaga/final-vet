@@ -55,11 +55,10 @@ export default function AppShell({ profile, title, children }) {
   const navByRole = {
     pet_owner: [
       { label: "Dashboard", to: "/pet-owner/dashboard", type: "dashboard" },
-      { label: "My Pets", to: "/pet-owner/pets", type: "pet" },
+      { label: "Animal Patients", to: "/pet-owner/pets", type: "pet" },
       { label: "Book Appointment", to: "/pet-owner/book-appointment", type: "appointment" },
       { label: "My Appointments", to: "/pet-owner/appointments", type: "appointment" },
       { label: "My Queue", to: "/pet-owner/queue", type: "queue" },
-      { label: "Medical Records", to: "/pet-owner/medical-records", type: "medical" },
       { label: "Messages", to: "/pet-owner/messages", type: "message" },
 
     ],
@@ -70,7 +69,6 @@ export default function AppShell({ profile, title, children }) {
       { label: "Queue Management", to: "/staff/queue", type: "queue" },
       { label: "Veterinarian Schedules", to: "/staff/veterinarian-schedules", type: "schedule" },
       { label: "Animal Patients", to: "/staff/patients", type: "pet" },
-      { label: "Medical Records", to: "/staff/medical-records", type: "medical" },
       { label: "Inventory", to: "/staff/inventory", type: "inventory" },
       { label: "Transaction", to: "/staff/transactions", type: "payment" },
       { label: "Messages", to: "/staff/messages", type: "message" },
@@ -81,7 +79,6 @@ export default function AppShell({ profile, title, children }) {
       { label: "My Appointments", to: "/veterinarian/appointments", type: "appointment" },
       { label: "My Queue", to: "/veterinarian/queue", type: "queue" },
       { label: "Animal Patients", to: "/veterinarian/patients", type: "pet" },
-      { label: "Medical Records", to: "/veterinarian/medical-records", type: "medical" },
 
       { label: "Messages", to: "/veterinarian/messages", type: "message" },
 
@@ -92,8 +89,7 @@ export default function AppShell({ profile, title, children }) {
       { label: "Create / Walk-In", to: "/staff/walk-in", type: "pet" },
       { label: "Queue Management", to: "/admin/queue", type: "queue" },
       { label: "Veterinarian Schedules", to: "/staff/veterinarian-schedules", type: "schedule" },
-      { label: "Pet Management", to: "/admin/pets", type: "pet" },
-      { label: "Medical Records", to: "/admin/medical-records", type: "medical" },
+      { label: "Animal Patients", to: "/admin/pets", type: "pet" },
       { label: "Inventory", to: "/admin/inventory", type: "inventory" },
       { label: "Messages", to: "/admin/messages", type: "message" },
       { label: "User Management", to: "/admin/users", type: "user" },

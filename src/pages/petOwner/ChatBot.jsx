@@ -372,7 +372,7 @@ function getLocalReply(
   ) {
     return {
       reply:
-        "Open Medical Records from your pet-owner menu to review your pet's available visit history, diagnoses, treatments, and vaccination information.",
+        "Open Animal Patients from your pet-owner menu and select your pet to review its available visit history, diagnoses, treatments, and vaccination information.",
 
       urgency:
         "routine",

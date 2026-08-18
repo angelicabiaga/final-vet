@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabaseClient";
 import { createAndSendOtp, verifyProfileOtp } from "./authService";
+import { validateImageFile, isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, validatePassword } from "../utils/validators";
 
 const SESSION_KEY = "pawcruz_session";
 
@@ -25,7 +26,7 @@ export async function getProfile(profileId) {
   return data;
 }
 
-function normalizeProfile(values) {
+function normalizeProfile(values, role) {
   const payload = {
     full_name: String(values.full_name || "").trim(),
     username: String(values.username || "").trim().toLowerCase(),
@@ -35,9 +36,13 @@ function normalizeProfile(values) {
     avatar_url: values.avatar_url || null,
     updated_at: new Date().toISOString(),
   };
-  if (payload.full_name.length < 2) throw new Error("Enter your complete name.");
+  if (payload.full_name.split(/\s+/).filter(Boolean).length < 2) throw new Error("First name and last name are both required.");
   if (!/^[a-z0-9_.-]{3,30}$/.test(payload.username)) throw new Error("Username must contain 3–30 letters, numbers, dots, dashes, or underscores.");
   if (!/^\S+@\S+\.\S+$/.test(payload.email)) throw new Error("Enter a valid email address.");
+  if (role === "pet_owner") {
+    if (!payload.phone) throw new Error("Contact number is required.");
+    if (!isValidPhMobile(payload.phone)) throw new Error(INVALID_PH_MOBILE_MESSAGE);
+  }
   return payload;
 }
 
@@ -47,8 +52,8 @@ async function ensureNoDuplicate(profileId, payload) {
   if (duplicate?.length) throw new Error("The username or email is already used by another account.");
 }
 
-export async function updateProfile(profileId, values) {
-  const payload = normalizeProfile(values);
+export async function updateProfile(profileId, values, role) {
+  const payload = normalizeProfile(values, role);
   await ensureNoDuplicate(profileId, payload);
   const { data, error } = await supabase.from("profiles").update(payload).eq("id", profileId).select("*").single();
   if (error) throw new Error(`Unable to update profile: ${error.message}`);
@@ -56,26 +61,26 @@ export async function updateProfile(profileId, values) {
   return data;
 }
 
-export async function requestProfileUpdate(profileId, values) {
-  const payload = normalizeProfile(values);
+export async function requestProfileUpdate(profileId, values, role) {
+  const payload = normalizeProfile(values, role);
   await ensureNoDuplicate(profileId, payload);
   const { data: current, error } = await supabase.from("profiles").select("id,email").eq("id", profileId).single();
   if (error) throw new Error(`Unable to validate profile: ${error.message}`);
   if (String(current.email || "").toLowerCase() === payload.email) {
-    const updated = await updateProfile(profileId, payload);
+    const updated = await updateProfile(profileId, payload, role);
     return { requiresOtp: false, updated };
   }
-  await createAndSendOtp(payload.email, "change_email", { profileId, values: payload });
+  await createAndSendOtp(payload.email, "change_email", { profileId, role, values: payload });
   return { requiresOtp: true, email: payload.email, purpose: "change_email" };
 }
 
 export async function confirmProfileEmailChange(code) {
   const payload = verifyProfileOtp("change_email", code);
-  return updateProfile(payload.profileId, payload.values || {});
+  return updateProfile(payload.profileId, payload.values || {}, payload.role);
 }
 
 export async function requestPasswordChange(profileId, currentPassword, newPassword) {
-  if (String(newPassword || "").length < 6) throw new Error("New password must contain at least 6 characters.");
+  validatePassword(String(newPassword || ""));
   const { data: current, error: loadError } = await supabase.from("profiles").select("id,email,password").eq("id", profileId).single();
   if (loadError) throw new Error(`Unable to validate password: ${loadError.message}`);
   if (String(current.password || "") !== String(currentPassword || "")) throw new Error("Current password is incorrect.");
@@ -96,8 +101,7 @@ export async function changeOwnPassword(profileId, currentPassword, newPassword)
 
 export async function uploadProfileAvatar(profileId, file) {
   if (!file) return null;
-  if (!file.type?.startsWith("image/")) throw new Error("Select an image file.");
-  if (file.size > 5 * 1024 * 1024) throw new Error("Profile image must be 5 MB or smaller.");
+  validateImageFile(file);
   const extension = file.name.split(".").pop() || "jpg";
   const path = `${profileId}/avatar-${Date.now()}.${extension}`;
   const { error } = await supabase.storage.from("profile-avatars").upload(path, file, { upsert: true });

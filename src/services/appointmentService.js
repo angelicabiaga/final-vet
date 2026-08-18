@@ -237,11 +237,26 @@ export async function rescheduleAppointment(id, values, ownerId, changedBy) {
   }
 }
 
+// Guaranteed to satisfy the app-wide password policy (8+ chars, upper,
+// lower, number, special) so a guest's temp password never fails the same
+// checklist they're required to meet when they change it on first login.
 function generateTempPassword() {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  let value = "";
-  for (let i = 0; i < 10; i++) value += chars[Math.floor(Math.random() * chars.length)];
-  return value;
+  const upper = "ABCDEFGHJKMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const special = "!@#$%^&*";
+  const all = upper + lower + digits + special;
+  const pick = (set) => set[Math.floor(Math.random() * set.length)];
+
+  const required = [pick(upper), pick(lower), pick(digits), pick(special)];
+  const rest = Array.from({ length: 6 }, () => pick(all));
+
+  const value = [...required, ...rest];
+  for (let i = value.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [value[i], value[j]] = [value[j], value[i]];
+  }
+  return value.join("");
 }
 
 export async function createGuestOwner({ fullName, phone, email }) {

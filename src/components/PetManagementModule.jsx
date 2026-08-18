@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Archive,
   Camera,
@@ -6,11 +7,13 @@ import {
   ChevronRight,
   Edit3,
   Eye,
+  FileHeart,
   History,
   PawPrint,
   Plus,
   RotateCcw,
   Search,
+  Stethoscope,
   X,
 } from "lucide-react";
 
@@ -22,6 +25,8 @@ import {
   savePet,
   uploadPetPhoto,
 } from "../services/petService";
+import { validateImageFile } from "../utils/validators";
+import { getMedicalRecords } from "../services/medicalRecordService";
 
 const EMPTY_FORM = {
   id: "",
@@ -293,6 +298,7 @@ export default function PetManagementModule({
   profile,
   ownerOnly = false,
 }) {
+  const navigate = useNavigate();
   const [pets, setPets] = useState([]);
   const [owners, setOwners] = useState([]);
 
@@ -320,10 +326,30 @@ export default function PetManagementModule({
 
   const [selectedPet, setSelectedPet] = useState(null);
   const [history, setHistory] = useState([]);
+  const [medicalHistory, setMedicalHistory] = useState([]);
+  const [medicalHistoryLoading, setMedicalHistoryLoading] = useState(false);
 
   const canManageAll =
     !ownerOnly &&
     ["admin", "staff", "veterinarian"].includes(profile.role);
+
+  // Mirrors MedicalRecordsModule's own access rule: only a veterinarian (or
+  // admin) can create/edit a medical record. Staff stays view-only there,
+  // and a pet owner is always view-only, so no "Add Medical Record" action
+  // is offered to either here.
+  const canCreateRecord =
+    !ownerOnly &&
+    ["admin", "veterinarian"].includes(profile.role);
+
+  // Staff/Vet/Admin see it inside their patient-management view; a pet
+  // owner sees the same section for their own pets (getMedicalRecords
+  // already limits that to their Finalized records only -- unchanged).
+  const canViewMedicalHistory = canManageAll || ownerOnly;
+
+  const medicalRecordsRoute =
+    profile.role === "veterinarian"
+      ? "/veterinarian/medical-records"
+      : "/admin/medical-records";
 
   const filteredOwners = useMemo(() => {
     const keyword = ownerQuery.trim().toLowerCase();
@@ -690,6 +716,7 @@ export default function PetManagementModule({
   async function handleOpenHistory(pet) {
     setSelectedPet(pet);
     setHistory([]);
+    setMedicalHistory([]);
     setMessage("");
 
     try {
@@ -703,6 +730,25 @@ export default function PetManagementModule({
         error.message ||
           "Unable to load the pet appointment history."
       );
+    }
+
+    if (canViewMedicalHistory) {
+      setMedicalHistoryLoading(true);
+
+      try {
+        const records = await getMedicalRecords(profile, {
+          petId: pet.id,
+        });
+
+        setMedicalHistory(records);
+      } catch (error) {
+        console.warn(
+          "Unable to load medical history for this pet:",
+          error
+        );
+      } finally {
+        setMedicalHistoryLoading(false);
+      }
     }
   }
 
@@ -1276,12 +1322,23 @@ export default function PetManagementModule({
 
                       <input
                         type="file"
-                        accept="image/*"
-                        onChange={(event) =>
-                          setFile(
-                            event.target.files?.[0] || null
-                          )
-                        }
+                        accept="image/jpeg,image/jpg,image/png,image/webp"
+                        onChange={(event) => {
+                          const selected =
+                            event.target.files?.[0] || null;
+                          event.target.value = "";
+                          if (!selected) {
+                            setFile(null);
+                            return;
+                          }
+                          try {
+                            validateImageFile(selected);
+                            setMessage("");
+                            setFile(selected);
+                          } catch (error) {
+                            setMessage(error.message);
+                          }
+                        }}
                       />
                     </label>
                   </div>
@@ -1665,10 +1722,15 @@ export default function PetManagementModule({
               <X />
             </button>
 
+            <p className="modal-eyebrow">Animal Patient Profile</p>
             <h2>{selectedPet.pet_name || "Unnamed Pet"}</h2>
             <p className="modal-subtitle">
-              Pet profile, health notes, and appointment history.
+              {canManageAll
+                ? "Pet profile, owner information, and complete medical history."
+                : "Pet profile and complete medical history."}
             </p>
+
+            <h3 className="history-heading">Pet Profile</h3>
 
             <div className="details">
               <p>
@@ -1682,14 +1744,6 @@ export default function PetManagementModule({
                 {selectedPet.breed ||
                   "Not recorded"}
               </p>
-
-              {canManageAll && (
-                <p>
-                  <strong>Owner:</strong>{" "}
-                  {selectedPet.owner?.full_name ||
-                    "Not assigned"}
-                </p>
-              )}
 
               <p>
                 <strong>Sex:</strong>{" "}
@@ -1731,6 +1785,116 @@ export default function PetManagementModule({
                 {selectedPet.notes || "None"}
               </p>
             </div>
+
+            {canManageAll && (
+              <>
+                <h3 className="history-heading">
+                  Pet Owner Information
+                </h3>
+
+                <div className="details">
+                  <p>
+                    <strong>Full Name:</strong>{" "}
+                    {selectedPet.owner?.full_name ||
+                      "Not assigned"}
+                  </p>
+
+                  <p>
+                    <strong>Email:</strong>{" "}
+                    {selectedPet.owner?.email ||
+                      "Not recorded"}
+                  </p>
+
+                  <p>
+                    <strong>Phone:</strong>{" "}
+                    {selectedPet.owner?.phone ||
+                      "Not recorded"}
+                  </p>
+                </div>
+              </>
+            )}
+
+            {canViewMedicalHistory && (
+              <>
+                <div className="history-heading-row">
+                  <h3 className="history-heading">
+                    <Stethoscope size={16} /> Medical History
+                  </h3>
+
+                  {canCreateRecord && (
+                    <button
+                      type="button"
+                      className="add-record-button"
+                      onClick={() =>
+                        navigate(
+                          `${medicalRecordsRoute}?petId=${selectedPet.id}`
+                        )
+                      }
+                    >
+                      <FileHeart size={14} /> Add Medical Record
+                    </button>
+                  )}
+                </div>
+
+                {medicalHistoryLoading ? (
+                  <div className="history-empty">
+                    <p>Loading medical history...</p>
+                  </div>
+                ) : medicalHistory.length === 0 ? (
+                  <div className="history-empty">
+                    <FileHeart size={30} />
+                    <p>No medical records for this pet yet.</p>
+                  </div>
+                ) : (
+                  medicalHistory.map((record) => (
+                    <div className="history medical-history-item" key={record.id}>
+                      <strong>
+                        {record.consultation_date || "Date not recorded"}
+                        {" · "}
+                        {record.record_status || "Draft"}
+                      </strong>
+
+                      <span>
+                        {record.chief_complaint || record.diagnosis || "General consultation"}
+                      </span>
+
+                      {record.diagnosis && (
+                        <small><b>Diagnosis:</b> {record.diagnosis}</small>
+                      )}
+
+                      {(record.treatment || record.treatment_plan) && (
+                        <small><b>Treatment:</b> {record.treatment || record.treatment_plan}</small>
+                      )}
+
+                      {record.medication && (
+                        <small>
+                          <b>Prescription:</b> {record.medication}
+                          {record.dosage ? ` · ${record.dosage}` : ""}
+                          {record.frequency ? ` · ${record.frequency}` : ""}
+                          {record.duration ? ` · ${record.duration}` : ""}
+                        </small>
+                      )}
+
+                      {record.laboratory_result && (
+                        <small><b>Laboratory Results:</b> {record.laboratory_result}</small>
+                      )}
+
+                      {record.vaccination && (
+                        <small><b>Vaccination:</b> {record.vaccination}</small>
+                      )}
+
+                      {record.veterinarian_notes && (
+                        <small><b>Veterinarian Notes:</b> {record.veterinarian_notes}</small>
+                      )}
+
+                      {record.follow_up_date && (
+                        <small><b>Follow-up:</b> {record.follow_up_date}</small>
+                      )}
+                    </div>
+                  ))
+                )}
+              </>
+            )}
 
             <h3 className="history-heading">
               Visit History
@@ -2453,6 +2617,15 @@ export default function PetManagementModule({
           color: #20313b;
         }
 
+        .modal-eyebrow {
+          margin: 0 0 4px;
+          color: #2696c4;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+
         .form-modal {
           width: min(820px, 100%);
         }
@@ -2537,9 +2710,47 @@ export default function PetManagementModule({
         }
 
         .history-heading {
+          display: flex;
+          align-items: center;
+          gap: 6px;
           margin: 22px 0 10px;
           color: #20313b;
           font-size: 15px;
+        }
+
+        .history-heading-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        .history-heading-row .history-heading {
+          margin: 22px 0 10px;
+        }
+
+        .add-record-button {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border: 0;
+          border-radius: 9px;
+          padding: 8px 13px;
+          background: #eaf8fd;
+          color: #2b83ad;
+          font-weight: 700;
+          font-size: 12.5px;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .add-record-button:hover {
+          background: #d9f1fb;
+        }
+
+        .medical-history-item small {
+          display: block;
         }
 
         .history {

@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabaseClient";
+import { validatePassword } from "../utils/validators";
 
 export async function fetchUsers({ search = "", role = "", status = "" } = {}) {
   let query = supabase.from("profiles").select("*").order("created_at", { ascending: false });
@@ -18,9 +19,12 @@ export async function updateUserAccount(id, updates, actor) {
 }
 
 export async function createManagedUser(values, actor) {
+  const fullName = String(values.full_name || "").trim();
+  if (fullName.split(/\s+/).filter(Boolean).length < 2) throw new Error("First name and last name are both required.");
+  validatePassword(values.password);
   const payload = {
     auth_user_id: null,
-    full_name: values.full_name.trim(),
+    full_name: fullName,
     username: values.username.trim(),
     email: values.email.trim().toLowerCase(),
     password: values.password,

@@ -491,8 +491,8 @@ export default function NotificationsPage({ profile }) {
                   <option value="Appointments">Appointments</option>
                   <option value="Queue">Queue</option>
                   <option value="Inventory">Inventory</option>
-                  <option value="Medical Records">
-                    Medical Records
+                  <option value="Animal Patients">
+                    Animal Patients
                   </option>
                   <option value="Messages">Messages</option>
                   <option value="Security">Security</option>

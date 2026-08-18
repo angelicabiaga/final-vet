@@ -43,6 +43,7 @@ import {
 } from "../services/medicalRecordService";
 
 import { getInventoryItems } from "../services/inventoryService";
+import PredictiveHealthReport from "./PredictiveHealthReport";
 
 import { completeQueueEntry } from "../services/queueService";
 
@@ -4022,9 +4023,10 @@ export default function MedicalRecordsModule({
 
             {!aiLoading &&
               aiText && (
-                <div className="ai-result">
-                  {aiText}
-                </div>
+                <PredictiveHealthReport
+                  record={aiRecord}
+                  aiText={aiText}
+                />
               )}
 
             <div className="ai-footer-actions">
@@ -4884,19 +4886,6 @@ export default function MedicalRecordsModule({
           }
         }
 
-        .ai-result {
-          margin: 20px 24px;
-          background: #fbfdfe;
-          border: 1px solid #e1edf2;
-          border-radius: 14px;
-          padding: 20px;
-          white-space: pre-line;
-          font-family: Georgia, "Times New Roman", serif;
-          font-size: 14px;
-          line-height: 1.75;
-          color: #263c46;
-        }
-
         .ai-footer-actions {
           display: flex;
           justify-content: flex-end;
@@ -5228,8 +5217,7 @@ export default function MedicalRecordsModule({
             padding: 18px 16px;
           }
 
-          .ai-warning,
-          .ai-result {
+          .ai-warning {
             margin-left: 16px;
             margin-right: 16px;
           }
