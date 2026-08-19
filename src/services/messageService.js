@@ -41,14 +41,26 @@ async function rpcArray(functionName, args, message) {
   return asArray(data);
 }
 
+function allowedContactRoles(profile) {
+  const role = String(profile?.role || "").toLowerCase();
+  if (role === "pet_owner") return ["staff", "veterinarian"];
+  return null;
+}
+
 export async function getMessageContacts(profile) {
   if (!profile?.id) throw new Error("Your login session is incomplete.");
 
-  const { data, error } = await supabase
+  const roleFilter = allowedContactRoles(profile);
+
+  let query = supabase
     .from("profiles")
     .select("id,full_name,username,email,role,account_status")
     .neq("id", profile.id)
     .order("full_name");
+
+  if (roleFilter) query = query.in("role", roleFilter);
+
+  const { data, error } = await query;
 
   if (!error) {
     return (data || []).filter(
@@ -57,11 +69,13 @@ export async function getMessageContacts(profile) {
   }
 
   console.warn("Normal contact query failed; using RPC fallback:", error);
-  return rpcArray(
+  const rows = await rpcArray(
     "pawcruz_get_message_contacts",
     { p_profile_id: profile.id },
     "Unable to load messaging contacts"
   );
+  if (!roleFilter) return rows;
+  return rows.filter((item) => roleFilter.includes(String(item.role || "").toLowerCase()));
 }
 
 export async function createConversation(profile, participantIds, subject) {
@@ -71,6 +85,25 @@ export async function createConversation(profile, participantIds, subject) {
     (id) => id !== profile.id
   );
   if (!ids.length) throw new Error("Choose at least one recipient.");
+
+  const roleFilter = allowedContactRoles(profile);
+  if (roleFilter) {
+    const { data: recipients, error: recipientError } = await supabase
+      .from("profiles")
+      .select("id,role")
+      .in("id", ids);
+
+    if (recipientError) {
+      throw readableError("Unable to verify recipients", recipientError);
+    }
+
+    const disallowed = (recipients || []).some(
+      (row) => !roleFilter.includes(String(row.role || "").toLowerCase())
+    );
+    if (disallowed || (recipients || []).length !== ids.length) {
+      throw new Error("Pet owners can only message clinic staff or a veterinarian.");
+    }
+  }
 
   const { data: conversation, error: conversationError } = await supabase
     .from("conversations")
