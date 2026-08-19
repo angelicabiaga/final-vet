@@ -207,7 +207,8 @@ const registerStyles = `
     width: min(820px, 100%);
     max-height: 100%;
     position: relative;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
 
     padding: 42px clamp(28px, 4vw, 44px) 24px;
 
@@ -277,6 +278,7 @@ const registerStyles = `
   .register-form {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
     gap: 11px 16px;
   }
 
@@ -340,6 +342,54 @@ const registerStyles = `
 
   .register-field > div input {
     width: 100%;
+  }
+
+  .register-field-password {
+    position: relative;
+  }
+
+  .register-password-popup {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    z-index: 20;
+
+    padding: 12px 14px;
+
+    background: #ffffff;
+    border: 1px solid #cfe4ed;
+    border-radius: 14px;
+    box-shadow: 0 16px 34px rgba(4, 31, 45, 0.2);
+
+    animation: register-popup-in 140ms ease-out both;
+  }
+
+  .register-password-popup::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    left: 22px;
+
+    width: 12px;
+    height: 12px;
+
+    background: #ffffff;
+    border-left: 1px solid #cfe4ed;
+    border-top: 1px solid #cfe4ed;
+    transform: rotate(45deg);
+  }
+
+  @keyframes register-popup-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .register-error {
@@ -963,6 +1013,7 @@ export default function Register() {
 
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [passwordRulesOpen, setPasswordRulesOpen] = useState(false);
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -1150,7 +1201,7 @@ export default function Register() {
                 />
               </label>
 
-              <label className="register-field">
+              <label className="register-field register-field-password">
                 <span>Password</span>
 
                 <PasswordInput
@@ -1160,11 +1211,18 @@ export default function Register() {
                   minLength={8}
                   required
                   value={form.password}
+                  onFocus={() => setPasswordRulesOpen(true)}
+                  onBlur={() => setPasswordRulesOpen(false)}
                   onChange={(e) =>
                     updateField("password", e.target.value)
                   }
                 />
-                <PasswordChecklist password={form.password} />
+
+                {passwordRulesOpen && (
+                  <div className="register-password-popup" role="status">
+                    <PasswordChecklist password={form.password} />
+                  </div>
+                )}
               </label>
 
               <label className="register-field">
