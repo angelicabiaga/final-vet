@@ -176,6 +176,18 @@ function escapeHtml(value) {
   );
 }
 
+const INVENTORY_CATEGORY_TABS = ["All", "Test", "Medicine", "Vaccine"];
+
+// Groups the clinic's finer-grained inventory categories (Test Kits,
+// Antibiotics, Supplements, Anti Parasite, Eye Drops, ...) into the three
+// buckets this field is actually labeled for.
+function classifyPickerCategory(category) {
+  const value = (category || "").toLowerCase();
+  if (value.includes("test") || value.includes("lab") || value.includes("diagnostic")) return "Test";
+  if (value.includes("vaccine")) return "Vaccine";
+  return "Medicine";
+}
+
 function printDate(value) {
   if (!value) return "—";
   const parsed = new Date(`${value}T00:00:00`);
@@ -225,6 +237,11 @@ export default function MedicalRecordsModule({
     inventorySearch,
     setInventorySearch,
   ] = useState("");
+
+  const [
+    inventoryCategoryTab,
+    setInventoryCategoryTab,
+  ] = useState("All");
 
   const [
     appointments,
@@ -382,12 +399,17 @@ export default function MedicalRecordsModule({
       )
       .filter(
         (option) =>
+          inventoryCategoryTab === "All" ||
+          classifyPickerCategory(option.category) === inventoryCategoryTab
+      )
+      .filter(
+        (option) =>
           !keyword ||
           `${option.item_name} ${option.category}`
             .toLowerCase()
             .includes(keyword)
       );
-  }, [inventoryOptions, inventorySearch, form.templateData]);
+  }, [inventoryOptions, inventorySearch, inventoryCategoryTab, form.templateData]);
 
   // Staff and pet owners get a read-only view; only the veterinarian who
   // treats the pet (or an admin) can create or edit a medical record.
@@ -812,10 +834,20 @@ export default function MedicalRecordsModule({
           category: item.category,
           unit: item.unit,
           unit_price: Number(item.unit_price || 0),
+          quantity: 1,
         },
       ],
     });
     setInventorySearch("");
+  }
+
+  function updateInventoryItemQuantity(id, quantity) {
+    const value = Math.max(1, Math.round(Number(quantity) || 1));
+    updateTemplateData({
+      inventoryItems: (form.templateData?.inventoryItems || []).map((entry) =>
+        entry.id === id ? { ...entry, quantity: value } : entry
+      ),
+    });
   }
 
   function removeInventoryItem(id) {
@@ -948,6 +980,13 @@ export default function MedicalRecordsModule({
 
   async function submit(event) {
     event.preventDefault();
+
+    // Without this guard a rapid double-click (or a slow request the user
+    // retries by clicking again) fires this handler twice; since form.id is
+    // still empty on the second call, saveMedicalRecord inserts a second,
+    // blank record instead of updating the first. Mirrors the same guard
+    // saveQueuedTemplate already uses below.
+    if (saving) return;
 
     if (queueContext) {
       if (pendingQueueCompletion) {
@@ -3093,16 +3132,9 @@ export default function MedicalRecordsModule({
                     min="0"
                     step="0.01"
                     disabled={!canEdit}
+                    readOnly
                     value={
                       form.consultationFee
-                    }
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        consultationFee:
-                          e.target
-                            .value,
-                      })
                     }
                   />
                 </label>
@@ -3816,6 +3848,29 @@ export default function MedicalRecordsModule({
                 </span>
 
                 <div className="inventory-picker">
+                  <div className="inventory-category-tabs" role="tablist" aria-label="Filter by item type">
+                    <div
+                      className="inventory-category-tabs-slider"
+                      style={{
+                        width: `${100 / INVENTORY_CATEGORY_TABS.length}%`,
+                        left: `${(INVENTORY_CATEGORY_TABS.indexOf(inventoryCategoryTab) * 100) / INVENTORY_CATEGORY_TABS.length}%`,
+                      }}
+                    />
+                    {INVENTORY_CATEGORY_TABS.map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        role="tab"
+                        aria-selected={inventoryCategoryTab === tab}
+                        className={`inventory-category-tab${inventoryCategoryTab === tab ? " active" : ""}`}
+                        disabled={!canEdit}
+                        onClick={() => setInventoryCategoryTab(tab)}
+                      >
+                        {tab}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className="inventory-picker-search">
                     <Search size={15} />
 
@@ -3873,21 +3928,50 @@ export default function MedicalRecordsModule({
 
                 {(form.templateData?.inventoryItems || []).length > 0 && (
                   <div className="chosen-items">
-                    {form.templateData.inventoryItems.map((entry) => (
-                      <span className="chosen-item-chip" key={entry.id}>
-                        {entry.item_name}
-                        {!entry.isNA && ` — ₱${Number(entry.unit_price || 0).toFixed(2)}`}
-                        {canEdit && (
-                          <button
-                            type="button"
-                            aria-label={`Remove ${entry.item_name}`}
-                            onClick={() => removeInventoryItem(entry.id)}
-                          >
-                            <X size={12} />
-                          </button>
-                        )}
-                      </span>
-                    ))}
+                    {form.templateData.inventoryItems.map((entry) => {
+                      const qty = Math.max(1, Number(entry.quantity ?? 1) || 1);
+                      const lineTotal = Number(entry.unit_price || 0) * qty;
+                      return (
+                        <div className="chosen-item-box" key={entry.id}>
+                          <div className="chosen-item-box-main">
+                            <span className="chosen-item-box-name">{entry.item_name}</span>
+                            {!entry.isNA && (
+                              <span className="chosen-item-box-price">
+                                ₱{Number(entry.unit_price || 0).toFixed(2)} each
+                                {qty > 1 && <> · <b>₱{lineTotal.toFixed(2)} total</b></>}
+                              </span>
+                            )}
+                          </div>
+                          <div className="chosen-item-box-actions">
+                            {!entry.isNA && (canEdit ? (
+                              <label className="chosen-item-qty">
+                                <span>Qty</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  value={entry.quantity ?? 1}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={(event) => updateInventoryItemQuantity(entry.id, event.target.value)}
+                                  aria-label={`Quantity for ${entry.item_name}`}
+                                />
+                              </label>
+                            ) : (
+                              <span className="chosen-item-box-qty-static">× {entry.quantity ?? 1}</span>
+                            ))}
+                            {canEdit && (
+                              <button
+                                type="button"
+                                aria-label={`Remove ${entry.item_name}`}
+                                onClick={() => removeInventoryItem(entry.id)}
+                              >
+                                <X size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </label>
@@ -4412,30 +4496,97 @@ export default function MedicalRecordsModule({
         }
 
         .mr-panel .chosen-items {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+          gap: 10px;
         }
 
-        .mr-panel .chosen-item-chip {
-          display: inline-flex;
+        .mr-panel .chosen-item-box {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid #cfe2ea;
+          background: #f5fbfd;
+        }
+
+        .mr-panel .chosen-item-box-main {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          min-width: 0;
+        }
+
+        .mr-panel .chosen-item-box-name {
+          color: #21697f;
+          font-weight: 800;
+          font-size: 13px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .mr-panel .chosen-item-box-price {
+          color: #6f8792;
+          font-size: 11.5px;
+          font-weight: 600;
+        }
+
+        .mr-panel .chosen-item-box-price b {
+          color: #21697f;
+        }
+
+        .mr-panel .chosen-item-box-actions {
+          display: flex;
           align-items: center;
           gap: 6px;
-          padding: 7px 10px;
-          border-radius: 999px;
-          background: #eaf6fb;
+          flex-shrink: 0;
+        }
+
+        .mr-panel .chosen-item-box-qty-static {
           color: #21697f;
           font-weight: 700;
           font-size: 12px;
         }
 
-        .mr-panel .chosen-item-chip button {
+        .mr-panel .chosen-item-box-actions button {
           display: inline-flex;
           border: 0;
-          background: none;
+          background: #eaf6fb;
+          border-radius: 8px;
+          padding: 5px;
           color: #21697f;
           cursor: pointer;
-          padding: 0;
+        }
+
+        .mr-panel .chosen-item-qty {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: #fff;
+          border: 1px solid #cfe2ea;
+          border-radius: 8px;
+          padding: 3px 6px 3px 8px;
+        }
+
+        .mr-panel .chosen-item-qty span {
+          font-size: 9.5px;
+          text-transform: uppercase;
+          letter-spacing: .3px;
+          color: #6f8a95;
+          font-weight: 800;
+        }
+
+        .mr-panel .chosen-item-qty input {
+          width: 42px;
+          border: 0;
+          padding: 2px 0;
+          font-size: 12px;
+          text-align: center;
+          color: #21697f;
+          font-weight: 700;
         }
 
         .mr-panel .inventory-picker {
@@ -4443,6 +4594,48 @@ export default function MedicalRecordsModule({
           border-radius: 12px;
           background: #fff;
           overflow: hidden;
+        }
+
+        .mr-panel .inventory-category-tabs {
+          position: relative;
+          display: flex;
+          margin: 10px 10px 0;
+          padding: 3px;
+          border-radius: 10px;
+          background: #eaf3f7;
+        }
+
+        .mr-panel .inventory-category-tabs-slider {
+          position: absolute;
+          top: 3px;
+          bottom: 3px;
+          border-radius: 8px;
+          background: #fff;
+          box-shadow: 0 2px 6px rgba(33, 105, 127, .18);
+          transition: left .22s ease;
+        }
+
+        .mr-panel .inventory-category-tab {
+          position: relative;
+          z-index: 1;
+          flex: 1;
+          border: 0;
+          background: none;
+          padding: 8px 6px;
+          font-size: 12.5px;
+          font-weight: 700;
+          color: #6f8792;
+          cursor: pointer;
+          border-radius: 8px;
+        }
+
+        .mr-panel .inventory-category-tab.active {
+          color: #21697f;
+        }
+
+        .mr-panel .inventory-category-tab:disabled {
+          cursor: not-allowed;
+          opacity: .6;
         }
 
         .mr-panel .inventory-picker-search {

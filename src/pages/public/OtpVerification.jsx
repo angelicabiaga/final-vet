@@ -150,6 +150,7 @@ export default function OtpVerification() {
 
   async function submit(event) {
     event.preventDefault();
+    if (loading) return;
 
     if (!/^\d{6}$/.test(code)) {
       setMessage('Enter the 6-digit OTP sent to your email.');

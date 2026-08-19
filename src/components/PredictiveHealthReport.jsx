@@ -12,110 +12,15 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { getPreviousMedicalRecordsForAi } from "../services/medicalRecordService";
-
-// The exact section headings generatePredictiveHealthAnalysis's unchanged
-// prompt instructs the model to use -- this only decides how the returned
-// text is split into cards, never what the AI is asked to produce.
-const SECTION_HEADINGS = [
-  "CLINICAL RECORD SUMMARY",
-  "OBSERVED HEALTH PATTERNS",
-  "POTENTIAL HEALTH RISKS TO MONITOR",
-  "FOLLOW-UP CONSIDERATIONS",
-  "SUGGESTED CLINICAL ACTIONS",
-];
-
-function parseAiReport(text) {
-  const sections = {};
-  let current = null;
-  let disclaimer = "";
-
-  String(text || "")
-    .split("\n")
-    .forEach((raw) => {
-      const line = raw.trim();
-      if (!line) return;
-      const upper = line.toUpperCase();
-
-      if (SECTION_HEADINGS.includes(upper)) {
-        current = upper;
-        sections[current] = sections[current] || [];
-        return;
-      }
-
-      if (line.toLowerCase().startsWith("ai predictive health analysis is based")) {
-        disclaimer = line;
-        current = null;
-        return;
-      }
-
-      if (current) sections[current].push(line);
-    });
-
-  return { sections, disclaimer };
-}
-
-function toSentences(text) {
-  if (!text) return [];
-  return text
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-// Prefers the AI's own numbered lines when it produced them; otherwise
-// falls back to splitting the paragraph into standalone sentences. Either
-// way every item is re-numbered 1..N here, capped where the caller asks.
-function toListItems(lines, max) {
-  const numbered = lines
-    .map((line) => line.match(/^(\d+)[.)]\s*(.+)$/))
-    .filter(Boolean)
-    .map((match) => match[2].trim());
-
-  const items = numbered.length ? numbered : toSentences(lines.join(" "));
-  return max ? items.slice(0, max) : items;
-}
-
-// Bolds a short lead-in phrase (the "risk name") and keeps the remainder --
-// which, per the AI's own prompt, already names the recorded symptom or
-// finding the risk was drawn from -- as the supporting detail.
-function splitRiskName(sentence) {
-  const cutMatch = sentence.match(/^(.{0,60}?)(?:[:–—-]|,)\s+(.*)$/);
-  if (cutMatch && cutMatch[2]) {
-    return { name: cutMatch[1].trim(), detail: cutMatch[2].trim() };
-  }
-  const words = sentence.split(" ");
-  if (words.length > 7) {
-    return { name: words.slice(0, 6).join(" "), detail: words.slice(6).join(" ") };
-  }
-  return { name: sentence, detail: "" };
-}
-
-const STOPWORDS = new Set(["the", "and", "with", "for", "was", "were", "has", "have", "had", "this", "that", "from", "into", "over", "still", "also", "been", "noted", "record", "records", "patient", "pet", "mild", "slight"]);
-
-function keywordSet(text) {
-  return new Set(
-    String(text || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter((word) => word.length > 3 && !STOPWORDS.has(word))
-  );
-}
-
-function sharesKeyword(a, b) {
-  if (!a.size || !b.size) return false;
-  for (const word of a) if (b.has(word)) return true;
-  return false;
-}
-
-function formatDate(value) {
-  if (!value) return "Undated visit";
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" });
-}
+import {
+  formatConsultationDate as formatDate,
+  keywordSet,
+  parseAiReport,
+  sharesKeyword,
+  splitRiskName,
+  toListItems,
+  toSentences,
+} from "../utils/predictiveHealthParsing";
 
 function VitalTrend({ label, current, previous, unit }) {
   if (current === null || current === undefined || current === "") return null;

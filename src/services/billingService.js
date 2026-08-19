@@ -147,12 +147,12 @@ export function subscribeToPendingBilling(callback) {
 }
 
 /**
- * The vet side never records a medicine quantity -- it only records WHICH
- * medicines were used. So the first time staff opens the checkout screen
- * for a consultation, one prescriptions row is created per Medicine item
- * (prescribed_quantity defaults to 1, staff adjusts it from there).
+ * The first time staff opens the checkout screen for a consultation, one
+ * prescriptions row is created per Medicine item, seeded with the quantity
+ * the vet set on the record (falling back to 1 if it wasn't specified).
  * upsert with ignoreDuplicates so re-opening the same checkout never resets
- * progress already made on a prescription.
+ * progress already made on a prescription, and so a quantity typo can still
+ * be corrected via updatePrescribedQuantity before any purchase is made.
  */
 export async function syncPrescriptions({ queueEntryId, medicalRecordId, petId, ownerId, veterinarianId, medicineItems }, profile) {
   if (!queueEntryId || !medicineItems?.length) return getPrescriptionsForConsultation(queueEntryId);
@@ -166,6 +166,7 @@ export async function syncPrescriptions({ queueEntryId, medicalRecordId, petId, 
     inventory_item_id: item.id,
     item_name: item.item_name,
     unit_price: Number(item.unit_price || 0),
+    prescribed_quantity: Math.max(1, Math.round(Number(item.quantity) || 1)),
     created_by: profile?.id || null,
   }));
 
@@ -206,16 +207,67 @@ export async function updatePrescribedQuantity(prescriptionId, prescribedQuantit
   return data[0];
 }
 
-export async function markPrescriptionElsewhere(prescriptionId) {
+export async function markPrescriptionElsewhere(prescriptionId, profile) {
   const { data, error } = await supabase
     .from("prescriptions")
     .update({ fulfillment_status: "Purchasing Elsewhere" })
     .eq("id", prescriptionId)
     .neq("fulfillment_status", "Fully Purchased")
-    .select("id");
+    .select("id,queue_entry_id,pet_id,owner_id,item_name,prescribed_quantity,total_quantity_purchased");
   if (error) throw new Error(`Unable to update this prescription: ${error.message}`);
   if (!data?.[0]) throw new Error("This prescription is already fully purchased.");
-  return data[0];
+
+  const rx = data[0];
+  // Best-effort: a permanent, browsable record of the declaration itself
+  // (not just the mutable status field), so it stays discoverable even
+  // though no money changed hands. Never blocks the actual status update.
+  await supabase.from("prescription_activity_log").insert({
+    prescription_id: rx.id,
+    queue_entry_id: rx.queue_entry_id,
+    pet_id: rx.pet_id,
+    owner_id: rx.owner_id,
+    item_name: rx.item_name,
+    action: "Purchasing Elsewhere",
+    remaining_quantity: Math.max(0, Number(rx.prescribed_quantity) - Number(rx.total_quantity_purchased)),
+    performed_by: profile?.id || null,
+  }).then(({ error: logError }) => {
+    if (logError) console.warn("Unable to write prescription activity log:", logError.message);
+  });
+
+  return rx;
+}
+
+/**
+ * Every "Purchasing Elsewhere" declaration ever made, newest first -- a
+ * permanent activity trail staff can browse without opening each item.
+ */
+export async function getPrescriptionElsewhereLog(limit = 100) {
+  const { data, error } = await supabase
+    .from("prescription_activity_log")
+    .select("id,prescription_id,pet_id,owner_id,item_name,remaining_quantity,performed_by,created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Unable to load the purchasing-elsewhere log: ${error.message}`);
+
+  const rows = data || [];
+  if (!rows.length) return [];
+
+  const petIds = uniq(rows.map((row) => row.pet_id));
+  const profileIds = uniq([...rows.map((row) => row.owner_id), ...rows.map((row) => row.performed_by)]);
+
+  const [petsResult, profilesResult] = await Promise.all([
+    petIds.length ? supabase.from("pets").select("id,pet_name,species").in("id", petIds) : Promise.resolve({ data: [] }),
+    profileIds.length ? supabase.from("profiles").select("id,full_name").in("id", profileIds) : Promise.resolve({ data: [] }),
+  ]);
+  const petsById = new Map((petsResult.data || []).map((pet) => [pet.id, pet]));
+  const profilesById = new Map((profilesResult.data || []).map((profile) => [profile.id, profile]));
+
+  return rows.map((row) => ({
+    ...row,
+    pet: petsById.get(row.pet_id) || null,
+    owner: profilesById.get(row.owner_id) || null,
+    performedByProfile: profilesById.get(row.performed_by) || null,
+  }));
 }
 
 /**
@@ -262,6 +314,25 @@ export async function getPrescriptionsByIds(ids) {
     .select("id,item_name,prescribed_quantity,total_quantity_purchased,fulfillment_status")
     .in("id", uniqueIds);
   if (error) throw new Error(`Unable to load prescription details: ${error.message}`);
+  return data || [];
+}
+
+/**
+ * Purchase history for a set of prescriptions: one row per invoiced line
+ * ever checked out against them (transaction_items already carries the
+ * quantity + timestamp of that specific purchase), so partial buys made on
+ * different visits accumulate into a real log instead of just a running
+ * total.
+ */
+export async function getPrescriptionPurchaseHistory(prescriptionIds) {
+  const ids = uniq(prescriptionIds);
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from("transaction_items")
+    .select("id,prescription_id,quantity,unit_price,created_at")
+    .in("prescription_id", ids)
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(`Unable to load purchase history: ${error.message}`);
   return data || [];
 }
 

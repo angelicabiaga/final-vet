@@ -576,6 +576,133 @@ export async function recordInventoryTransaction(
   return data;
 }
 
+/**
+ * Edits a batch's identifying details (batch number / dates) without
+ * touching quantity_remaining -- quantity changes only ever happen through
+ * a logged inventory_transaction (Stock In / Adjustment / usage), never a
+ * silent edit, so the audit trail stays trustworthy.
+ */
+export async function updateInventoryBatch(batchId, values) {
+  if (!batchId) throw new Error("A batch is required.");
+
+  const { error } = await supabase
+    .from("inventory_batches")
+    .update({
+      batch_number: values.batchNumber?.trim() || null,
+      date_received: values.dateReceived || null,
+      expiry_date: values.expiryDate || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", batchId);
+
+  if (error) {
+    throw friendly(error, "Unable to update this batch.");
+  }
+}
+
+/**
+ * Manually takes a whole batch out of (or back into) POS/FEFO rotation --
+ * separate from its auto-computed Active/Expired/Depleted lifecycle
+ * status. Deactivated batches are skipped by pawcruz_record_inventory_transaction
+ * entirely, even if they still have stock and haven't expired.
+ */
+export async function setBatchActive(batchId, isActive) {
+  if (!batchId) throw new Error("A batch is required.");
+
+  const { error } = await supabase
+    .from("inventory_batches")
+    .update({
+      is_active: isActive,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", batchId);
+
+  if (error) {
+    throw friendly(error, "Unable to update this batch's active status.");
+  }
+}
+
+/**
+ * Merges a duplicate inventory_items row into the real/surviving one --
+ * moves its batches (and their history) over via the FIFO-aware RPC, then
+ * archives the duplicate. See supabase/INVENTORY_MERGE_DUPLICATES.sql.
+ */
+export async function mergeInventoryItems(sourceItemId, targetItemId, profile) {
+  if (!sourceItemId || !targetItemId) {
+    throw new Error("Both a duplicate item and a target item are required.");
+  }
+
+  const { error } = await supabase.rpc("pawcruz_merge_inventory_items", {
+    p_source_item_id: sourceItemId,
+    p_target_item_id: targetItemId,
+    p_actor_id: profile?.id || null,
+  });
+
+  if (error) {
+    throw friendly(error, "Unable to merge these items.");
+  }
+}
+
+/**
+ * Every batch record for one inventory item, oldest-received first -- the
+ * same order pawcruz_record_inventory_transaction deducts from, so this is
+ * literally "which batch gets used next" read top to bottom.
+ */
+export async function getInventoryBatches(itemId) {
+  if (!itemId) return [];
+
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("inventory_batches")
+    .select(
+      "id,item_id,batch_number,quantity_received,quantity_remaining,date_received,expiry_date,status,is_active,created_at"
+    )
+    .eq("item_id", itemId)
+    .order("date_received", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw friendly(
+      error,
+      "Unable to load batch records for this item."
+    );
+  }
+
+  return data || [];
+}
+
+/**
+ * Every individual unit record belonging to one batch, oldest-created
+ * first -- the same order pawcruz_record_inventory_transaction consumes
+ * them in when a sale/usage is recorded against that batch.
+ */
+export async function getInventoryUnits(batchId) {
+  if (!batchId) return [];
+
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("inventory_units")
+    .select(
+      "id,unit_no,item_id,batch_id,status,transaction_id,used_at,created_at"
+    )
+    .eq("batch_id", batchId)
+    .order("created_at", { ascending: true })
+    .order("unit_no", { ascending: true });
+
+  if (error) {
+    throw friendly(
+      error,
+      "Unable to load unit records for this batch."
+    );
+  }
+
+  return data || [];
+}
+
 export async function getInventoryTransactions(
   itemId = "",
   limit = 100
@@ -585,7 +712,7 @@ export async function getInventoryTransactions(
       "inventory_transactions"
     )
     .select(
-      "id,item_id,transaction_type,quantity,quantity_before,quantity_after,reason,notes,reference_type,reference_id,created_by,created_at"
+      "id,item_id,batch_id,transaction_type,quantity,quantity_before,quantity_after,reason,notes,reference_type,reference_id,reference_number,created_by,created_at"
     )
     .order("created_at", {
       ascending: false,
@@ -651,6 +778,27 @@ export async function getInventoryTransactions(
       ])
     );
 
+  const batchIds = [
+    ...new Set(rows.map((row) => row.batch_id).filter(Boolean)),
+  ];
+
+  let batches = [];
+
+  if (batchIds.length) {
+    const result = await supabase
+      .from("inventory_batches")
+      .select("id,batch_number")
+      .in("id", batchIds);
+
+    if (!result.error) {
+      batches = result.data || [];
+    }
+  }
+
+  const batchMap = new Map(
+    batches.map((batch) => [batch.id, batch])
+  );
+
   return rows.map(
     (row) => ({
       ...row,
@@ -658,6 +806,7 @@ export async function getInventoryTransactions(
         itemMap.get(
           row.item_id
         ) || null,
+      batch: batchMap.get(row.batch_id) || null,
     })
   );
 }

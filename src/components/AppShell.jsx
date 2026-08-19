@@ -68,6 +68,7 @@ export default function AppShell({ profile, title, children }) {
       { label: "Create / Walk-In", to: "/staff/walk-in", type: "pet" },
       { label: "Queue Management", to: "/staff/queue", type: "queue" },
       { label: "Veterinarian Schedules", to: "/staff/veterinarian-schedules", type: "schedule" },
+      { label: "Veterinarians", to: "/staff/veterinarians", type: "user" },
       { label: "Animal Patients", to: "/staff/patients", type: "pet" },
       { label: "Inventory", to: "/staff/inventory", type: "inventory" },
       { label: "Transaction", to: "/staff/transactions", type: "payment" },

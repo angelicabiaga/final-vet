@@ -143,3 +143,64 @@ export function showBrowserNotification(notification) {
     });
   }
 }
+
+const REMINDER_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const REMINDER_WINDOW_MS = 2 * 60 * 60 * 1000; // notify once an appointment is within 2 hours
+let lastReminderCheckAt = 0;
+
+/**
+ * No server-side cron exists in this project, so "appointment approaching"
+ * reminders are checked client-side (same pattern as the inventory status
+ * reconciler) -- called from NotificationBell, which is mounted for every
+ * signed-in pet owner. Throttled to once per REMINDER_CHECK_INTERVAL_MS,
+ * and de-duplicated per appointment via a direct query against
+ * notifications before inserting, so re-checking never double-sends.
+ */
+export async function checkUpcomingAppointmentReminders(profile) {
+  if (!profile?.id || profile.role !== "pet_owner") return;
+
+  const now = Date.now();
+  if (now - lastReminderCheckAt < REMINDER_CHECK_INTERVAL_MS) return;
+  lastReminderCheckAt = now;
+
+  const todayStr = new Date(now).toISOString().slice(0, 10);
+
+  const { data: appointments, error } = await supabase
+    .from("appointments")
+    .select("id,pet_id,appointment_date,start_time")
+    .eq("owner_id", profile.id)
+    .eq("status", "Confirmed")
+    .eq("appointment_date", todayStr);
+
+  if (error || !appointments?.length) return;
+
+  const dueSoon = appointments.filter((appointment) => {
+    const start = new Date(`${appointment.appointment_date}T${appointment.start_time}+08:00`).getTime();
+    return start > now && start - now <= REMINDER_WINDOW_MS;
+  });
+
+  for (const appointment of dueSoon) {
+    const { data: existing } = await supabase
+      .from("notifications")
+      .select("id")
+      .eq("notification_type", "Appointment Reminder")
+      .eq("related_record", appointment.id)
+      .limit(1);
+    if (existing?.length) continue;
+
+    const { data: pet } = await supabase
+      .from("pets")
+      .select("pet_name")
+      .eq("id", appointment.pet_id)
+      .maybeSingle();
+
+    await supabase.from("notifications").insert({
+      recipient_id: profile.id,
+      title: "Upcoming Appointment",
+      message: `${pet?.pet_name || "Your pet"}'s appointment starts at ${appointment.start_time.slice(0, 5)} today.`,
+      notification_type: "Appointment Reminder",
+      related_module: "Appointments",
+      related_record: appointment.id,
+    });
+  }
+}

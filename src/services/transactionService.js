@@ -213,6 +213,23 @@ export async function getTransactionAuditTrail(transactionId) {
   return (data || []).map((entry) => ({ ...entry, performer: profilesById.get(entry.performed_by) || null }));
 }
 
+/**
+ * Every invoice tied to one specific consultation (a queue_entry_id) --
+ * normally just one, but a consultation with a partially-purchased
+ * prescription can have a primary invoice plus later "Continue Purchase"
+ * follow-up invoices, all sharing the same queue_entry_id.
+ */
+export async function getTransactionsForQueueEntry(queueEntryId) {
+  if (!queueEntryId) return [];
+  const { data, error } = await supabase
+    .from("transactions")
+    .select(`${TRANSACTION_FIELDS},transaction_items(${TRANSACTION_ITEM_FIELDS})`)
+    .eq("queue_entry_id", queueEntryId)
+    .order("created_at", { ascending: true });
+  if (error) throw friendly(error, "Unable to load billing for this consultation.");
+  return decorateTransactions(data || []);
+}
+
 export async function getTransactions({
   from = "",
   to = "",

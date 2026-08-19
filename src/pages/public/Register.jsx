@@ -996,6 +996,7 @@ export default function Register() {
 
   async function submit(e) {
     e.preventDefault();
+    if (loading) return;
     setMessage("");
 
     try {

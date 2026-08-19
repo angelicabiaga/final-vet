@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabaseClient";
 import { validatePassword } from "../utils/validators";
+import { clearWelcomed } from "../utils/notificationSound";
 
 const SESSION_KEY = "pawcruz_session";
 const OTP_KEY = "pawcruz_pending_otp";
@@ -235,6 +236,7 @@ export async function logoutUser() {
   const session = getStoredSession();
   if (session?.profile) await writeActivity(session.profile, "Logout", `${session.profile.full_name} logged out.`);
   localStorage.removeItem(SESSION_KEY);
+  clearWelcomed();
   window.dispatchEvent(new Event("pawcruz-auth-change"));
 }
 

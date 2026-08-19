@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Pill, RefreshCw } from "lucide-react";
+import { Download, Pill, RefreshCw } from "lucide-react";
 
 import AppShell from "../../components/AppShell";
 import {
   getPrescriptionsForVeterinarian,
   subscribeToPrescriptions,
 } from "../../services/billingService";
+import { downloadPrescriptionNoticePdf } from "../../utils/invoicePdf";
 
 function statusClass(status) {
   return String(status || "Not Purchased").toLowerCase().replace(/\s+/g, "-");
@@ -35,6 +36,8 @@ const styles = `
   .status-partially-purchased{background:#fff0da;color:#b0620a}
   .status-fully-purchased{background:#e6f7ee;color:#1f8550}
   .status-purchasing-elsewhere{background:#eef1f4;color:#5b6b76}
+  .rx-download-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #cfe4ed;background:#fff;color:#257fa9;border-radius:8px;padding:8px 12px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .rx-download-btn:hover{background:#f2f9fc}
   .spin{animation:spin 1s linear infinite}
   @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
   @media(max-width:650px){.rx-card{padding:18px}.rx-heading{flex-direction:column}}
@@ -85,10 +88,10 @@ export default function VeterinarianPrescriptions({ profile }) {
 
           <div className="rx-table-wrap">
             <table className="rx-table">
-              <thead><tr><th>Pet Owner</th><th>Pet</th><th>Medicine</th><th>Prescribed</th><th>Purchased</th><th>Remaining</th><th>Status</th></tr></thead>
+              <thead><tr><th>Pet Owner</th><th>Pet</th><th>Medicine</th><th>Prescribed</th><th>Purchased</th><th>Remaining</th><th>Status</th><th>Action</th></tr></thead>
               <tbody>
-                {loading && <tr><td className="rx-message" colSpan="7">Loading prescriptions…</td></tr>}
-                {!loading && rows.length === 0 && <tr><td className="rx-message" colSpan="7">No prescriptions recorded yet.</td></tr>}
+                {loading && <tr><td className="rx-message" colSpan="8">Loading prescriptions…</td></tr>}
+                {!loading && rows.length === 0 && <tr><td className="rx-message" colSpan="8">No prescriptions recorded yet.</td></tr>}
                 {!loading && rows.map((row) => <tr key={row.id}>
                   <td>{row.owner?.full_name || "—"}</td>
                   <td>{row.pet?.pet_name || "—"}</td>
@@ -97,6 +100,19 @@ export default function VeterinarianPrescriptions({ profile }) {
                   <td>{row.total_quantity_purchased}</td>
                   <td>{row.remainingQuantity}</td>
                   <td><StatusPill status={row.fulfillment_status} /></td>
+                  <td>
+                    <button
+                      type="button"
+                      className="rx-download-btn"
+                      onClick={() => downloadPrescriptionNoticePdf(row, {
+                        petName: row.pet?.pet_name,
+                        ownerName: row.owner?.full_name,
+                        veterinarianName: profile?.full_name ? `Dr. ${profile.full_name}` : "",
+                      })}
+                    >
+                      <Download size={14} /> Download
+                    </button>
+                  </td>
                 </tr>)}
               </tbody>
             </table>

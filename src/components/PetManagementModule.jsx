@@ -1,32 +1,120 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   Archive,
+  ArrowLeft,
+  BrainCircuit,
   Camera,
+  CalendarCheck,
+  CalendarClock,
+  CalendarX,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
+  Download,
   Edit3,
   Eye,
   FileHeart,
   History,
+  Mail,
+  MapPin,
   PawPrint,
+  Phone,
+  Pill,
   Plus,
+  RefreshCw,
   RotateCcw,
   Search,
   Stethoscope,
+  Users,
   X,
 } from "lucide-react";
 
 import { getOwners } from "../services/appointmentService";
 import {
   archivePet,
+  getLatestConsultationDates,
   getPetAppointments,
+  getPetOwnersDirectory,
   getPets,
   savePet,
   uploadPetPhoto,
 } from "../services/petService";
 import { validateImageFile } from "../utils/validators";
-import { getMedicalRecords } from "../services/medicalRecordService";
+import { generateConsultationHealthInsight, generatePredictiveHealthAnalysis, getActiveVeterinarians, getMedicalRecords, getPreviousMedicalRecordsForAi } from "../services/medicalRecordService";
+import { computeRiskLevel, daysUntil, keywordSet, parseAiReport, parseConsultationInsight, sharesKeyword, toListItems } from "../utils/predictiveHealthParsing";
+import { downloadInvoicePdf } from "../utils/invoicePdf";
+import {
+  getPrescriptionPurchaseHistory,
+  getPrescriptionsForConsultation,
+  markPrescriptionElsewhere,
+} from "../services/billingService";
+import { getTransactionsForQueueEntry } from "../services/transactionService";
+import AnimalPatientAIHealth from "./AnimalPatientAIHealth";
+import ConsultationHealthInsight from "./ConsultationHealthInsight";
+
+function money(value) {
+  return Number(value || 0).toLocaleString("en-PH", { style: "currency", currency: "PHP" });
+}
+
+function invoiceBalance(transaction) {
+  return Math.max(0, Number(transaction?.total_amount || 0) - Number(transaction?.amount_paid || 0));
+}
+
+function formatPurchaseDateTime(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" });
+}
+
+const MANILA_TIME_ZONE = "Asia/Manila";
+
+// Resolves the real moment a timeline entry happened. appointments.start_time
+// is a plain "time" column with no zone -- it's clinic-local wall time, so
+// it's anchored to +08:00 (Asia/Manila) rather than the viewer's own
+// timezone. Walk-ins (no linked appointment) use the record's created_at, a
+// real timestamptz that marks when the consultation was actually recorded --
+// never updated_at, which only reflects the most recent edit. Falls back to
+// date-only when no time component exists, rather than inventing one.
+function resolveVisitDateTime(entry) {
+  const { appointment, record } = entry;
+
+  if (appointment?.appointment_date && appointment?.start_time) {
+    const time = String(appointment.start_time).slice(0, 8);
+    const parsed = new Date(`${appointment.appointment_date}T${time}+08:00`);
+    if (!Number.isNaN(parsed.getTime())) return { date: parsed, hasTime: true };
+  }
+
+  if (record?.created_at) {
+    const parsed = new Date(record.created_at);
+    if (!Number.isNaN(parsed.getTime())) return { date: parsed, hasTime: true };
+  }
+
+  const dateOnly = record?.consultation_date || appointment?.appointment_date;
+  if (dateOnly) {
+    const parsed = new Date(`${dateOnly}T00:00:00+08:00`);
+    if (!Number.isNaN(parsed.getTime())) return { date: parsed, hasTime: false };
+  }
+
+  return { date: null, hasTime: false };
+}
+
+function formatVisitDateTime({ date, hasTime }) {
+  if (!date) return "Date not recorded";
+  const datePart = date.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: MANILA_TIME_ZONE,
+  });
+  if (!hasTime) return `${datePart} · Time not recorded`;
+  const timePart = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: MANILA_TIME_ZONE,
+  });
+  return `${datePart} · ${timePart}`;
+}
 
 const EMPTY_FORM = {
   id: "",
@@ -298,7 +386,6 @@ export default function PetManagementModule({
   profile,
   ownerOnly = false,
 }) {
-  const navigate = useNavigate();
   const [pets, setPets] = useState([]);
   const [owners, setOwners] = useState([]);
 
@@ -315,6 +402,13 @@ export default function PetManagementModule({
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 8;
 
+  const [ownerDirectory, setOwnerDirectory] = useState([]);
+  const [ownerDirectoryLoading, setOwnerDirectoryLoading] = useState(true);
+  const [ownerListSearch, setOwnerListSearch] = useState("");
+  const [browsingOwner, setBrowsingOwner] = useState(null);
+  const [latestVisitByPet, setLatestVisitByPet] = useState({});
+  const [ownerPetsLoading, setOwnerPetsLoading] = useState(false);
+
   const [ownerQuery, setOwnerQuery] = useState("");
   const [ownerDropdownOpen, setOwnerDropdownOpen] = useState(false);
   const [speciesQuery, setSpeciesQuery] = useState("");
@@ -328,28 +422,152 @@ export default function PetManagementModule({
   const [history, setHistory] = useState([]);
   const [medicalHistory, setMedicalHistory] = useState([]);
   const [medicalHistoryLoading, setMedicalHistoryLoading] = useState(false);
+  const [profileTab, setProfileTab] = useState("history");
+  const [expandedRecordId, setExpandedRecordId] = useState(null);
+  const [openInsightId, setOpenInsightId] = useState(null);
+  const [consultationInsights, setConsultationInsights] = useState({});
+  const [billingByRecordId, setBillingByRecordId] = useState({});
+  const [rxBusyId, setRxBusyId] = useState(null);
+  const [aiText, setAiText] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiPreviousRecords, setAiPreviousRecords] = useState([]);
+  const [aiLatestRecord, setAiLatestRecord] = useState(null);
+  const [vetNames, setVetNames] = useState({});
 
   const canManageAll =
     !ownerOnly &&
     ["admin", "staff", "veterinarian"].includes(profile.role);
-
-  // Mirrors MedicalRecordsModule's own access rule: only a veterinarian (or
-  // admin) can create/edit a medical record. Staff stays view-only there,
-  // and a pet owner is always view-only, so no "Add Medical Record" action
-  // is offered to either here.
-  const canCreateRecord =
-    !ownerOnly &&
-    ["admin", "veterinarian"].includes(profile.role);
 
   // Staff/Vet/Admin see it inside their patient-management view; a pet
   // owner sees the same section for their own pets (getMedicalRecords
   // already limits that to their Finalized records only -- unchanged).
   const canViewMedicalHistory = canManageAll || ownerOnly;
 
-  const medicalRecordsRoute =
-    profile.role === "veterinarian"
-      ? "/veterinarian/medical-records"
-      : "/admin/medical-records";
+  // The billing/prescription-fulfillment card is owner-facing data, but the
+  // vet who prescribed it also needs to see purchase/remaining status
+  // against the same visit -- not just staff/admin, who already manage this
+  // directly from Transactions.
+  const canViewBilling = ownerOnly || profile.role === "veterinarian";
+
+  // Small, bounded list (a clinic's active veterinarians) reused from the
+  // existing exported function, just to resolve veterinarian_id -> name for
+  // display on consultation cards -- no new query shape, no schema change.
+  useEffect(() => {
+    if (!canViewMedicalHistory) return;
+    getActiveVeterinarians()
+      .then((list) => setVetNames(Object.fromEntries(list.map((vet) => [vet.id, vet.full_name]))))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Animal Patients now opens on a Pet Owner directory for Admin/Staff/Vet.
+  // A pet owner browsing their own pets skips this layer entirely -- there
+  // is nothing to pick, they only ever see themselves.
+  useEffect(() => {
+    if (!canManageAll) return;
+    let active = true;
+    setOwnerDirectoryLoading(true);
+    getPetOwnersDirectory()
+      .then((rows) => { if (active) setOwnerDirectory(rows); })
+      .catch((error) => { if (active) setMessage(error.message || "Unable to load pet owners."); })
+      .finally(() => { if (active) setOwnerDirectoryLoading(false); });
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageAll]);
+
+  // Prevents the page behind either modal from scrolling while it's open.
+  useEffect(() => {
+    if (!formOpen && !selectedPet) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, [formOpen, selectedPet]);
+
+  // Locally computed indicator only -- generatePredictiveHealthAnalysis and
+  // its prompt are never asked for a score. Combines three concrete signals:
+  // how many risks the AI's own (unmodified) risk section named, how many
+  // recorded symptoms/diagnoses recur across this pet's visits, and whether
+  // a follow-up is due soon or overdue.
+  const aiRisk = useMemo(() => {
+    if (!aiLatestRecord) return null;
+    const { sections } = parseAiReport(aiText);
+    const riskCount = toListItems(sections["POTENTIAL HEALTH RISKS TO MONITOR"] || [], 5).length;
+    const combined = [...aiPreviousRecords, aiLatestRecord];
+    let recurringCount = 0;
+    combined.forEach((entry, index) => {
+      const own = keywordSet(`${entry.symptoms || ""} ${entry.diagnosis || ""}`);
+      const priors = combined.slice(0, index);
+      if (own.size && priors.some((prior) => sharesKeyword(own, keywordSet(`${prior.symptoms || ""} ${prior.diagnosis || ""}`)))) recurringCount++;
+    });
+    const days = daysUntil(aiLatestRecord.follow_up_date);
+    return computeRiskLevel({
+      riskCount,
+      recurringCount,
+      followUpSoon: days !== null && days >= 0 && days <= 14,
+      followUpOverdue: days !== null && days < 0,
+    });
+  }, [aiText, aiPreviousRecords, aiLatestRecord]);
+
+  // Merges appointments (history) with consultations (medicalHistory) into
+  // one chronological timeline. medical_records.appointment_id is the merge
+  // key -- pet_id/petId is only the scope filter already applied to both
+  // queries, not what links a specific visit to its resulting record. Every
+  // appointment consumed by a match is tracked so it never also renders as
+  // a separate "upcoming" row -- the single source of duplicate-prevention
+  // for this view.
+  const timelineEntries = useMemo(() => {
+    const consumedAppointmentIds = new Set();
+    const entries = [];
+
+    medicalHistory.forEach((record) => {
+      const linkedAppointment = record.appointment_id
+        ? history.find((appt) => appt.id === record.appointment_id)
+        : null;
+      if (linkedAppointment) consumedAppointmentIds.add(linkedAppointment.id);
+
+      entries.push({
+        key: `record-${record.id}`,
+        kind: "consultation",
+        record,
+        appointment: linkedAppointment || null,
+      });
+    });
+
+    history.forEach((appointment) => {
+      if (consumedAppointmentIds.has(appointment.id)) return;
+
+      const kind =
+        appointment.status === "Cancelled"
+          ? "cancelled"
+          : appointment.status === "Completed"
+          ? "completed-no-record"
+          : "upcoming";
+
+      entries.push({
+        key: `appointment-${appointment.id}`,
+        kind,
+        record: null,
+        appointment,
+      });
+    });
+
+    entries.forEach((entry) => {
+      const visit = resolveVisitDateTime(entry);
+      entry.visitDate = visit.date;
+      entry.visitHasTime = visit.hasTime;
+    });
+
+    entries.sort((a, b) => (b.visitDate?.getTime() || 0) - (a.visitDate?.getTime() || 0));
+    return entries;
+  }, [medicalHistory, history]);
+
+  const latestConsultationKey = useMemo(
+    () => timelineEntries.find((entry) => entry.kind === "consultation")?.key || null,
+    [timelineEntries]
+  );
 
   const filteredOwners = useMemo(() => {
     const keyword = ownerQuery.trim().toLowerCase();
@@ -470,6 +688,54 @@ export default function PetManagementModule({
     setPage(1);
   }, [search, speciesFilter, showArchived]);
 
+  // Counts come from the pet list already loaded above -- no second query,
+  // and it stays in sync automatically whenever loadPets() runs again.
+  const ownerPetCounts = useMemo(() => {
+    const counts = {};
+    pets.forEach((pet) => {
+      if (pet.is_archived) return;
+      counts[pet.owner_id] = (counts[pet.owner_id] || 0) + 1;
+    });
+    return counts;
+  }, [pets]);
+
+  const visibleOwners = useMemo(() => {
+    const keyword = ownerListSearch.trim().toLowerCase();
+    return ownerDirectory
+      .map((owner) => ({ ...owner, petCount: ownerPetCounts[owner.id] || 0 }))
+      .filter((owner) => {
+        if (!keyword) return true;
+        return [owner.full_name, owner.email, owner.phone, owner.address, owner.username].some(
+          (value) => String(value || "").toLowerCase().includes(keyword)
+        );
+      });
+  }, [ownerDirectory, ownerPetCounts, ownerListSearch]);
+
+  const [showArchivedInOwnerView, setShowArchivedInOwnerView] = useState(false);
+
+  const ownersPets = useMemo(() => {
+    if (!browsingOwner) return [];
+    return pets.filter(
+      (pet) => pet.owner_id === browsingOwner.id && (showArchivedInOwnerView ? pet.is_archived : !pet.is_archived)
+    );
+  }, [pets, browsingOwner, showArchivedInOwnerView]);
+
+  function openOwnerPets(owner) {
+    setBrowsingOwner(owner);
+    setShowArchivedInOwnerView(false);
+    const petIds = pets.filter((pet) => pet.owner_id === owner.id).map((pet) => pet.id);
+    setOwnerPetsLoading(true);
+    getLatestConsultationDates(petIds)
+      .then((map) => setLatestVisitByPet(map))
+      .catch(() => setLatestVisitByPet({}))
+      .finally(() => setOwnerPetsLoading(false));
+  }
+
+  function backToOwnerDirectory() {
+    setBrowsingOwner(null);
+    setLatestVisitByPet({});
+  }
+
   useEffect(() => {
     let active = true;
 
@@ -552,6 +818,11 @@ export default function PetManagementModule({
     resetForm();
     setMessage("");
     setFormOpen(true);
+  }
+
+  function openRegisterModalForOwner(owner) {
+    openRegisterModal();
+    selectOwner(owner);
   }
 
   function closeForm() {
@@ -647,6 +918,12 @@ export default function PetManagementModule({
   async function handleSubmit(event) {
     event.preventDefault();
 
+    // Without this guard a rapid double-click (or a slow request retried by
+    // clicking again) fires this handler twice; since form.id is still
+    // empty on the second call, savePet inserts a second Animal Patient
+    // record for the same pet instead of updating the first.
+    if (saving) return;
+
     setSaving(true);
     setMessage("");
 
@@ -718,6 +995,14 @@ export default function PetManagementModule({
     setHistory([]);
     setMedicalHistory([]);
     setMessage("");
+    setProfileTab("history");
+    setExpandedRecordId(null);
+    setOpenInsightId(null);
+    setConsultationInsights({});
+    setAiText("");
+    setAiError("");
+    setAiPreviousRecords([]);
+    setAiLatestRecord(null);
 
     try {
       const appointmentHistory = await getPetAppointments(
@@ -741,6 +1026,10 @@ export default function PetManagementModule({
         });
 
         setMedicalHistory(records);
+        setExpandedRecordId(records[0]?.id || null);
+        if (records[0] && canViewBilling) loadBillingForRecord(records[0]);
+        loadAiHealthAnalysis(pet, records);
+        loadConsultationInsights(pet, records);
       } catch (error) {
         console.warn(
           "Unable to load medical history for this pet:",
@@ -749,6 +1038,134 @@ export default function PetManagementModule({
       } finally {
         setMedicalHistoryLoading(false);
       }
+    }
+  }
+
+  // Runs the unchanged generatePredictiveHealthAnalysis once, up front, so
+  // the Low/Moderate/High badge next to the AI Predictive Health tab is
+  // already known before the user ever opens that tab -- exactly what the
+  // AI Predictive Health tab renders is generated from this same call.
+  async function loadAiHealthAnalysis(pet, records) {
+    const finalized = (records || [])
+      .filter((record) => record.record_status === "Finalized")
+      .sort((a, b) => new Date(b.consultation_date || 0) - new Date(a.consultation_date || 0));
+    const latest = finalized[0] || null;
+    setAiLatestRecord(latest);
+    if (!latest) return;
+
+    setAiLoading(true);
+    setAiError("");
+    try {
+      const [text, previous] = await Promise.all([
+        generatePredictiveHealthAnalysis({ ...latest, pet }),
+        getPreviousMedicalRecordsForAi(latest.pet_id, latest.id),
+      ]);
+      setAiText(text);
+      setAiPreviousRecords(previous);
+    } catch (error) {
+      setAiError(error.message || "Unable to generate the AI predictive health analysis.");
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  // Generated eagerly (bounded) so the risk badge on each row is ready
+  // without waiting for a click -- "quick viewing" per row -- while still
+  // capping how many concurrent AI requests one pet-open can trigger.
+  // Anything past the cap generates lazily the first time its row is
+  // expanded (see toggleConsultationInsight below).
+  const CONSULTATION_INSIGHT_EAGER_CAP = 8;
+
+  async function generateInsightFor(pet, record, previousRecords) {
+    setConsultationInsights((current) => ({
+      ...current,
+      [record.id]: { ...current[record.id], loading: true, error: "" },
+    }));
+
+    try {
+      const text = await generateConsultationHealthInsight({ ...record, pet }, previousRecords);
+      const { riskLevel } = parseConsultationInsight(text);
+      setConsultationInsights((current) => ({
+        ...current,
+        [record.id]: { text, loading: false, error: "", riskLevel },
+      }));
+    } catch (error) {
+      setConsultationInsights((current) => ({
+        ...current,
+        [record.id]: { text: "", loading: false, error: error.message || "Unable to generate the AI health insight.", riskLevel: null },
+      }));
+    }
+  }
+
+  function loadConsultationInsights(pet, records) {
+    // Newest first, matching how Medical History is already displayed --
+    // finding this record's own index gives every strictly-older finalized
+    // consultation as its comparison context, with no extra query.
+    const finalized = (records || [])
+      .filter((record) => record.record_status === "Finalized")
+      .sort((a, b) => new Date(b.consultation_date || 0) - new Date(a.consultation_date || 0));
+
+    finalized.slice(0, CONSULTATION_INSIGHT_EAGER_CAP).forEach((record, index) => {
+      generateInsightFor(pet, record, finalized.slice(index + 1));
+    });
+  }
+
+  function toggleConsultationInsight(record) {
+    const nextOpen = openInsightId === record.id ? null : record.id;
+    setOpenInsightId(nextOpen);
+    if (!nextOpen) return;
+    if (record.record_status !== "Finalized") return;
+    if (consultationInsights[record.id]) return;
+
+    const finalized = medicalHistory
+      .filter((item) => item.record_status === "Finalized")
+      .sort((a, b) => new Date(b.consultation_date || 0) - new Date(a.consultation_date || 0));
+    const index = finalized.findIndex((item) => item.id === record.id);
+    const previousRecords = index === -1 ? [] : finalized.slice(index + 1);
+    generateInsightFor(selectedPet, record, previousRecords);
+  }
+
+  // Lazy, cached per record so opening/closing a visit card never re-fetches
+  // billing that's already loaded. Only meaningful once the vet has sent the
+  // consultation to billing (queue_entry_id is only set from that point on).
+  async function loadBillingForRecord(record) {
+    if (!record.queue_entry_id || billingByRecordId[record.id]) return;
+    setBillingByRecordId((current) => ({ ...current, [record.id]: { loading: true } }));
+    try {
+      const [invoices, prescriptions] = await Promise.all([
+        getTransactionsForQueueEntry(record.queue_entry_id),
+        getPrescriptionsForConsultation(record.queue_entry_id),
+      ]);
+      const purchaseHistory = await getPrescriptionPurchaseHistory(prescriptions.map((rx) => rx.id));
+      const purchaseHistoryByRxId = purchaseHistory.reduce((map, row) => {
+        (map[row.prescription_id] ||= []).push(row);
+        return map;
+      }, {});
+      setBillingByRecordId((current) => ({ ...current, [record.id]: { loading: false, invoices, prescriptions, purchaseHistoryByRxId } }));
+    } catch (error) {
+      setBillingByRecordId((current) => ({ ...current, [record.id]: { loading: false, error: error.message } }));
+    }
+  }
+
+  async function refreshBillingForRecord(record) {
+    setBillingByRecordId((current) => {
+      const next = { ...current };
+      delete next[record.id];
+      return next;
+    });
+    await loadBillingForRecord(record);
+  }
+
+  async function handleBuyElsewhere(prescription, record) {
+    if (rxBusyId) return;
+    setRxBusyId(prescription.id);
+    try {
+      await markPrescriptionElsewhere(prescription.id, profile);
+      await refreshBillingForRecord(record);
+    } catch (error) {
+      setMessage(error.message || "Unable to update this prescription.");
+    } finally {
+      setRxBusyId(null);
     }
   }
 
@@ -1380,6 +1797,7 @@ export default function PetManagementModule({
         </div>
       )}
 
+      {ownerOnly && (
       <section className="card list-card">
         <div className="toolbar">
           <div>
@@ -1697,6 +2115,246 @@ export default function PetManagementModule({
           </div>
         )}
       </section>
+      )}
+
+      {canManageAll && !browsingOwner && (
+        <section className="card list-card">
+          <div className="toolbar">
+            <div>
+              <div className="list-heading-row">
+                <h2>
+                  <Users />
+                  Pet Owners
+                </h2>
+
+                <button
+                  type="button"
+                  className="register-pet-btn"
+                  onClick={openRegisterModal}
+                >
+                  <Plus size={16} />
+                  Register Pet
+                </button>
+              </div>
+
+              <p className="list-description">
+                Search registered pet owners, then view the animal patients under each one.
+              </p>
+            </div>
+
+            <div className="toolbar-controls owner-toolbar-controls">
+              <div className="search">
+                <Search size={17} />
+
+                <input
+                  value={ownerListSearch}
+                  onChange={(event) => setOwnerListSearch(event.target.value)}
+                  placeholder="Search owner by name, email, phone, or address"
+                />
+
+                {ownerListSearch && (
+                  <button
+                    type="button"
+                    className="clear-search"
+                    aria-label="Clear search"
+                    onClick={() => setOwnerListSearch("")}
+                  >
+                    <X size={15} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="result-summary">
+            <span>
+              {ownerDirectoryLoading
+                ? "Loading pet owners..."
+                : `Showing ${visibleOwners.length} of ${ownerDirectory.length} pet owners`}
+            </span>
+          </div>
+
+          {ownerDirectoryLoading ? (
+            <div className="empty">
+              <Users size={35} />
+              <h3>Loading pet owners...</h3>
+            </div>
+          ) : visibleOwners.length === 0 ? (
+            <div className="empty">
+              <Users size={35} />
+              <h3>No pet owners found</h3>
+              <p>Try a different search, or register a pet to add one.</p>
+            </div>
+          ) : (
+            <div className="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pet Owner</th>
+                    <th>Contact Number</th>
+                    <th>Email Address</th>
+                    <th>Address</th>
+                    <th>Registered Pets</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {visibleOwners.map((owner) => (
+                    <tr key={owner.id}>
+                      <td>
+                        <div className="pet-cell">
+                          <div className="photo owner-avatar">
+                            <Users size={16} />
+                          </div>
+                          <span>{owner.full_name || "Unnamed Owner"}</span>
+                        </div>
+                      </td>
+                      <td>{owner.phone || "Not recorded"}</td>
+                      <td>{owner.email || "Not recorded"}</td>
+                      <td>{owner.address || "Not recorded"}</td>
+                      <td>
+                        <span className="pill active">
+                          {owner.petCount} pet{owner.petCount === 1 ? "" : "s"}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="details-btn"
+                          onClick={() => openOwnerPets(owner)}
+                        >
+                          <Eye size={14} />
+                          View Pets
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {canManageAll && browsingOwner && (
+        <section className="card list-card">
+          <button
+            type="button"
+            className="back-to-owners"
+            onClick={backToOwnerDirectory}
+          >
+            <ArrowLeft size={16} />
+            Back to Pet Owners
+          </button>
+
+          <div className="owner-summary-card">
+            <div className="photo owner-avatar large">
+              <Users size={22} />
+            </div>
+
+            <div>
+              <h2>{browsingOwner.full_name || "Unnamed Owner"}</h2>
+              <div className="owner-summary-meta">
+                <span><Phone size={13} /> {browsingOwner.phone || "Not recorded"}</span>
+                <span><Mail size={13} /> {browsingOwner.email || "Not recorded"}</span>
+                <span><MapPin size={13} /> {browsingOwner.address || "Not recorded"}</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className="register-pet-btn"
+              onClick={() => openRegisterModalForOwner(browsingOwner)}
+            >
+              <Plus size={16} />
+              Add Pet
+            </button>
+          </div>
+
+          <div className="list-heading-row owner-pets-toolbar">
+            <h3 className="history-heading">
+              Animal Patients ({ownersPets.length})
+            </h3>
+
+            <label
+              className={
+                showArchivedInOwnerView
+                  ? "archive-check active"
+                  : "archive-check"
+              }
+            >
+              <input
+                type="checkbox"
+                checked={showArchivedInOwnerView}
+                onChange={(event) => setShowArchivedInOwnerView(event.target.checked)}
+              />
+              <Archive size={15} />
+              <span>View Archived</span>
+            </label>
+          </div>
+
+          {ownerPetsLoading ? (
+            <div className="empty">
+              <PawPrint size={35} />
+              <h3>Loading animal patients...</h3>
+            </div>
+          ) : ownersPets.length === 0 ? (
+            <div className="empty">
+              <PawPrint size={35} />
+              <h3>
+                {showArchivedInOwnerView ? "No archived pets" : "No animal patients yet"}
+              </h3>
+              <p>
+                {showArchivedInOwnerView
+                  ? "This owner has no archived pets."
+                  : "Register a pet for this owner to see it listed here."}
+              </p>
+            </div>
+          ) : (
+            <div className="pet-card-grid">
+              {ownersPets.map((pet) => (
+                <button
+                  type="button"
+                  key={pet.id}
+                  className="pet-profile-card"
+                  onClick={() => handleOpenHistory(pet)}
+                >
+                  <div className="pet-profile-card-photo">
+                    {pet.photo_url ? (
+                      <img src={pet.photo_url} alt={pet.pet_name} />
+                    ) : (
+                      <PawPrint size={22} />
+                    )}
+                  </div>
+
+                  <div className="pet-profile-card-body">
+                    <strong>{pet.pet_name || "Unnamed Pet"}</strong>
+
+                    <div className="pet-profile-card-chips">
+                      <span>{pet.species || "Species not recorded"}</span>
+                      {pet.breed && <span>{pet.breed}</span>}
+                      <span>{pet.sex || "Unknown"}</span>
+                    </div>
+
+                    <div className="pet-profile-card-meta">
+                      <span>{formatPetAge(pet.date_of_birth) || "Age not recorded"}</span>
+                      <span>{pet.weight ? `${pet.weight} kg` : "Weight not recorded"}</span>
+                    </div>
+
+                    <div className="pet-profile-card-visit">
+                      <History size={12} />
+                      {latestVisitByPet[pet.id]
+                        ? `Last consultation: ${latestVisitByPet[pet.id]}`
+                        : "No consultations yet"}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {selectedPet && (
         <div
@@ -1706,7 +2364,7 @@ export default function PetManagementModule({
           }
         >
           <div
-            className="modal"
+            className="modal patient-profile-modal"
             onClick={(event) =>
               event.stopPropagation()
             }
@@ -1723,217 +2381,353 @@ export default function PetManagementModule({
             </button>
 
             <p className="modal-eyebrow">Animal Patient Profile</p>
-            <h2>{selectedPet.pet_name || "Unnamed Pet"}</h2>
-            <p className="modal-subtitle">
-              {canManageAll
-                ? "Pet profile, owner information, and complete medical history."
-                : "Pet profile and complete medical history."}
-            </p>
 
-            <h3 className="history-heading">Pet Profile</h3>
-
-            <div className="details">
-              <p>
-                <strong>Species:</strong>{" "}
-                {selectedPet.species ||
-                  "Not recorded"}
-              </p>
-
-              <p>
-                <strong>Breed:</strong>{" "}
-                {selectedPet.breed ||
-                  "Not recorded"}
-              </p>
-
-              <p>
-                <strong>Sex:</strong>{" "}
-                {selectedPet.sex || "Unknown"}
-              </p>
-
-              <p>
-                <strong>Weight:</strong>{" "}
-                {selectedPet.weight
-                  ? `${selectedPet.weight} kg`
-                  : "Not recorded"}
-              </p>
-
-              <p>
-                <strong>Color:</strong>{" "}
-                {selectedPet.color || "Not recorded"}
-              </p>
-
-              <p>
-                <strong>Microchip:</strong>{" "}
-                {selectedPet.microchip_number ||
-                  "Not recorded"}
-              </p>
-
-              <p>
-                <strong>Allergies:</strong>{" "}
-                {selectedPet.allergies ||
-                  "None recorded"}
-              </p>
-
-              <p>
-                <strong>Conditions:</strong>{" "}
-                {selectedPet.existing_conditions ||
-                  "None recorded"}
-              </p>
-
-              <p>
-                <strong>Notes:</strong>{" "}
-                {selectedPet.notes || "None"}
-              </p>
+            <div className="patient-header">
+              <div className="patient-header-main">
+                <h2>{selectedPet.pet_name || "Unnamed Pet"}</h2>
+                <div className="patient-chips">
+                  <span>{selectedPet.species || "Species not recorded"}</span>
+                  {selectedPet.breed && <span>{selectedPet.breed}</span>}
+                  <span>{selectedPet.sex || "Unknown"}</span>
+                  {selectedPet.weight && <span>{selectedPet.weight} kg</span>}
+                  {selectedPet.color && <span>{selectedPet.color}</span>}
+                </div>
+                {canManageAll && (
+                  <p className="patient-owner-line">
+                    Owner: {selectedPet.owner?.full_name || "Not assigned"}
+                    {selectedPet.owner?.phone ? ` · ${selectedPet.owner.phone}` : ""}
+                    {selectedPet.owner?.email ? ` · ${selectedPet.owner.email}` : ""}
+                  </p>
+                )}
+              </div>
             </div>
 
-            {canManageAll && (
-              <>
-                <h3 className="history-heading">
-                  Pet Owner Information
-                </h3>
-
-                <div className="details">
-                  <p>
-                    <strong>Full Name:</strong>{" "}
-                    {selectedPet.owner?.full_name ||
-                      "Not assigned"}
-                  </p>
-
-                  <p>
-                    <strong>Email:</strong>{" "}
-                    {selectedPet.owner?.email ||
-                      "Not recorded"}
-                  </p>
-
-                  <p>
-                    <strong>Phone:</strong>{" "}
-                    {selectedPet.owner?.phone ||
-                      "Not recorded"}
-                  </p>
-                </div>
-              </>
+            {(selectedPet.microchip_number || selectedPet.allergies || selectedPet.existing_conditions || selectedPet.notes) && (
+              <div className="details patient-extra-details">
+                {selectedPet.microchip_number && <p><strong>Microchip:</strong> {selectedPet.microchip_number}</p>}
+                {selectedPet.allergies && <p><strong>Allergies:</strong> {selectedPet.allergies}</p>}
+                {selectedPet.existing_conditions && <p><strong>Conditions:</strong> {selectedPet.existing_conditions}</p>}
+                {selectedPet.notes && <p><strong>Notes:</strong> {selectedPet.notes}</p>}
+              </div>
             )}
 
             {canViewMedicalHistory && (
-              <>
-                <div className="history-heading-row">
-                  <h3 className="history-heading">
-                    <Stethoscope size={16} /> Medical History
-                  </h3>
+              <div className="profile-tabs" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={profileTab === "history"}
+                  className={profileTab === "history" ? "active" : ""}
+                  onClick={() => setProfileTab("history")}
+                >
+                  <Stethoscope size={14} /> Medical History
+                </button>
 
-                  {canCreateRecord && (
-                    <button
-                      type="button"
-                      className="add-record-button"
-                      onClick={() =>
-                        navigate(
-                          `${medicalRecordsRoute}?petId=${selectedPet.id}`
-                        )
-                      }
-                    >
-                      <FileHeart size={14} /> Add Medical Record
-                    </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={profileTab === "ai"}
+                  className={profileTab === "ai" ? "active" : ""}
+                  onClick={() => setProfileTab("ai")}
+                >
+                  <BrainCircuit size={14} /> AI Predictive Health
+                  {aiRisk && (
+                    <span className={`profile-tab-badge profile-tab-badge-${aiRisk.level.toLowerCase()}`}>
+                      {aiRisk.level}
+                    </span>
                   )}
+                </button>
+              </div>
+            )}
+
+            <div className="patient-profile-scroll">
+            {canViewMedicalHistory && profileTab === "history" && (
+              <div className="profile-tab-panel">
+                <div className="history-heading-row">
+                  <div>
+                    <h3 className="history-heading">Medical History</h3>
+                    <p className="history-subtext">
+                      {timelineEntries.length} visit{timelineEntries.length === 1 ? "" : "s"} on record
+                    </p>
+                  </div>
                 </div>
 
                 {medicalHistoryLoading ? (
                   <div className="history-empty">
                     <p>Loading medical history...</p>
                   </div>
-                ) : medicalHistory.length === 0 ? (
+                ) : timelineEntries.length === 0 ? (
                   <div className="history-empty">
                     <FileHeart size={30} />
-                    <p>No medical records for this pet yet.</p>
+                    <p>No visits recorded for this pet yet.</p>
                   </div>
                 ) : (
-                  medicalHistory.map((record) => (
-                    <div className="history medical-history-item" key={record.id}>
-                      <strong>
-                        {record.consultation_date || "Date not recorded"}
-                        {" · "}
-                        {record.record_status || "Draft"}
-                      </strong>
+                  <div className="consultation-list">
+                    {timelineEntries.map((entry) => {
+                      if (entry.kind !== "consultation") {
+                        const { appointment, kind } = entry;
+                        const badgeText =
+                          kind === "upcoming" ? "Upcoming visit" : kind === "cancelled" ? "Cancelled" : "Completed · no record";
+                        const BadgeIcon = kind === "upcoming" ? CalendarClock : kind === "cancelled" ? CalendarX : CalendarCheck;
+                        return (
+                          <div className={`timeline-appt-card timeline-appt-${kind}`} key={entry.key}>
+                            <span className="consultation-date">
+                              {formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime })}
+                            </span>
 
-                      <span>
-                        {record.chief_complaint || record.diagnosis || "General consultation"}
-                      </span>
+                            <span className="consultation-title">
+                              {appointment.visit_reason || "General Consultation"}
+                            </span>
 
-                      {record.diagnosis && (
-                        <small><b>Diagnosis:</b> {record.diagnosis}</small>
-                      )}
+                            <span className="consultation-meta">
+                              {appointment.veterinarian?.full_name ? `Dr. ${appointment.veterinarian.full_name}` : "Veterinarian not assigned"}
+                              {" · "}{appointment.status}
+                              {kind === "completed-no-record" && " · No medical record was created for this visit."}
+                            </span>
 
-                      {(record.treatment || record.treatment_plan) && (
-                        <small><b>Treatment:</b> {record.treatment || record.treatment_plan}</small>
-                      )}
+                            <span className={`timeline-appt-badge timeline-appt-badge-${kind}`}>
+                              <BadgeIcon size={12} /> {badgeText}
+                            </span>
+                          </div>
+                        );
+                      }
 
-                      {record.medication && (
-                        <small>
-                          <b>Prescription:</b> {record.medication}
-                          {record.dosage ? ` · ${record.dosage}` : ""}
-                          {record.frequency ? ` · ${record.frequency}` : ""}
-                          {record.duration ? ` · ${record.duration}` : ""}
-                        </small>
-                      )}
+                      const { record, appointment } = entry;
+                      const expanded = expandedRecordId === record.id;
+                      return (
+                        <div className={`consultation-card${expanded ? " expanded" : ""}`} key={entry.key}>
+                          <button
+                            type="button"
+                            className="consultation-summary"
+                            onClick={() => {
+                              setExpandedRecordId(expanded ? null : record.id);
+                              if (!expanded && canViewBilling) loadBillingForRecord(record);
+                            }}
+                          >
+                            <span className="consultation-date">
+                              {formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime })}
+                              {entry.key === latestConsultationKey && <span className="consultation-latest">Latest</span>}
+                            </span>
 
-                      {record.laboratory_result && (
-                        <small><b>Laboratory Results:</b> {record.laboratory_result}</small>
-                      )}
+                            <span className="consultation-title">
+                              {record.diagnosis || record.chief_complaint || "General consultation"}
+                            </span>
 
-                      {record.vaccination && (
-                        <small><b>Vaccination:</b> {record.vaccination}</small>
-                      )}
+                            <span className="consultation-meta">
+                              {vetNames[record.veterinarian_id] ? `Dr. ${vetNames[record.veterinarian_id]}` : "Veterinarian not recorded"}
+                              {record.weight ? ` · ${record.weight}kg` : ""}
+                              {record.temperature ? ` · ${record.temperature}°C` : ""}
+                              {" · "}{appointment?.status ? `${appointment.status} · ` : ""}{record.record_status || "Draft"}
+                            </span>
 
-                      {record.veterinarian_notes && (
-                        <small><b>Veterinarian Notes:</b> {record.veterinarian_notes}</small>
-                      )}
+                            {consultationInsights[record.id]?.riskLevel && (
+                              <span className={`consultation-risk-badge risk-${consultationInsights[record.id].riskLevel.toLowerCase()}`}>
+                                {consultationInsights[record.id].riskLevel} Risk
+                              </span>
+                            )}
 
-                      {record.follow_up_date && (
-                        <small><b>Follow-up:</b> {record.follow_up_date}</small>
-                      )}
-                    </div>
-                  ))
+                            <ChevronDown size={16} className="consultation-chevron" />
+                          </button>
+
+                          {expanded && (
+                            <div className="consultation-details">
+                              <div className="consultation-field">
+                                <span>Symptoms</span>
+                                <p>{record.symptoms || "Not recorded"}</p>
+                              </div>
+
+                              <div className="consultation-field">
+                                <span>Vital Signs</span>
+                                <p>{record.vital_signs || "Not recorded"}</p>
+                              </div>
+
+                              <div className="consultation-field">
+                                <span>Diagnosis</span>
+                                <p>{record.diagnosis || "Not recorded"}</p>
+                              </div>
+
+                              <div className="consultation-field">
+                                <span>Treatment</span>
+                                <p>{record.treatment || record.treatment_plan || "Not recorded"}</p>
+                              </div>
+
+                              <div className="consultation-field">
+                                <span>Medications</span>
+                                <p>
+                                  {record.medication
+                                    ? `${record.medication}${record.dosage ? ` · ${record.dosage}` : ""}${record.frequency ? ` · ${record.frequency}` : ""}${record.duration ? ` · ${record.duration}` : ""}`
+                                    : "Not recorded"}
+                                </p>
+                              </div>
+
+                              {(record.template_data?.inventoryItems || []).filter((item) => !item.isNA).length > 0 && (
+                                <div className="consultation-field consultation-field-wide">
+                                  <span>Services, Tests &amp; Prescribed Medicine</span>
+                                  <ul className="consultation-items-list">
+                                    {record.template_data.inventoryItems.filter((item) => !item.isNA).map((item) => (
+                                      <li key={item.id}>
+                                        <span>{item.item_name}{item.category ? ` (${item.category})` : ""} × {item.quantity ?? 1}</span>
+                                        <b>₱{(Number(item.unit_price || 0) * Number(item.quantity || 1)).toFixed(2)}</b>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+
+                              <div className="consultation-field">
+                                <span>Laboratory Results</span>
+                                <p>{record.laboratory_result || "Not recorded"}</p>
+                              </div>
+
+                              {record.vaccination && (
+                                <div className="consultation-field">
+                                  <span>Vaccination</span>
+                                  <p>{record.vaccination}</p>
+                                </div>
+                              )}
+
+                              <div className="consultation-field consultation-field-wide consultation-notes">
+                                <span>Notes</span>
+                                <p>{record.veterinarian_notes || "No additional notes."}</p>
+                              </div>
+
+                              {record.follow_up_date && (
+                                <div className="consultation-followup">
+                                  <History size={14} /> Next visit: {record.follow_up_date}
+                                </div>
+                              )}
+
+                              {canViewBilling && record.queue_entry_id && (
+                                <div className="pet-billing-card">
+                                  <div className="pet-billing-head">
+                                    <h4><CreditCard size={15} /> Billing &amp; Prescriptions</h4>
+                                    <button type="button" className="pet-billing-refresh" onClick={() => refreshBillingForRecord(record)} disabled={billingByRecordId[record.id]?.loading}>
+                                      <RefreshCw size={13} className={billingByRecordId[record.id]?.loading ? "spin" : ""} /> Refresh
+                                    </button>
+                                  </div>
+                                  {billingByRecordId[record.id]?.loading && <p className="pet-billing-loading">Loading billing…</p>}
+                                  {billingByRecordId[record.id]?.error && <p className="pet-billing-error">{billingByRecordId[record.id].error}</p>}
+                                  {billingByRecordId[record.id] && !billingByRecordId[record.id].loading && !billingByRecordId[record.id].error && (
+                                    <>
+                                      {billingByRecordId[record.id].invoices.length === 0 && billingByRecordId[record.id].prescriptions.length === 0 && (
+                                        <p className="pet-billing-empty">Staff hasn't processed billing for this visit yet.</p>
+                                      )}
+
+                                      {billingByRecordId[record.id].invoices.length > 0 && (
+                                        <div className="pet-billing-section">
+                                          <h4><CreditCard size={15} /> Invoices</h4>
+                                          {billingByRecordId[record.id].invoices.map((invoice) => (
+                                            <div className="pet-billing-row" key={invoice.id}>
+                                              <div>
+                                                <b>{invoice.or_number}</b>
+                                                <span>Total {money(invoice.total_amount)} · Paid {money(invoice.amount_paid)}{invoiceBalance(invoice) > 0 ? ` · ${money(invoiceBalance(invoice))} due` : ""}</span>
+                                                <span className={`pet-billing-status pet-billing-status-${invoice.payment_status.replaceAll(" ", "-").toLowerCase()}`}>{invoice.payment_status}</span>
+                                              </div>
+                                              <button type="button" className="pet-download-btn" onClick={() => downloadInvoicePdf(invoice)}>
+                                                <Download size={14} /> Download
+                                              </button>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {billingByRecordId[record.id].prescriptions.length > 0 && (
+                                        <div className="pet-billing-section">
+                                          <h4><Pill size={15} /> Prescribed Medicine</h4>
+                                          {billingByRecordId[record.id].prescriptions.map((rx) => {
+                                            const remaining = Math.max(0, Number(rx.prescribed_quantity) - Number(rx.total_quantity_purchased));
+                                            const history = billingByRecordId[record.id].purchaseHistoryByRxId?.[rx.id] || [];
+                                            return (
+                                              <div className="pet-billing-row" key={rx.id}>
+                                                <div>
+                                                  <b>{rx.item_name}</b>
+                                                  <span>Prescribed {rx.prescribed_quantity} · Purchased {rx.total_quantity_purchased} · Remaining {remaining}</span>
+                                                  <span className={`pet-billing-status pet-billing-status-${rx.fulfillment_status.replaceAll(" ", "-").toLowerCase()}`}>{rx.fulfillment_status}</span>
+                                                  {history.length > 0 && (
+                                                    <ul className="pet-billing-rx-history">
+                                                      {history.map((entry) => (
+                                                        <li key={entry.id}>
+                                                          <span>{entry.quantity} purchased</span>
+                                                          <span>{formatPurchaseDateTime(entry.created_at)}</span>
+                                                        </li>
+                                                      ))}
+                                                    </ul>
+                                                  )}
+                                                </div>
+                                                {ownerOnly && ["Not Purchased", "Partially Purchased"].includes(rx.fulfillment_status) && (
+                                                  <div className="pet-billing-row-actions">
+                                                    <button type="button" className="pet-elsewhere-btn" disabled={rxBusyId === rx.id} onClick={() => handleBuyElsewhere(rx, record)}>
+                                                      {rxBusyId === rx.id ? "Saving…" : "I'll buy this elsewhere"}
+                                                    </button>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              )}
+
+                              <button
+                                type="button"
+                                className="consultation-insight-toggle"
+                                onClick={() => toggleConsultationInsight(record)}
+                              >
+                                <BrainCircuit size={14} />
+                                AI Health Insight
+                                {consultationInsights[record.id]?.riskLevel && (
+                                  <span className={`consultation-risk-badge risk-${consultationInsights[record.id].riskLevel.toLowerCase()}`}>
+                                    {consultationInsights[record.id].riskLevel} Risk
+                                  </span>
+                                )}
+                                <ChevronDown
+                                  size={14}
+                                  className={openInsightId === record.id ? "consultation-chevron open" : "consultation-chevron"}
+                                />
+                              </button>
+
+                              {openInsightId === record.id && (
+                                <ConsultationHealthInsight
+                                  isFinalized={record.record_status === "Finalized"}
+                                  insightText={consultationInsights[record.id]?.text}
+                                  loading={consultationInsights[record.id]?.loading}
+                                  error={consultationInsights[record.id]?.error}
+                                  onRetry={() => {
+                                    const finalized = medicalHistory
+                                      .filter((item) => item.record_status === "Finalized")
+                                      .sort((a, b) => new Date(b.consultation_date || 0) - new Date(a.consultation_date || 0));
+                                    const recordIndex = finalized.findIndex((item) => item.id === record.id);
+                                    generateInsightFor(selectedPet, record, recordIndex === -1 ? [] : finalized.slice(recordIndex + 1));
+                                  }}
+                                />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
-              </>
-            )}
-
-            <h3 className="history-heading">
-              Visit History
-            </h3>
-
-            {history.length === 0 ? (
-              <div className="history-empty">
-                <History size={30} />
-                <p>No appointment history.</p>
               </div>
-            ) : (
-              history.map((appointment) => (
-                <div
-                  className="history"
-                  key={appointment.id}
-                >
-                  <strong>
-                    {appointment.appointment_date}
-                    {" · "}
-                    {String(
-                      appointment.start_time
-                    ).slice(0, 5)}
-                  </strong>
-
-                  <span>
-                    {appointment.veterinarian
-                      ?.full_name ||
-                      "Veterinarian not assigned"}
-                    {" · "}
-                    {appointment.status}
-                  </span>
-
-                  <small>
-                    {appointment.visit_reason ||
-                      "General Consultation"}
-                  </small>
-                </div>
-              ))
             )}
+
+            {canViewMedicalHistory && profileTab === "ai" && (
+              <div className="profile-tab-panel">
+                <AnimalPatientAIHealth
+                  latestRecord={aiLatestRecord}
+                  previousRecords={aiPreviousRecords}
+                  aiText={aiText}
+                  loading={aiLoading}
+                  error={aiError}
+                  riskScore={aiRisk?.score}
+                  riskLevel={aiRisk?.level}
+                />
+              </div>
+            )}
+            </div>
           </div>
         </div>
       )}
@@ -2580,6 +3374,168 @@ export default function PetManagementModule({
           color: #71848d;
         }
 
+        .owner-toolbar-controls {
+          grid-template-columns: minmax(300px, 1fr) !important;
+        }
+
+        .owner-avatar {
+          border-radius: 50%;
+        }
+
+        .owner-avatar.large {
+          width: 58px;
+          height: 58px;
+        }
+
+        .back-to-owners {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          border: 0;
+          background: none;
+          padding: 0;
+          margin-bottom: 18px;
+          color: #318fbe;
+          font-weight: 700;
+          font-size: 13.5px;
+          cursor: pointer;
+        }
+
+        .back-to-owners:hover {
+          text-decoration: underline;
+        }
+
+        .owner-summary-card {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 18px;
+          border-radius: 14px;
+          background: #f4fbfd;
+          border: 1px solid #e3f2fb;
+          margin-bottom: 22px;
+        }
+
+        .owner-summary-card h2 {
+          margin: 0 0 6px;
+          color: #20313b;
+        }
+
+        .owner-summary-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 14px;
+        }
+
+        .owner-summary-meta span {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          color: #55707c;
+          font-size: 13px;
+        }
+
+        .owner-summary-card .register-pet-btn {
+          margin-left: auto;
+          flex-shrink: 0;
+        }
+
+        .owner-pets-toolbar {
+          margin: 0 0 16px;
+        }
+
+        .pet-card-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+          gap: 16px;
+        }
+
+        .pet-profile-card {
+          display: flex;
+          gap: 13px;
+          align-items: flex-start;
+          text-align: left;
+          border: 1px solid #e3edf2;
+          border-radius: 15px;
+          padding: 15px;
+          background: #fff;
+          cursor: pointer;
+          font: inherit;
+          transition:
+            transform 0.15s ease,
+            box-shadow 0.15s ease,
+            border-color 0.15s ease;
+        }
+
+        .pet-profile-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 24px rgba(47, 117, 150, 0.14);
+          border-color: #a9dff0;
+        }
+
+        .pet-profile-card-photo {
+          width: 54px;
+          height: 54px;
+          flex: 0 0 auto;
+          border-radius: 12px;
+          background: #eaf8fd;
+          color: #4da8da;
+          display: grid;
+          place-items: center;
+          overflow: hidden;
+        }
+
+        .pet-profile-card-photo img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .pet-profile-card-body {
+          display: grid;
+          gap: 4px;
+          min-width: 0;
+        }
+
+        .pet-profile-card-body strong {
+          color: #20313b;
+          font-size: 15px;
+        }
+
+        .pet-profile-card-chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 5px;
+          margin-top: 4px;
+        }
+
+        .pet-profile-card-chips span {
+          background: #eef5f8;
+          color: #3c5866;
+          border-radius: 999px;
+          padding: 2px 9px;
+          font-size: 11px;
+          font-weight: 700;
+        }
+
+        .pet-profile-card-meta {
+          display: flex;
+          gap: 10px;
+          color: #6f7f88;
+          font-size: 12px;
+          margin-top: 2px;
+        }
+
+        .pet-profile-card-visit {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          margin-top: 6px;
+          color: #55707c;
+          font-size: 11.5px;
+          font-weight: 700;
+        }
+
         .empty h3 {
           margin: 4px 0 0;
           color: #314a55;
@@ -2709,6 +3665,557 @@ export default function PetManagementModule({
           margin-right: 4px;
         }
 
+        .patient-profile-modal {
+          width: min(980px, 100%);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+
+        .patient-profile-scroll {
+          flex: 1 1 auto;
+          overflow-y: auto;
+          min-height: 0;
+        }
+
+        .patient-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 20px;
+          padding-right: 40px;
+        }
+
+        .patient-header-main h2 {
+          margin: 0 0 8px;
+          padding-right: 0;
+        }
+
+        .patient-chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-bottom: 8px;
+        }
+
+        .patient-chips span {
+          background: #eef5f8;
+          color: #3c5866;
+          border-radius: 999px;
+          padding: 4px 11px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .patient-owner-line {
+          margin: 0;
+          color: #6f7f88;
+          font-size: 13px;
+        }
+
+        .patient-extra-details {
+          margin-top: 16px;
+        }
+
+        .profile-tabs {
+          display: flex;
+          gap: 8px;
+          margin-top: 20px;
+          padding-bottom: 4px;
+          border-bottom: 1px solid #e3edf2;
+        }
+
+        .profile-tabs button {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          border: 0;
+          border-radius: 10px 10px 0 0;
+          padding: 10px 16px;
+          background: transparent;
+          color: #6f7f88;
+          font-weight: 700;
+          font-size: 13.5px;
+          cursor: pointer;
+        }
+
+        .profile-tabs button.active {
+          background: #eaf8fd;
+          color: #1c6e91;
+        }
+
+        .profile-tab-badge {
+          padding: 2px 8px;
+          border-radius: 999px;
+          font-size: 10.5px;
+          font-weight: 800;
+        }
+
+        .profile-tab-badge-low {
+          background: #e5f4ea;
+          color: #2f8f5b;
+        }
+
+        .profile-tab-badge-moderate {
+          background: #fdf1dc;
+          color: #a5680b;
+        }
+
+        .profile-tab-badge-high {
+          background: #fbe6e4;
+          color: #c0392b;
+        }
+
+        .profile-tab-panel {
+          margin-top: 18px;
+        }
+
+        .history-subtext {
+          margin: 2px 0 0;
+          color: #93a4ac;
+          font-size: 12px;
+        }
+
+        .consultation-list {
+          display: grid;
+          gap: 10px;
+        }
+
+        .consultation-card {
+          border: 1px solid #e3edf2;
+          border-radius: 13px;
+          overflow: hidden;
+          background: #fff;
+        }
+
+        .consultation-card.expanded {
+          border-color: #a9dff0;
+        }
+
+        .consultation-summary {
+          width: 100%;
+          display: grid;
+          grid-template-columns: 130px 1fr auto auto 20px;
+          align-items: center;
+          gap: 14px;
+          border: 0;
+          background: #fff;
+          padding: 13px 15px;
+          cursor: pointer;
+          text-align: left;
+          font: inherit;
+        }
+
+        .consultation-risk-badge {
+          justify-self: start;
+          padding: 4px 10px;
+          border-radius: 999px;
+          font-size: 10.5px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .risk-low {
+          background: #e5f4ea;
+          color: #2f8f5b;
+        }
+
+        .risk-moderate {
+          background: #fdf1dc;
+          color: #a5680b;
+        }
+
+        .risk-high {
+          background: #fbe6e4;
+          color: #c0392b;
+        }
+
+        .consultation-card.expanded .consultation-summary {
+          background: #f7fcfe;
+        }
+
+        .consultation-date {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 4px;
+          color: #20313b;
+          font-weight: 800;
+          font-size: 13px;
+        }
+
+        .consultation-latest {
+          background: #e5f4ea;
+          color: #2f8f5b;
+          border-radius: 999px;
+          padding: 2px 8px;
+          font-size: 10px;
+          font-weight: 800;
+        }
+
+        .consultation-title {
+          color: #20313b;
+          font-weight: 700;
+          font-size: 14px;
+        }
+
+        .consultation-meta {
+          color: #6f7f88;
+          font-size: 12px;
+          white-space: nowrap;
+        }
+
+        .consultation-chevron {
+          color: #93a4ac;
+          transition: transform 0.15s ease;
+        }
+
+        .consultation-card.expanded .consultation-chevron {
+          transform: rotate(180deg);
+        }
+
+        .timeline-appt-card {
+          display: grid;
+          grid-template-columns: 130px 1fr auto;
+          align-items: center;
+          gap: 14px;
+          border: 1px solid #e3edf2;
+          border-radius: 13px;
+          background: #fbfdfe;
+          padding: 13px 15px;
+        }
+
+        .timeline-appt-cancelled {
+          background: #fbfbfb;
+          border-style: dashed;
+          opacity: 0.85;
+        }
+
+        .timeline-appt-badge {
+          justify-self: end;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 4px 10px;
+          border-radius: 999px;
+          font-size: 10.5px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .timeline-appt-badge-upcoming {
+          background: #e7f6fc;
+          color: #267fa9;
+        }
+
+        .timeline-appt-badge-cancelled {
+          background: #eef1f2;
+          color: #7a8d96;
+        }
+
+        .timeline-appt-badge-completed-no-record {
+          background: #fdf1dc;
+          color: #a5680b;
+        }
+
+        .consultation-details {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 4px 18px;
+          padding: 4px 17px 17px;
+          border-top: 1px solid #eef3f5;
+          background: #fbfdfe;
+        }
+
+        .consultation-field {
+          padding: 8px 0;
+        }
+
+        .consultation-field span {
+          display: block;
+          color: #93a4ac;
+          font-size: 10.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.4px;
+          margin-bottom: 3px;
+        }
+
+        .consultation-field p {
+          margin: 0;
+          color: #334e5a;
+          font-size: 13.5px;
+          line-height: 1.5;
+        }
+
+        .consultation-field-wide {
+          grid-column: 1 / -1;
+        }
+
+        .consultation-items-list {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: grid;
+          gap: 6px;
+        }
+
+        .consultation-items-list li {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 7px 10px;
+          border: 1px solid #eef3f5;
+          border-radius: 9px;
+          background: #fbfeff;
+          font-size: 13px;
+        }
+
+        .consultation-items-list li span {
+          display: inline;
+          color: #334e5a;
+          font-size: 13px;
+          font-weight: 500;
+          text-transform: none;
+          letter-spacing: normal;
+        }
+
+        .consultation-items-list li b {
+          color: #21697f;
+        }
+
+        .consultation-notes p {
+          background: #fff8e1;
+          padding: 10px 12px;
+          border-radius: 9px;
+          color: #6b5900;
+        }
+
+        .consultation-followup {
+          grid-column: 1 / -1;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          width: max-content;
+          margin-top: 4px;
+          padding: 7px 12px;
+          border-radius: 9px;
+          background: #eaf1ff;
+          color: #3653a3;
+          font-size: 12.5px;
+          font-weight: 700;
+        }
+
+        .pet-billing-card {
+          grid-column: 1 / -1;
+          display: grid;
+          gap: 14px;
+          margin-top: 10px;
+          padding: 14px;
+          border: 1px solid #e2f0f5;
+          border-radius: 12px;
+          background: #fbfeff;
+        }
+        .pet-billing-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .pet-billing-head h4 {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          margin: 0;
+          color: #213944;
+          font-size: 14px;
+        }
+        .pet-billing-refresh {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border: 1px solid #cfe4ed;
+          background: #effaff;
+          color: #247fa8;
+          border-radius: 8px;
+          padding: 6px 10px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .pet-billing-refresh:disabled {
+          opacity: 0.6;
+          cursor: wait;
+        }
+        .pet-billing-refresh .spin {
+          animation: pet-billing-spin 1s linear infinite;
+        }
+        @keyframes pet-billing-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .pet-billing-loading,
+        .pet-billing-empty {
+          margin: 0;
+          color: #6f7f88;
+          font-size: 13.5px;
+        }
+        .pet-billing-error {
+          margin: 0;
+          color: #b94b4b;
+          font-size: 13.5px;
+        }
+        .pet-billing-section h4 {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          margin: 0 0 9px;
+          color: #213944;
+          font-size: 14px;
+        }
+        .pet-billing-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+          padding: 10px 12px;
+          border: 1px solid #eef3f5;
+          border-radius: 10px;
+          background: #fff;
+          margin-bottom: 8px;
+        }
+        .pet-billing-row:last-child {
+          margin-bottom: 0;
+        }
+        .pet-billing-row > div {
+          display: grid;
+          gap: 3px;
+        }
+        .pet-billing-row b {
+          color: #213944;
+        }
+        .pet-billing-row span {
+          color: #6f7f88;
+          font-size: 12.5px;
+        }
+        .pet-billing-status {
+          display: inline-block;
+          width: max-content;
+          padding: 3px 9px;
+          border-radius: 999px;
+          font-size: 11.5px;
+          font-weight: 800;
+        }
+        .pet-billing-status-paid,
+        .pet-billing-status-fully-purchased {
+          background: #eafaf0;
+          color: #227a52;
+        }
+        .pet-billing-status-partially-paid,
+        .pet-billing-status-partially-purchased {
+          background: #fff0da;
+          color: #b0620a;
+        }
+        .pet-billing-status-unpaid,
+        .pet-billing-status-not-purchased {
+          background: #fff6e0;
+          color: #9a7000;
+        }
+        .pet-billing-status-voided,
+        .pet-billing-status-purchasing-elsewhere {
+          background: #eef1f4;
+          color: #5b6b76;
+        }
+        .pet-billing-rx-history {
+          list-style: none;
+          margin: 4px 0 0;
+          padding: 6px 0 0;
+          border-top: 1px dashed #e4ecef;
+          display: grid;
+          gap: 3px;
+        }
+        .pet-billing-rx-history li {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          font-size: 11.5px;
+          color: #6f7f88;
+        }
+        .pet-billing-rx-history li span:first-child {
+          color: #21697f;
+          font-weight: 700;
+        }
+        .pet-billing-row-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .pet-download-btn,
+        .pet-elsewhere-btn {
+          border-radius: 8px;
+          padding: 8px 12px;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          white-space: nowrap;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .pet-download-btn {
+          border: 1px solid #cfe4ed;
+          background: #fff;
+          color: #257fa9;
+        }
+        .pet-download-btn:hover {
+          background: #f2f9fc;
+        }
+        .pet-elsewhere-btn {
+          border: 1px solid #e4d3ba;
+          background: #fff8ee;
+          color: #8a6414;
+        }
+        .pet-elsewhere-btn:hover {
+          background: #fbeeda;
+        }
+        .pet-elsewhere-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .consultation-insight-toggle {
+          grid-column: 1 / -1;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          margin-top: 10px;
+          border: 1px solid #e3edf2;
+          border-radius: 10px;
+          padding: 10px 13px;
+          background: #f7fcfe;
+          color: #267da3;
+          font-weight: 700;
+          font-size: 12.5px;
+          cursor: pointer;
+        }
+
+        .consultation-insight-toggle:hover {
+          background: #eaf8fd;
+        }
+
+        .consultation-insight-toggle .consultation-risk-badge {
+          margin-left: auto;
+        }
+
+        .consultation-insight-toggle .consultation-chevron.open {
+          transform: rotate(180deg);
+        }
+
         .history-heading {
           display: flex;
           align-items: center;
@@ -2728,41 +4235,6 @@ export default function PetManagementModule({
 
         .history-heading-row .history-heading {
           margin: 22px 0 10px;
-        }
-
-        .add-record-button {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          border: 0;
-          border-radius: 9px;
-          padding: 8px 13px;
-          background: #eaf8fd;
-          color: #2b83ad;
-          font-weight: 700;
-          font-size: 12.5px;
-          cursor: pointer;
-          white-space: nowrap;
-        }
-
-        .add-record-button:hover {
-          background: #d9f1fb;
-        }
-
-        .medical-history-item small {
-          display: block;
-        }
-
-        .history {
-          display: grid;
-          gap: 4px;
-          padding: 13px 0;
-          border-bottom: 1px solid #e2edf1;
-        }
-
-        .history span,
-        .history small {
-          color: #667d88;
         }
 
         .history-empty {
@@ -2909,6 +4381,13 @@ export default function PetManagementModule({
 
           .list-card .toolbar-controls { display:grid; grid-template-columns:1fr; }
           .list-card { padding:22px 18px; }
+
+          .patient-header { flex-direction:column; }
+          .consultation-summary { grid-template-columns:1fr 20px; row-gap:4px; }
+          .consultation-title, .consultation-meta, .consultation-risk-badge { grid-column:1; justify-self:start; }
+          .consultation-details { grid-template-columns:1fr; }
+          .timeline-appt-card { grid-template-columns:1fr; row-gap:6px; }
+          .timeline-appt-badge { justify-self:start; }
         }
 
         @media (max-width: 560px) {

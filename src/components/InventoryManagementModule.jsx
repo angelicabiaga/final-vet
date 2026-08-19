@@ -9,6 +9,8 @@ import React, {
 import {
   Archive,
   Boxes,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Edit3,
   FileDown,
@@ -28,19 +30,25 @@ import jsPDF from "jspdf";
 import {
   downloadInventoryImportTemplate,
   exportInventoryCsv,
+  getInventoryBatches,
   getInventoryCategories,
   getInventoryItems,
   getInventorySummary,
   getInventoryTransactions,
+  getInventoryUnits,
   getInventoryForecasts,
+  mergeInventoryItems,
   parseInventoryImportCsv,
   recordInventoryTransaction,
   saveInventoryItem,
+  setBatchActive,
   setInventoryArchived,
   summarizeForecastWithGroq,
+  updateInventoryBatch,
 } from "../services/inventoryService";
 
 import ConfirmDialog from "./ConfirmDialog";
+import InventoryForecastReport from "./InventoryForecastReport";
 
 const EMPTY_ITEM = {
   id: "",
@@ -74,6 +82,19 @@ const BATCH_CREATING_TX_TYPES = [
   "Adjustment Add",
 ];
 
+const BATCH_PAGE_SIZE = 10;
+const UNIT_PAGE_SIZE = 12;
+
+function formatUnitId(unitNo) {
+  return `UNIT-${String(unitNo).padStart(6, "0")}`;
+}
+
+const DETAILS_TABS = [
+  { key: "summary", label: "Item Summary" },
+  { key: "batches", label: "Batch Records" },
+  { key: "history", label: "Stock Movement History" },
+];
+
 const statuses = [
   "",
   "In Stock",
@@ -95,6 +116,65 @@ function money(value) {
   return Number(value || 0).toLocaleString("en-PH", {
     style: "currency",
     currency: "PHP",
+  });
+}
+
+function daysUntil(date) {
+  if (!date) return null;
+  const target = new Date(`${date}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
+}
+
+// Display-only classification for a single batch (Active / Low Stock /
+// Near Expiry / Out of Stock / Expired / Inactive) -- distinct from the
+// batch's stored `status` column, which only tracks Active/Expired/Depleted
+// and drives which batches FEFO deduction is allowed to touch.
+// "Inactive" is a separate, staff-controlled on/off switch (is_active) --
+// FEFO deduction skips a deactivated batch even if it still has stock and
+// hasn't expired.
+function batchDisplayStatus(batch) {
+  const remaining = Number(batch.quantity_remaining || 0);
+  const received = Number(batch.quantity_received || 0);
+  const days = daysUntil(batch.expiry_date);
+
+  if (days !== null && days < 0) return "Expired";
+  if (batch.is_active === false) return "Inactive";
+  if (remaining <= 0) return "Out of Stock";
+  if (days !== null && days <= 30) return "Near Expiry";
+  if (received > 0 && remaining / received <= 0.2) return "Low Stock";
+  return "Active";
+}
+
+// FEFO order: nearest expiration first (no-expiry batches sorted last,
+// since they carry no expiry urgency), tied broken by whichever arrived
+// earlier -- the same order the checkout RPC deducts from.
+function sortBatchesFefo(batches) {
+  return [...batches].sort((a, b) => {
+    const aExpiry = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
+    const bExpiry = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
+    if (aExpiry !== bExpiry) return aExpiry - bExpiry;
+    return new Date(a.date_received || 0) - new Date(b.date_received || 0);
+  });
+}
+
+const ORDINAL_LABELS = ["Next to Use", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
+
+function ordinalLabel(rank) {
+  return ORDINAL_LABELS[rank - 1] || `${rank}th`;
+}
+
+// Priority only ranks batches POS is actually allowed to deduct from
+// (Expired / Out of Stock / Inactive batches are shown but never get a
+// rank) -- walked in the same FEFO order already used to sort the table.
+function rankBatches(fefoSortedBatches) {
+  let rank = 0;
+  return fefoSortedBatches.map((batch) => {
+    const status = batchDisplayStatus(batch);
+    const eligible = !["Expired", "Out of Stock", "Inactive"].includes(status);
+    if (eligible) rank += 1;
+    return { ...batch, priorityLabel: eligible ? ordinalLabel(rank) : "—" };
   });
 }
 
@@ -181,6 +261,7 @@ export default function InventoryManagementModule({
   ] = useState("");
 
   const summarySignatureRef = useRef("");
+  const listSectionRef = useRef(null);
 
   const [filters, setFilters] = useState({
     search: "",
@@ -202,6 +283,27 @@ export default function InventoryManagementModule({
     selectedItem,
     setSelectedItem,
   ] = useState(null);
+
+  const [batchRows, setBatchRows] = useState([]);
+  const [batchesLoading, setBatchesLoading] = useState(false);
+  const [batchesError, setBatchesError] = useState("");
+
+  const [editingBatchId, setEditingBatchId] = useState("");
+  const [batchEditForm, setBatchEditForm] = useState({
+    batchNumber: "",
+    dateReceived: "",
+    expiryDate: "",
+  });
+  const [mergingId, setMergingId] = useState("");
+  const [togglingBatchId, setTogglingBatchId] = useState("");
+  const [detailsTab, setDetailsTab] = useState("summary");
+  const [batchPage, setBatchPage] = useState(1);
+
+  const [viewingUnitsBatch, setViewingUnitsBatch] = useState(null);
+  const [unitRows, setUnitRows] = useState([]);
+  const [unitsLoading, setUnitsLoading] = useState(false);
+  const [unitsError, setUnitsError] = useState("");
+  const [unitPage, setUnitPage] = useState(1);
 
   const [importFileName, setImportFileName] = useState("");
   const [importPreview, setImportPreview] = useState(null);
@@ -283,6 +385,104 @@ export default function InventoryManagementModule({
     setItemForm(EMPTY_ITEM);
     setModal("item");
   }
+
+  // Turns the summary cards into filter shortcuts: "Total Units" isn't a
+  // status bucket, so it (like the total-items card) just clears the filter
+  // back to "show everything".
+  function handleStatFilter(status) {
+    setFilters((current) => ({ ...current, status }));
+    listSectionRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
+
+  // Only relevant while creating a brand-new item (editing an existing one
+  // always matches itself). Case-insensitive, exact-name match against
+  // active items -- catches the "restocked through Add Item instead of
+  // Stock" mistake that silently forks a duplicate inventory_items row.
+  const duplicateMatch = useMemo(() => {
+    if (itemForm.id) return null;
+    const name = itemForm.item_name.trim().toLowerCase();
+    if (!name) return null;
+    return (
+      items.find(
+        (item) =>
+          !item.is_archived &&
+          item.item_name.trim().toLowerCase() === name
+      ) || null
+    );
+  }, [items, itemForm.id, itemForm.item_name]);
+
+  // Other active items sharing the currently-open item's exact name --
+  // surfaced inside the item details modal so staff can merge them away
+  // instead of leaving the product split across rows.
+  const duplicatesOfSelected = useMemo(() => {
+    if (!selectedItem) return [];
+    const name = selectedItem.item_name.trim().toLowerCase();
+    return items.filter(
+      (item) =>
+        item.id !== selectedItem.id &&
+        !item.is_archived &&
+        item.item_name.trim().toLowerCase() === name
+    );
+  }, [items, selectedItem]);
+
+  const sortedBatchRows = useMemo(
+    () => sortBatchesFefo(batchRows),
+    [batchRows]
+  );
+
+  const rankedBatchRows = useMemo(
+    () => rankBatches(sortedBatchRows),
+    [sortedBatchRows]
+  );
+
+  // Always-visible mini summary above Batch Records -- same three buckets
+  // as the page-level stat cards, scoped to just this item's batches, shown
+  // even at 0 so it's clearly present whether or not anything needs
+  // attention (a conditional banner that vanishes when nothing's wrong
+  // reads as "missing" rather than "all clear").
+  const batchAlerts = useMemo(() => {
+    const lowStock = rankedBatchRows.filter(
+      (batch) => batchDisplayStatus(batch) === "Low Stock"
+    );
+    const outOfStock = rankedBatchRows.filter(
+      (batch) => batchDisplayStatus(batch) === "Out of Stock"
+    );
+    const nearExpiry = rankedBatchRows.filter(
+      (batch) => batchDisplayStatus(batch) === "Near Expiry"
+    );
+    return { lowStock, outOfStock, nearExpiry };
+  }, [rankedBatchRows]);
+
+  const batchTotalPages = Math.max(
+    1,
+    Math.ceil(rankedBatchRows.length / BATCH_PAGE_SIZE)
+  );
+  const batchCurrentPage = Math.min(batchPage, batchTotalPages);
+  const paginatedBatchRows = useMemo(
+    () =>
+      rankedBatchRows.slice(
+        (batchCurrentPage - 1) * BATCH_PAGE_SIZE,
+        batchCurrentPage * BATCH_PAGE_SIZE
+      ),
+    [rankedBatchRows, batchCurrentPage]
+  );
+
+  const unitsTotalPages = Math.max(
+    1,
+    Math.ceil(unitRows.length / UNIT_PAGE_SIZE)
+  );
+  const unitsCurrentPage = Math.min(unitPage, unitsTotalPages);
+  const paginatedUnitRows = useMemo(
+    () =>
+      unitRows.slice(
+        (unitsCurrentPage - 1) * UNIT_PAGE_SIZE,
+        unitsCurrentPage * UNIT_PAGE_SIZE
+      ),
+    [unitRows, unitsCurrentPage]
+  );
 
   function resetImportState() {
     setImportFileName("");
@@ -404,6 +604,121 @@ export default function InventoryManagementModule({
   function openHistory(item = null) {
     setSelectedItem(item);
     setModal("history");
+  }
+
+  async function openBatches(item) {
+    setSelectedItem(item);
+    setModal("batches");
+    setBatchesError("");
+    setEditingBatchId("");
+    setDetailsTab("summary");
+    setBatchPage(1);
+    setBatchesLoading(true);
+
+    try {
+      setBatchRows(await getInventoryBatches(item.id));
+    } catch (error) {
+      setBatchesError(error.message);
+    } finally {
+      setBatchesLoading(false);
+    }
+  }
+
+  async function refreshBatches(item) {
+    setBatchesError("");
+    setBatchesLoading(true);
+
+    try {
+      setBatchRows(await getInventoryBatches(item.id));
+    } catch (error) {
+      setBatchesError(error.message);
+    } finally {
+      setBatchesLoading(false);
+    }
+  }
+
+  async function handleMergeDuplicate(duplicate) {
+    if (!selectedItem || mergingId) return;
+    setMergingId(duplicate.id);
+
+    try {
+      await mergeInventoryItems(duplicate.id, selectedItem.id, profile);
+      setNotice({
+        type: "success",
+        text: `Merged "${duplicate.item_name}" into this item.`,
+      });
+      await refreshBatches(selectedItem);
+      await load();
+    } catch (error) {
+      setNotice({ type: "error", text: error.message });
+    } finally {
+      setMergingId("");
+    }
+  }
+
+  function startEditBatch(batch) {
+    setEditingBatchId(batch.id);
+    setBatchEditForm({
+      batchNumber: batch.batch_number || "",
+      dateReceived: batch.date_received || "",
+      expiryDate: batch.expiry_date || "",
+    });
+  }
+
+  async function handleToggleBatchActive(batch) {
+    if (togglingBatchId) return;
+    setTogglingBatchId(batch.id);
+
+    try {
+      await setBatchActive(batch.id, batch.is_active === false);
+      setNotice({
+        type: "success",
+        text: `Batch ${batch.batch_number || "—"} marked ${
+          batch.is_active === false ? "Active" : "Inactive"
+        }.`,
+      });
+      await refreshBatches(selectedItem);
+    } catch (error) {
+      setNotice({ type: "error", text: error.message });
+    } finally {
+      setTogglingBatchId("");
+    }
+  }
+
+  async function submitBatchEdit(event, batchId) {
+    event.preventDefault();
+    setSaving(true);
+
+    try {
+      await updateInventoryBatch(batchId, {
+        batchNumber: batchEditForm.batchNumber,
+        dateReceived: batchEditForm.dateReceived,
+        expiryDate: batchEditForm.expiryDate,
+      });
+      setEditingBatchId("");
+      setNotice({ type: "success", text: "Batch updated." });
+      await refreshBatches(selectedItem);
+      await load();
+    } catch (error) {
+      setNotice({ type: "error", text: error.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openUnits(batch) {
+    setViewingUnitsBatch(batch);
+    setUnitsError("");
+    setUnitPage(1);
+    setUnitsLoading(true);
+
+    try {
+      setUnitRows(await getInventoryUnits(batch.id));
+    } catch (error) {
+      setUnitsError(error.message);
+    } finally {
+      setUnitsLoading(false);
+    }
   }
 
   async function openForecasts() {
@@ -1061,6 +1376,14 @@ export default function InventoryManagementModule({
   ) {
     event.preventDefault();
 
+    if (duplicateMatch) {
+      setNotice({
+        type: "error",
+        text: `"${duplicateMatch.item_name}" already exists. Use "Add Stock to Existing Item" instead of creating a duplicate.`,
+      });
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -1193,12 +1516,16 @@ export default function InventoryManagementModule({
           icon={<Boxes />}
           label="Inventory Items"
           value={summary.totalItems}
+          active={!filters.status}
+          onClick={() => handleStatFilter("")}
         />
 
         <Stat
           icon={<PackagePlus />}
           label="Total Units"
           value={summary.totalUnits}
+          active={!filters.status}
+          onClick={() => handleStatFilter("")}
         />
 
         <Stat
@@ -1207,6 +1534,8 @@ export default function InventoryManagementModule({
           }
           label="Low Stock"
           value={summary.lowStock}
+          active={filters.status === "Low Stock"}
+          onClick={() => handleStatFilter("Low Stock")}
         />
 
         <Stat
@@ -1217,6 +1546,8 @@ export default function InventoryManagementModule({
           value={
             summary.outOfStock
           }
+          active={filters.status === "Out of Stock"}
+          onClick={() => handleStatFilter("Out of Stock")}
         />
 
         <Stat
@@ -1225,6 +1556,8 @@ export default function InventoryManagementModule({
           value={
             summary.expiringSoon
           }
+          active={filters.status === "Near Expiry"}
+          onClick={() => handleStatFilter("Near Expiry")}
         />
       </div>
 
@@ -1389,7 +1722,7 @@ export default function InventoryManagementModule({
         )}
       </div>
 
-      <div className="card table-card">
+      <div className="card table-card" ref={listSectionRef}>
         {loading ? (
           <div className="empty">
             Loading inventory…
@@ -1428,17 +1761,20 @@ export default function InventoryManagementModule({
                       }
                     >
                       <td>
-                        <strong>
-                          {
-                            item.item_name
-                          }
-                        </strong>
+                        <button
+                          type="button"
+                          className="item-name-link"
+                          onClick={() => openBatches(item)}
+                          title="View batch records"
+                        >
+                          {item.item_name}
+                        </button>
 
                         <small>
                           {item.sku}
 
                           {item.batch_number
-                            ? ` • Batch ${item.batch_number}`
+                            ? ` • Nearest batch ${item.batch_number}`
                             : ""}
                         </small>
                       </td>
@@ -1543,6 +1879,22 @@ export default function InventoryManagementModule({
 
                           <button
                             type="button"
+                            title="Batch records"
+                            onClick={() =>
+                              openBatches(
+                                item
+                              )
+                            }
+                          >
+                            <Boxes
+                              size={
+                                16
+                              }
+                            />
+                          </button>
+
+                          <button
+                            type="button"
                             title="History"
                             onClick={() =>
                               openHistory(
@@ -1630,6 +1982,25 @@ export default function InventoryManagementModule({
                 }
               />
             </Field>
+
+            {duplicateMatch && (
+              <div className="wide duplicate-item-warning">
+                <span>
+                  "{duplicateMatch.item_name}" already exists (
+                  {duplicateMatch.quantity} {duplicateMatch.unit} in stock).
+                  Add this as a new batch instead of a duplicate item.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModal("");
+                    openTransaction(duplicateMatch, "Stock In");
+                  }}
+                >
+                  Add Stock to Existing Item
+                </button>
+              </div>
+            )}
 
             <Field label="Item Code (SKU)">
               <input
@@ -2375,6 +2746,520 @@ export default function InventoryManagementModule({
         </Modal>
       )}
 
+      {modal === "batches" && selectedItem && (
+        <Modal
+          title={`Item Details: ${selectedItem.item_name}`}
+          close={() => setModal("")}
+          large
+        >
+          {batchesError && (
+            <div className="notice error">{batchesError}</div>
+          )}
+
+          <div className="details-tabs" role="tablist" aria-label="Item details">
+            <div
+              className="details-tabs-slider"
+              style={{
+                width: `${100 / DETAILS_TABS.length}%`,
+                left: `${(DETAILS_TABS.findIndex((tab) => tab.key === detailsTab) * 100) / DETAILS_TABS.length}%`,
+              }}
+            />
+            {DETAILS_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={detailsTab === tab.key}
+                className={`details-tab${detailsTab === tab.key ? " active" : ""}`}
+                onClick={() => setDetailsTab(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {detailsTab === "summary" && (
+            <>
+              <div className="item-summary-grid">
+                <div>
+                  <span>Item Name</span>
+                  <strong>{selectedItem.item_name}</strong>
+                </div>
+                <div>
+                  <span>Category</span>
+                  <strong>{selectedItem.category}</strong>
+                </div>
+                <div>
+                  <span>Unit</span>
+                  <strong>{selectedItem.unit}</strong>
+                </div>
+                <div>
+                  <span>Selling Price</span>
+                  <strong>{money(selectedItem.unit_price)}</strong>
+                </div>
+                <div>
+                  <span>Total Remaining Quantity</span>
+                  <strong>
+                    {batchRows.reduce(
+                      (sum, batch) => sum + Number(batch.quantity_remaining || 0),
+                      0
+                    )}{" "}
+                    {selectedItem.unit}
+                  </strong>
+                </div>
+                <div>
+                  <span>Active Batches</span>
+                  <strong>
+                    {batchRows.filter((batch) => Number(batch.quantity_remaining) > 0).length}
+                  </strong>
+                </div>
+                <div>
+                  <span>Stock Status</span>
+                  <span
+                    className={`badge ${String(selectedItem.status || "")
+                      .toLowerCase()
+                      .replaceAll(" ", "-")}`}
+                  >
+                    {selectedItem.status}
+                  </span>
+                </div>
+              </div>
+
+              {duplicatesOfSelected.length > 0 && (
+                <div className="duplicate-item-warning wide">
+                  <span>
+                    {duplicatesOfSelected.length} other item(s) share this
+                    exact name — merge them into this one so stock isn't
+                    split across rows.
+                  </span>
+                </div>
+              )}
+
+              {duplicatesOfSelected.map((duplicate) => (
+                <div className="duplicate-merge-row" key={duplicate.id}>
+                  <span>
+                    {duplicate.sku} · {duplicate.category} ·{" "}
+                    {duplicate.quantity} {duplicate.unit} in stock
+                  </span>
+                  <button
+                    type="button"
+                    disabled={mergingId === duplicate.id}
+                    onClick={() => handleMergeDuplicate(duplicate)}
+                  >
+                    {mergingId === duplicate.id
+                      ? "Merging…"
+                      : "Merge into this item"}
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
+
+          {detailsTab === "batches" && (
+            <>
+              <div className="modal-section-head">
+                <h3 className="modal-section-title">Batch Records</h3>
+                {canRecordUsage && (
+                  <button
+                    type="button"
+                    className="add-batch-btn"
+                    onClick={() => {
+                      setModal("");
+                      openTransaction(selectedItem, "Stock In");
+                    }}
+                  >
+                    <PackagePlus size={15} /> Add New Batch
+                  </button>
+                )}
+              </div>
+
+              <div className="batch-mini-stats">
+                <div className="batch-mini-stat">
+                  <TriangleAlert size={16} />
+                  <div>
+                    <b>{batchAlerts.lowStock.length}</b>
+                    <span>Low Stock</span>
+                  </div>
+                </div>
+                <div className="batch-mini-stat">
+                  <TriangleAlert size={16} />
+                  <div>
+                    <b>{batchAlerts.outOfStock.length}</b>
+                    <span>Out of Stock</span>
+                  </div>
+                </div>
+                <div className="batch-mini-stat">
+                  <History size={16} />
+                  <div>
+                    <b>{batchAlerts.nearExpiry.length}</b>
+                    <span>Near Expiry</span>
+                  </div>
+                </div>
+              </div>
+
+              {batchesLoading ? (
+                <div className="empty">Loading batch records…</div>
+              ) : rankedBatchRows.length === 0 ? (
+                <div className="empty">
+                  No batches recorded for this item yet. Use "Add New Batch"
+                  to add the first one.
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="batch-table">
+                    <thead>
+                      <tr>
+                        <th>Priority</th>
+                        <th>Batch Number</th>
+                        <th>Date Received</th>
+                        <th>Expiration</th>
+                        <th>Original Qty</th>
+                        <th>Remaining</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedBatchRows.map((batch) => {
+                        const displayStatus = batchDisplayStatus(batch);
+                        const isEditing = editingBatchId === batch.id;
+
+                        if (isEditing) {
+                          return (
+                            <tr key={batch.id}>
+                              <td colSpan="8">
+                                <form
+                                  className="batch-edit-form"
+                                  onSubmit={(event) => submitBatchEdit(event, batch.id)}
+                                >
+                                  <Field label="Batch Number">
+                                    <input
+                                      value={batchEditForm.batchNumber}
+                                      onChange={(event) =>
+                                        setBatchEditForm((current) => ({
+                                          ...current,
+                                          batchNumber: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </Field>
+                                  <Field label="Date Received">
+                                    <input
+                                      type="date"
+                                      required
+                                      value={batchEditForm.dateReceived}
+                                      onChange={(event) =>
+                                        setBatchEditForm((current) => ({
+                                          ...current,
+                                          dateReceived: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </Field>
+                                  <Field label="Expiration Date">
+                                    <input
+                                      type="date"
+                                      value={batchEditForm.expiryDate}
+                                      onChange={(event) =>
+                                        setBatchEditForm((current) => ({
+                                          ...current,
+                                          expiryDate: event.target.value,
+                                        }))
+                                      }
+                                    />
+                                  </Field>
+                                  <div className="batch-edit-actions">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingBatchId("")}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button type="submit" disabled={saving}>
+                                      {saving ? "Saving…" : "Save"}
+                                    </button>
+                                  </div>
+                                </form>
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return (
+                          <tr key={batch.id}>
+                            <td>
+                              <span
+                                className={
+                                  batch.priorityLabel === "Next to Use"
+                                    ? "fifo-next-badge"
+                                    : ""
+                                }
+                              >
+                                {batch.priorityLabel}
+                              </span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="batch-number-link"
+                                onClick={() => openUnits(batch)}
+                                title="View this batch's individual unit records"
+                              >
+                                {batch.batch_number || "—"}
+                              </button>
+                            </td>
+                            <td>{formatDate(batch.date_received)}</td>
+                            <td>{formatDate(batch.expiry_date)}</td>
+                            <td>{batch.quantity_received}</td>
+                            <td>{batch.quantity_remaining}</td>
+                            <td>
+                              <span
+                                className={`badge ${displayStatus
+                                  .toLowerCase()
+                                  .replaceAll(" ", "-")}`}
+                              >
+                                {displayStatus}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="batch-row-actions">
+                                <button
+                                  type="button"
+                                  onClick={() => openUnits(batch)}
+                                >
+                                  View Units
+                                </button>
+                                {canManageItems && (
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditBatch(batch)}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                                {canManageItems && (
+                                  <button
+                                    type="button"
+                                    className={batch.is_active === false ? "batch-activate-btn" : "batch-deactivate-btn"}
+                                    disabled={togglingBatchId === batch.id}
+                                    onClick={() => handleToggleBatchActive(batch)}
+                                  >
+                                    {togglingBatchId === batch.id
+                                      ? "Saving…"
+                                      : batch.is_active === false
+                                      ? "Activate"
+                                      : "Deactivate"}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {!batchesLoading && batchTotalPages > 1 && (
+                <div className="batch-pagination">
+                  <button
+                    type="button"
+                    className="page-nav"
+                    aria-label="Previous page"
+                    disabled={batchCurrentPage === 1}
+                    onClick={() => setBatchPage(batchCurrentPage - 1)}
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+
+                  <div className="batch-pagination-pages">
+                    {Array.from({ length: batchTotalPages }, (_, index) => index + 1).map(
+                      (pageNumber) => (
+                        <button
+                          key={pageNumber}
+                          type="button"
+                          className={pageNumber === batchCurrentPage ? "active" : ""}
+                          onClick={() => setBatchPage(pageNumber)}
+                        >
+                          {pageNumber}
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="page-nav"
+                    aria-label="Next page"
+                    disabled={batchCurrentPage === batchTotalPages}
+                    onClick={() => setBatchPage(batchCurrentPage + 1)}
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {detailsTab === "history" && (
+            <>
+              <h3 className="modal-section-title">Stock Movement History</h3>
+              {transactionRows.length === 0 ? (
+                <div className="empty">No stock movement recorded yet.</div>
+              ) : (
+                <div className="history-list">
+                  {transactionRows.map((tx) => (
+                    <div className="history-row" key={tx.id}>
+                      <div>
+                        <strong>{tx.transaction_type}</strong>
+                        <span>
+                          {new Date(tx.created_at).toLocaleString()}
+                          {tx.batch?.batch_number
+                            ? ` · Batch ${tx.batch.batch_number}`
+                            : ""}
+                        </span>
+                        <small>
+                          {tx.reason || "No reason"}
+                          {tx.notes ? ` — ${tx.notes}` : ""}
+                          {tx.reference_number ? ` · ${tx.reference_number}` : ""}
+                        </small>
+                      </div>
+
+                      <div
+                        className={
+                          Number(tx.quantity_after) >= Number(tx.quantity_before)
+                            ? "plus"
+                            : "minus"
+                        }
+                      >
+                        <strong>
+                          {tx.quantity_before} → {tx.quantity_after}
+                        </strong>
+                        <small>
+                          {tx.quantity} {selectedItem.unit}
+                        </small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="modal-footer-actions">
+            <button
+              type="button"
+              className="modal-close-btn"
+              onClick={() => setModal("")}
+            >
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {viewingUnitsBatch && (
+        <Modal
+          title={`Individual Units: Batch ${viewingUnitsBatch.batch_number || "—"}`}
+          close={() => setViewingUnitsBatch(null)}
+          large
+        >
+          {unitsError && <div className="notice error">{unitsError}</div>}
+
+          {!unitsLoading && unitRows.length > 0 && (
+            <div className="batch-total-row">
+              <span>Total unit records in this batch</span>
+              <strong>{unitRows.length}</strong>
+            </div>
+          )}
+
+          {unitsLoading ? (
+            <div className="empty">Loading unit records…</div>
+          ) : unitRows.length === 0 ? (
+            <div className="empty">No individual unit records for this batch yet.</div>
+          ) : (
+            <div className="table-wrap">
+              <table className="batch-table">
+                <thead>
+                  <tr>
+                    <th>Unique Unit ID</th>
+                    <th>Batch Number</th>
+                    <th>Expiration Date</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedUnitRows.map((unit) => (
+                    <tr key={unit.id}>
+                      <td>{formatUnitId(unit.unit_no)}</td>
+                      <td>{viewingUnitsBatch.batch_number || "—"}</td>
+                      <td>{formatDate(viewingUnitsBatch.expiry_date)}</td>
+                      <td>
+                        <span
+                          className={`badge ${unit.status.toLowerCase()}`}
+                        >
+                          {unit.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!unitsLoading && unitsTotalPages > 1 && (
+            <div className="batch-pagination">
+              <button
+                type="button"
+                className="page-nav"
+                aria-label="Previous page"
+                disabled={unitsCurrentPage === 1}
+                onClick={() => setUnitPage(unitsCurrentPage - 1)}
+              >
+                <ChevronLeft size={16} />
+              </button>
+
+              <div className="batch-pagination-pages">
+                {Array.from({ length: unitsTotalPages }, (_, index) => index + 1).map(
+                  (pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      className={pageNumber === unitsCurrentPage ? "active" : ""}
+                      onClick={() => setUnitPage(pageNumber)}
+                    >
+                      {pageNumber}
+                    </button>
+                  )
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="page-nav"
+                aria-label="Next page"
+                disabled={unitsCurrentPage === unitsTotalPages}
+                onClick={() => setUnitPage(unitsCurrentPage + 1)}
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
+
+          <div className="modal-footer-actions">
+            <button
+              type="button"
+              className="modal-close-btn"
+              onClick={() => setViewingUnitsBatch(null)}
+            >
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {modal === "forecast" && (
         <Modal
           title="30-Day Demand Forecast and Restock Estimates"
@@ -2488,11 +3373,10 @@ export default function InventoryManagementModule({
             {!summaryLoading &&
               !summaryError &&
               forecastSummary && (
-                <div className="ai-summary-text">
-                  {
-                    forecastSummary
-                  }
-                </div>
+                <InventoryForecastReport
+                  forecasts={forecasts}
+                  summaryText={forecastSummary}
+                />
               )}
 
             {!summaryLoading &&
@@ -2611,12 +3495,25 @@ export default function InventoryManagementModule({
 
         .stat {
           background: #fff;
+          border: 2px solid transparent;
           border-radius: 16px;
           padding: 17px;
           box-shadow: 0 7px 22px rgba(47,117,150,.08);
           display: flex;
           align-items: center;
           gap: 12px;
+          text-align: left;
+          font: inherit;
+          cursor: pointer;
+          width: 100%;
+        }
+
+        .stat:hover {
+          box-shadow: 0 9px 26px rgba(47,117,150,.14);
+        }
+
+        .stat.active {
+          border-color: #318fbe;
         }
 
         .stat svg {
@@ -2756,6 +3653,17 @@ export default function InventoryManagementModule({
           color: #b84646;
         }
 
+        .badge.used,
+        .badge.sold {
+          background: #eaf1fb;
+          color: #2c5ab5;
+        }
+
+        .badge.inactive {
+          background: #eef1f4;
+          color: #5b6b76;
+        }
+
         .actions {
           display: flex;
           gap: 6px;
@@ -2817,8 +3725,10 @@ export default function InventoryManagementModule({
           border-radius: 18px;
           width: min(760px, 100%);
           max-height: 90vh;
-          overflow: auto;
-          padding: 22px;
+          padding: 20px 22px;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
         }
 
         .modal-card.large {
@@ -2826,10 +3736,11 @@ export default function InventoryManagementModule({
         }
 
         .modal-head {
+          flex-shrink: 0;
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 18px;
+          margin-bottom: 14px;
         }
 
         .modal-head h2 {
@@ -2843,6 +3754,11 @@ export default function InventoryManagementModule({
           padding: 7px;
           border-radius: 9px;
           cursor: pointer;
+        }
+
+        .modal-body {
+          overflow-y: auto;
+          min-height: 0;
         }
 
         .form-grid {
@@ -2866,6 +3782,33 @@ export default function InventoryManagementModule({
           grid-column: 1 / -1;
         }
 
+        .duplicate-item-warning {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+          padding: 12px 14px;
+          border-radius: 12px;
+          background: #fff8ee;
+          border: 1px solid #e4d3ba;
+          color: #8a6414;
+          font-size: 13px;
+        }
+
+        .duplicate-item-warning button {
+          flex-shrink: 0;
+          border: 0;
+          border-radius: 9px;
+          padding: 9px 13px;
+          font-size: 12.5px;
+          font-weight: 700;
+          color: #fff;
+          background: #b0620a;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
         .form-grid textarea {
           min-height: 90px;
           resize: vertical;
@@ -2884,6 +3827,7 @@ export default function InventoryManagementModule({
           border-radius: 10px;
           font-size: 13px;
           line-height: 1.5;
+          margin: 0 0 12px;
         }
 
         .import-panel {
@@ -2929,8 +3873,8 @@ export default function InventoryManagementModule({
           background: #f5fbfd;
           border: 1px solid #d6eaf2;
           border-radius: 16px;
-          padding: 18px;
-          margin: 14px 0 22px;
+          padding: 16px;
+          margin: 12px 0 18px;
         }
 
         .ai-summary-head {
@@ -3089,6 +4033,422 @@ export default function InventoryManagementModule({
           color: #ba4d4d;
         }
 
+        .item-name-link {
+          border: 0;
+          background: none;
+          padding: 0;
+          font-weight: 700;
+          color: #21697f;
+          cursor: pointer;
+          text-align: left;
+          text-decoration: underline;
+          text-decoration-color: transparent;
+          transition: text-decoration-color .15s ease;
+        }
+
+        .item-name-link:hover {
+          text-decoration-color: #21697f;
+        }
+
+        .batch-number-link {
+          border: 0;
+          background: none;
+          padding: 0;
+          font: inherit;
+          font-weight: 700;
+          color: #21697f;
+          cursor: pointer;
+          text-align: left;
+          text-decoration: underline;
+          text-decoration-color: transparent;
+          transition: text-decoration-color .15s ease;
+        }
+
+        .batch-number-link:hover {
+          text-decoration-color: #21697f;
+        }
+
+        .batch-total-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px 14px;
+          margin-bottom: 12px;
+          border-radius: 12px;
+          background: #f5fbfd;
+          border: 1px solid #e1eef3;
+          color: #536b78;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .batch-total-row strong {
+          color: #21697f;
+          font-size: 17px;
+        }
+
+        .fifo-next-badge {
+          display: inline-block;
+          width: max-content;
+          margin-top: 4px;
+          padding: 3px 8px;
+          border-radius: 999px;
+          background: #eafaf0;
+          color: #227a52;
+          font-size: 10.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .3px;
+        }
+
+        .details-tabs {
+          position: relative;
+          display: flex;
+          margin-bottom: 18px;
+          padding: 4px;
+          border-radius: 12px;
+          background: #eaf3f7;
+        }
+
+        .details-tabs-slider {
+          position: absolute;
+          top: 4px;
+          bottom: 4px;
+          border-radius: 9px;
+          background: #fff;
+          box-shadow: 0 2px 8px rgba(33, 105, 127, .18);
+          transition: left .22s ease;
+        }
+
+        .details-tab {
+          position: relative;
+          z-index: 1;
+          flex: 1;
+          border: 0;
+          background: none;
+          padding: 10px 8px;
+          font-size: 13.5px;
+          font-weight: 800;
+          color: #627985;
+          cursor: pointer;
+          border-radius: 9px;
+          white-space: nowrap;
+        }
+
+        .details-tab.active {
+          color: #21697f;
+        }
+
+        .batch-table td .fifo-next-badge {
+          margin-top: 0;
+        }
+
+
+        @media (max-width: 700px) {
+          .details-tab {
+            font-size: 11.5px;
+            padding: 9px 4px;
+          }
+        }
+
+        .modal-section-title {
+          margin: 22px 0 10px;
+          color: #213944;
+          font-size: 16px;
+        }
+
+        .modal-section-title:first-child {
+          margin-top: 0;
+        }
+
+        .item-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 12px;
+        }
+
+        .item-summary-grid > div {
+          display: grid;
+          gap: 4px;
+          padding: 11px 13px;
+          border: 1px solid #e1eef3;
+          border-radius: 11px;
+          background: #fbfeff;
+        }
+
+        .item-summary-grid span:first-child {
+          color: #7b8e97;
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .3px;
+        }
+
+        .item-summary-grid strong {
+          color: #213944;
+          font-size: 15px;
+        }
+
+        .batch-mini-stats {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+
+        .batch-mini-stat {
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          padding: 11px 13px;
+          border-radius: 12px;
+          background: #f5fbfd;
+          border: 1px solid #e1eef3;
+        }
+
+        .batch-mini-stat svg {
+          flex-shrink: 0;
+          color: #318fbe;
+        }
+
+        .batch-mini-stat b {
+          display: block;
+          font-size: 18px;
+          color: #213944;
+        }
+
+        .batch-mini-stat span {
+          color: #6f7f88;
+          font-size: 11px;
+        }
+
+        @media (max-width: 700px) {
+          .batch-mini-stats {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .duplicate-merge-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 12px;
+          margin-top: 8px;
+          border-radius: 10px;
+          background: #fff8ee;
+          border: 1px solid #e4d3ba;
+          font-size: 12.5px;
+          color: #8a6414;
+        }
+
+        .duplicate-merge-row button {
+          border: 0;
+          border-radius: 8px;
+          padding: 7px 11px;
+          font-size: 12px;
+          font-weight: 700;
+          color: #fff;
+          background: #b0620a;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .duplicate-merge-row button:disabled {
+          opacity: .6;
+          cursor: wait;
+        }
+
+        .modal-section-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .modal-section-head .modal-section-title {
+          margin: 0;
+        }
+
+        .add-batch-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border: 0;
+          border-radius: 10px;
+          padding: 8px 13px;
+          font-size: 13px;
+          font-weight: 700;
+          color: #fff;
+          background: linear-gradient(135deg, #318fbe, #2c5c74);
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+
+        .batch-row-actions {
+          display: flex;
+          gap: 6px;
+          justify-content: flex-end;
+          margin-top: 6px;
+        }
+
+        .batch-row-actions button {
+          border: 1px solid #cfe4ed;
+          background: #fff;
+          border-radius: 8px;
+          padding: 6px 9px;
+          font-size: 11.5px;
+          font-weight: 700;
+          color: #257fa9;
+          cursor: pointer;
+        }
+
+        .batch-row-actions button:disabled {
+          opacity: .6;
+          cursor: wait;
+        }
+
+        .batch-deactivate-btn {
+          border-color: #e4d3ba !important;
+          background: #fff8ee !important;
+          color: #8a6414 !important;
+        }
+
+        .batch-activate-btn {
+          border-color: #bfe0c9 !important;
+          background: #f0faf3 !important;
+          color: #227a52 !important;
+        }
+
+        .batch-edit-form {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 10px;
+          align-items: end;
+        }
+
+        .batch-edit-actions {
+          display: flex;
+          gap: 8px;
+          grid-column: 1 / -1;
+          justify-content: flex-end;
+        }
+
+        .batch-edit-actions button {
+          border: 0;
+          border-radius: 8px;
+          padding: 8px 13px;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .batch-edit-actions button[type="button"] {
+          background: #eff4f6;
+          color: #536b78;
+        }
+
+        .batch-edit-actions button[type="submit"] {
+          background: #318fbe;
+          color: #fff;
+        }
+
+        .batch-edit-actions button[type="submit"]:disabled {
+          opacity: .6;
+          cursor: wait;
+        }
+
+        .batch-pagination {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+          margin-top: 16px;
+          padding-top: 14px;
+          border-top: 1px solid #e5eef1;
+        }
+
+        .page-nav {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 34px;
+          height: 34px;
+          flex-shrink: 0;
+          border: 1px solid #cfe4ed;
+          border-radius: 50%;
+          background: #fff;
+          color: #2b6f8f;
+          cursor: pointer;
+        }
+
+        .page-nav:hover:not(:disabled) {
+          background: #eaf6fb;
+          border-color: #a9dff0;
+        }
+
+        .page-nav:disabled {
+          cursor: not-allowed;
+          opacity: .4;
+        }
+
+        .batch-pagination-pages {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+
+        .batch-pagination-pages button {
+          min-width: 32px;
+          min-height: 32px;
+          border: 1px solid transparent;
+          border-radius: 8px;
+          background: transparent;
+          color: #536b78;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+        }
+
+        .batch-pagination-pages button:hover {
+          background: #eaf6fb;
+        }
+
+        .batch-pagination-pages button.active {
+          border-color: #318fbe;
+          background: #318fbe;
+          color: #fff;
+        }
+
+        .modal-footer-actions {
+          display: flex;
+          justify-content: flex-end;
+          margin-top: 20px;
+          padding-top: 16px;
+          border-top: 1px solid #e5eef1;
+        }
+
+        .modal-close-btn {
+          border: 1px solid #cfe4ed;
+          background: #fff;
+          border-radius: 10px;
+          padding: 10px 16px;
+          font-size: 13.5px;
+          font-weight: 700;
+          color: #536b78;
+          cursor: pointer;
+        }
+
+        @media (max-width: 700px) {
+          .item-summary-grid,
+          .batch-edit-form {
+            grid-template-columns: 1fr;
+          }
+        }
+
         @media (max-width: 1100px) {
           .stats {
             grid-template-columns: repeat(2, 1fr);
@@ -3172,16 +4532,22 @@ function Stat({
   icon,
   label,
   value,
+  onClick,
+  active,
 }) {
   return (
-    <div className="stat">
+    <button
+      type="button"
+      className={`stat${active ? " active" : ""}`}
+      onClick={onClick}
+    >
       {icon}
 
       <div>
         <b>{value}</b>
         <span>{label}</span>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -3208,6 +4574,14 @@ function Modal({
   children,
   large,
 }) {
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, []);
+
   return (
     <div
       className="modal-backdrop"
@@ -3236,7 +4610,9 @@ function Modal({
           </button>
         </div>
 
-        {children}
+        <div className="modal-body">
+          {children}
+        </div>
       </div>
     </div>
   );

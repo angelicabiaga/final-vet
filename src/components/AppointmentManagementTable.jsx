@@ -45,6 +45,13 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
+    if (!notesModal && !rebookModal) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = original; };
+  }, [notesModal, rebookModal]);
+
+  useEffect(() => {
     const channel = supabase
       .channel(`web-appointment-management-${profile?.id || "staff"}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, () => {

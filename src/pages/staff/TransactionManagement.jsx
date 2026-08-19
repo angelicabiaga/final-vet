@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Clock,
   CreditCard,
+  Download,
   Eye,
   Loader2,
   Minus,
@@ -29,6 +30,7 @@ import {
 import AppShell from "../../components/AppShell";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { getInventoryItems, getInventoryItemsByIds } from "../../services/inventoryService";
+import { downloadPrescriptionNoticePdf } from "../../utils/invoicePdf";
 import {
   getConsultationForBilling,
   getOutstandingPrescriptions,
@@ -36,12 +38,13 @@ import {
   getPendingBillingQueue,
   getPrescriptionForFollowUp,
   getPrescriptionsByIds,
+  getPrescriptionElsewhereLog,
+  getPrescriptionsForConsultation,
   markPrescriptionElsewhere,
   startBillingProcessing,
   subscribeToPendingBilling,
   subscribeToPrescriptions,
   syncPrescriptions,
-  updatePrescribedQuantity,
 } from "../../services/billingService";
 import {
   checkoutTransaction,
@@ -58,7 +61,7 @@ import {
 
 const GCASH_EXPIRY_SECONDS = 5 * 60;
 const PAYMENT_METHODS = ["Cash", "GCash", "Split Payment"];
-const PAYMENT_STATUSES = ["", "Unpaid", "Partially Paid", "Paid", "Voided"];
+const PAYMENT_STATUSES = ["", "Unpaid", "Partially Paid", "Paid", "Voided", "Purchasing Elsewhere"];
 const HISTORY_PAGE_SIZE = 15;
 
 function money(value) {
@@ -72,10 +75,20 @@ function formatDateTime(value) {
   return value ? new Date(value).toLocaleString("en-PH") : "—";
 }
 
+// Anything the vet dispenses/administers with a meaningful purchase
+// quantity is treated as "Medicine" so it gets prescription tracking and an
+// adjustable quantity at POS -- only lab tests (one-time services, no
+// partial-purchase concept) and unrecognized categories stay out of it.
 function guessItemType(inventoryItem) {
   const haystack = `${inventoryItem.category || ""} ${inventoryItem.item_name || ""}`.toLowerCase();
   if (haystack.includes("test") || haystack.includes("lab") || haystack.includes("diagnostic")) return "Test";
-  if (haystack.includes("medic") || haystack.includes("drug") || haystack.includes("vaccine") || haystack.includes("antibiotic")) return "Medicine";
+  if (
+    haystack.includes("medic") || haystack.includes("drug") || haystack.includes("vaccine") ||
+    haystack.includes("antibiotic") || haystack.includes("supplement") || haystack.includes("parasite") ||
+    haystack.includes("inflammat") || haystack.includes("eye drop") || haystack.includes("ear drop") ||
+    haystack.includes("injection") || haystack.includes("ointment") || haystack.includes("tablet") ||
+    haystack.includes("capsule") || haystack.includes("syrup")
+  ) return "Medicine";
   return "Product";
 }
 
@@ -127,10 +140,10 @@ function printReceipt(transaction) {
 }
 
 const styles = `
-      .pos-grid,.history-module{width:100%;max-width:1280px;box-sizing:border-box;margin-left:auto;margin-right:auto}.card,.history-module{background:#fff;border-radius:18px;padding:28px;box-shadow:0 8px 24px rgba(47,117,150,.09)}.card h2,.history-heading h2{display:flex;align-items:center;gap:10px;margin:0 0 20px;color:#213944;font-size:25px}.pos-card-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}.pos-card-head h2{margin:0}.pos-back-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #cfe4ed;background:#fff;color:#536b78;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}.pos-back-btn:hover{background:#f5f9fb;border-color:#b8d2dc}.field-label{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:#536b78;text-transform:uppercase;letter-spacing:.45px;margin:21px 0 8px}.search-box,.history-search{display:flex;align-items:center;gap:10px;border:1px solid #dbe7ec;border-radius:12px;padding:13px 14px;background:#f8fbfc}.search-box input,.history-search input{border:0;background:transparent;outline:0;width:100%;font-size:17px;color:#213944}.search-box input::placeholder,.history-search input::placeholder,.notes-input::placeholder{font-size:17px;color:#80929b;opacity:1}.results-list{margin-top:8px;border:1px solid #eef3f5;border-radius:12px;overflow:hidden}.result-row{display:flex;justify-content:space-between;gap:16px;width:100%;padding:13px 14px;background:#fff;border:0;border-bottom:1px solid #f2f6f8;cursor:pointer;text-align:left;font-size:16px}.result-row:last-child{border-bottom:0}.result-row:hover{background:#f5fbfd}.result-row:disabled{opacity:.45;cursor:not-allowed}.results-empty{padding:14px 10px;color:#71858f;font-size:16px;display:flex;align-items:center;gap:8px}.cart-empty{border:1px dashed #dbe7ec;border-radius:12px;justify-content:center}.muted{color:#71858f;font-size:14px}.selected-pet{display:flex;justify-content:space-between;align-items:center;border:1px solid #dbe7ec;border-radius:12px;padding:15px;background:#f5fbfd;font-size:17px}.selected-pet span{display:block;color:#6F7F88;font-size:14px;margin-top:3px}.link-btn{display:flex;align-items:center;gap:5px;background:none;border:0;color:#318fbe;cursor:pointer;font-size:15px}.cart-scroll,.history-table-wrap{overflow-x:auto}.cart-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:16px}.cart-table th{text-align:left;color:#536b78;font-size:13px;text-transform:uppercase;padding:9px 8px}.cart-table td{padding:11px 8px;border-top:1px solid #f2f6f8}.qty-stepper{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.skip-toggle{display:flex;align-items:center;gap:5px;font-size:12px;color:#71858f;font-weight:700;cursor:pointer;white-space:nowrap}.skip-toggle input{width:auto!important;accent-color:#318fbe;cursor:pointer}.qty-stepper button{border:1px solid #dbe7ec;background:#fff;border-radius:6px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer}.qty-stepper input{width:58px;text-align:center;padding:5px}.icon-btn{border:0;background:none;color:#bf4b42;cursor:pointer}.locked-items{display:flex;flex-direction:column;gap:8px;border:1px solid #dbe7ec;border-radius:12px;padding:12px 14px;background:#f5fbfd}.locked-item{display:flex;justify-content:space-between;gap:12px;font-size:16px;color:#213944;font-weight:700}.locked-badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#eaf6fb;color:#21697f;font-size:12px;font-weight:800;white-space:nowrap;margin-left:6px}.extra-items-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:21px 0 8px}.extra-items-row .field-label{margin:0}.add-toggle-btn{display:flex;align-items:center;gap:6px;border:1px solid #cfe4ed;border-radius:10px;padding:8px 13px;background:#fff;color:#257fa9;font-weight:700;cursor:pointer;white-space:nowrap}.add-toggle-btn:disabled{opacity:.5;cursor:not-allowed}.fee-row{display:grid;grid-template-columns:1fr 1fr;gap:18px}.toggle-label{cursor:pointer}.inline-checkbox{width:auto!important;accent-color:#318fbe;cursor:pointer}.fee-off-note{display:block;margin-top:5px}input:disabled{background:#f2f6f8;color:#9fb0b8;cursor:not-allowed}input.fee-disabled{background:#e9eef1!important;color:#9aa8b0!important;border-color:#dce4e8!important}input[type=number],input[type=text],select,textarea{width:100%;box-sizing:border-box;border:1px solid #dbe7ec;border-radius:10px;padding:11px 12px;font-size:17px;color:#213944;background:#fff}.split-payment-form{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;padding:17px;border:1px solid #dbe7ec;border-radius:12px;background:#f8fbfc;margin-top:17px}.split-payment-form label,.payment-amount-row label{display:grid;gap:7px;color:#536b78;font-size:15px;font-weight:700}.split-payment-form p{grid-column:1/-1;margin:0;color:#536b78;font-size:16px}.online-payment-note{display:flex;align-items:center;gap:8px;margin-top:17px;padding:14px;border-radius:12px;background:#edfaff;color:#286f91;font-size:16px}.payment-amount-row{display:grid;grid-template-columns:1fr 1fr;align-items:end;gap:18px;margin-top:17px}.payment-amount-row>div{padding:11px 12px;border:1px solid #dbe7ec;border-radius:10px;min-height:24px;display:flex;justify-content:space-between;align-items:center;color:#536b78;font-size:16px}.payment-amount-row strong{color:#213944;font-size:19px}.notes-input{margin-top:20px;min-height:90px;resize:vertical}.totals{margin-top:20px;border-top:1px solid #eef3f5;padding-top:13px;max-width:520px;margin-left:auto}.totals div{display:flex;justify-content:space-between;font-size:16px;color:#536b78;padding:5px 0}.grand-total{font-size:21px!important;color:#267fa8!important;font-weight:800}.checkout-btn,.receipt-print{margin-top:20px;width:100%;display:flex;align-items:center;justify-content:center;gap:9px;background:linear-gradient(135deg,#318fbe,#2c5c74);color:#fff;border:0;border-radius:12px;padding:15px;font-size:17px;font-weight:700;cursor:pointer}.checkout-btn:disabled{opacity:.6;cursor:wait}.history-module{margin-top:25px}.history-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}.history-heading h2{margin:0;font-size:24px}.history-heading p{margin:6px 0 0;color:#627985;font-size:16px}.history-heading-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.new-transaction-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;background:linear-gradient(135deg,#318fbe,#2c5c74);color:#fff;border-radius:10px;padding:11px 15px;font-size:15px;font-weight:700;cursor:pointer;white-space:nowrap}.history-refresh,.table-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid #c7e4ef;background:#effaff;color:#247fa8;border-radius:10px;padding:11px 13px;font-size:15px;font-weight:700;cursor:pointer}.history-refresh:disabled{opacity:.6;cursor:wait}.history-filters{display:grid;grid-template-columns:2fr repeat(4,1fr);gap:12px;padding:17px;border-radius:14px;background:#f8fbfc;border:1px solid #edf3f5}.history-filters>label:not(.history-search){display:grid;gap:6px;color:#536b78;font-size:13px;font-weight:800;text-transform:uppercase}.history-filters input,.history-filters select{font-size:15px;padding:10px}.history-search{padding:9px 11px}.history-search input{font-size:15px}.history-error{margin-top:15px;padding:13px 15px;border-radius:10px;background:#fff0f0;color:#a33c3c;font-size:16px}.history-table{width:100%;min-width:1020px;border-collapse:collapse;margin-top:18px;font-size:15px}.history-table th{padding:12px 13px;text-align:left;color:#536b78;font-size:12px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #dce9ed}.history-table td{padding:14px 13px;color:#334f5d;border-bottom:1px solid #edf3f5;vertical-align:middle;line-height:1.45;white-space:nowrap}.history-table tbody tr:last-child td{border-bottom:0}.or-number{font-weight:800;color:#287ea5!important;white-space:nowrap}.amount-cell{font-weight:800;white-space:nowrap;color:#213944!important}.payment-status{display:inline-block;padding:5px 10px;border-radius:999px;font-size:13px;font-weight:800;white-space:nowrap}.status-paid{background:#e6f7ee;color:#1f8550}.status-pending{background:#fff6e0;color:#9a7000}.status-voided,.status-cancelled{background:#fbe9e9;color:#b33d35}.row-actions{display:flex;gap:7px;flex-wrap:wrap}.table-action{padding:7px 9px;font-size:13px;white-space:nowrap}.action-details{background:#e7f0ff!important;border-color:#c3d7fb!important;color:#2c5ab5!important}.action-details:hover{background:#d9e6ff!important}.action-reprint{background:#eef4f0!important;border-color:#cfe0d5!important;color:#3d7a55!important}.action-reprint:hover{background:#e0ede4!important}.table-message{text-align:center!important;padding:35px!important;color:#71858f!important;font-size:16px!important}.history-summary{margin-top:16px;color:#536b78;font-size:14px;font-weight:700}.history-pagination{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:20px;padding-top:18px;border-top:1px solid #edf3f6}.page-nav{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;flex-shrink:0;border:1px solid #cfe4ed;border-radius:50%;background:#fff;color:#2b6f8f;cursor:pointer}.page-nav:hover:not(:disabled){background:#eaf6fb;border-color:#a9dff0}.page-nav:disabled{cursor:not-allowed;opacity:.4}.history-pagination-pages{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center}.history-pagination-pages button{min-width:40px;min-height:40px;border:1px solid transparent;border-radius:10px;background:transparent;color:#536b78;font-weight:700;font-size:15px;cursor:pointer}.history-pagination-pages button:hover{background:#eaf6fb}.history-pagination-pages button.active{border-color:#318fbe;background:#318fbe;color:#fff}.receipt-overlay{position:fixed;inset:0;background:rgba(20,40,50,.5);display:flex;align-items:center;justify-content:center;z-index:500;padding:20px}.receipt-card,.gcash-modal,.transaction-detail-card,.reversal-card,.balance-card{background:#fff;border-radius:18px;padding:26px;position:relative;box-shadow:0 18px 44px rgba(16,50,67,.24)}.receipt-card{width:min(390px,100%)}.receipt-close,.detail-close{position:absolute;right:14px;top:14px}.receipt-card h2{margin:0 0 8px;color:#213944}.receipt-or{color:#267fa8;font-size:17px}.receipt-line{display:flex;justify-content:space-between;gap:15px;font-size:16px;padding:8px 0;border-bottom:1px dashed #eef3f5}.receipt-total{font-weight:800;color:#267fa8;font-size:19px;border-bottom:0}.receipt-balance{font-weight:800;color:#b0620a}.receipt-print{margin-top:16px;padding:12px;font-size:15px}.receipt-redirect{text-align:center;color:#536b78;font-size:14px;font-weight:600;margin:17px 0 0}.gcash-modal{width:min(390px,100%);text-align:center;display:flex;flex-direction:column;align-items:center;gap:13px}.gcash-modal-header{width:100%;display:flex;justify-content:space-between;align-items:center;font-weight:800;color:#213944;font-size:18px}.gcash-qr{width:220px;height:220px;border:1px solid #eef3f5;border-radius:12px;padding:10px}.gcash-waiting{display:flex;align-items:center;gap:8px;font-size:16px;color:#318fbe;font-weight:700}.gcash-cancel{margin-top:0;color:#71858f}.gcash-status-text{font-size:16px;margin:8px 0}.gcash-status-text.err{color:#b33d35}.transaction-detail-card{width:min(1180px,96vw);max-height:94vh;overflow:auto}.detail-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding-right:32px}.detail-eyebrow{color:#647b87;text-transform:uppercase;letter-spacing:.5px;font-size:13px;font-weight:800}.detail-top h2{margin:3px 0;color:#213944}.detail-top p{margin:0;color:#71858f}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:19px 0}.detail-grid>div{display:grid;gap:4px;padding:12px;border:1px solid #e4eff3;border-radius:11px;background:#fbfeff}.detail-grid span,.detail-totals span:first-child{color:#647b87;font-size:13px;text-transform:uppercase;font-weight:700}.detail-grid strong{color:#213944;font-size:16px}.detail-items h3,.audit-trail h3{margin:18px 0 9px;color:#213944;font-size:17px}.detail-item{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #eef3f5}.detail-item span{display:grid;gap:3px}.detail-item small{color:#71858f;font-size:13px}.detail-totals{margin-top:16px;border-top:1px solid #dce9ed;padding-top:10px;margin-left:auto;max-width:400px}.detail-totals div{display:flex;justify-content:space-between;padding:5px 0;color:#415a66;font-size:16px}.detail-totals strong{color:#267fa8;font-size:19px}.split-summary,.detail-note{margin-top:16px;padding:12px;border-radius:10px;background:#f7fbfd;color:#536b78;display:flex;gap:9px;flex-wrap:wrap}.audit-trail{margin-top:18px;border-top:1px solid #e5eef1}.audit-trail p{margin:7px 0;color:#5e7480;font-size:14px}.detail-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:20px}.detail-actions button{width:auto;margin:0;padding:11px 13px;font-size:14px}.void-button{border:0;border-radius:10px;display:inline-flex;align-items:center;gap:7px;color:#fff;font-weight:700;cursor:pointer;background:#b33d35}.reversal-card{width:min(420px,100%)}.reversal-card h2{margin:0;color:#213944}.reversal-card p{color:#71858f}.reversal-card label{display:grid;gap:7px;color:#536b78;font-weight:700}.reversal-card textarea{min-height:100px;margin-bottom:15px}.reversal-card>div:last-child{display:flex;gap:10px}.modal-cancel,.modal-confirm{flex:1;border-radius:10px;padding:11px;border:0;font-size:15px;font-weight:700;cursor:pointer}.modal-cancel{background:#eff4f6;color:#536b78}.modal-confirm{background:#b33d35;color:#fff}.modal-confirm:disabled{opacity:.55;cursor:not-allowed}.spin{animation:spin 1s linear infinite}@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.pending-billing-module{margin-bottom:25px}.pending-billing-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}.pending-billing-heading h2{margin:0;font-size:24px;display:flex;align-items:center;gap:10px;color:#213944}.pending-billing-heading p{margin:6px 0 0;color:#627985;font-size:16px}.pending-billing-table{width:100%;min-width:900px;border-collapse:collapse;margin-top:10px;font-size:15px}.pending-billing-table th{padding:12px 13px;text-align:left;color:#536b78;font-size:12px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #dce9ed}.pending-billing-table td{padding:14px 13px;color:#334f5d;border-bottom:1px solid #edf3f5;vertical-align:top}.pending-billing-table tbody tr:last-child td{border-bottom:0}.rank-cell{font-weight:800;color:#318fbe;text-align:center;width:36px}.status-pending-billing{background:#fff6e0;color:#9a7000}.status-processing{background:#e7f0ff;color:#2c5ab5}.process-payment-btn{display:inline-flex;align-items:center;gap:7px;border:0;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(135deg,#318fbe,#2c5c74);white-space:nowrap}.process-payment-btn:hover{opacity:.92}.consult-summary{display:grid;grid-template-columns:1fr 1fr;gap:12px;border:1px solid #dbe7ec;border-radius:12px;padding:15px;background:#f5fbfd}.consult-summary-row{display:flex;flex-direction:column;gap:3px;font-size:15px}.consult-summary-row span{color:#6F7F88;font-size:13px;text-transform:uppercase;letter-spacing:.3px}.consult-notes{display:grid;gap:14px;margin:21px 0 8px;padding:15px;border:1px solid #dbe7ec;border-radius:12px;background:#fbfeff}.consult-notes>div span{display:block;color:#536b78;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}.consult-notes>div p{margin:0;color:#334f5d;font-size:15px;white-space:pre-wrap}.locked-badge.rx{background:#e6f7ee;color:#1f8550}.status-unpaid{background:#fff6e0;color:#9a7000}.status-partially-paid{background:#fff0da;color:#b0620a}.payment-preview-note{display:inline-block;font-weight:800;font-size:13px}.payment-preview-note.partial{color:#b0620a}.payment-preview-note.unpaid{color:#9a7000}.status-not-purchased{background:#fff6e0;color:#9a7000}.status-partially-purchased{background:#fff0da;color:#b0620a}.status-fully-purchased{background:#e6f7ee;color:#1f8550}.status-purchasing-elsewhere{background:#eef1f4;color:#5b6b76}.collect-balance-btn{background:#fff2e2!important;border-color:#f3d7ae!important;color:#a5650f!important}.collect-balance-btn:hover{background:#fbe8cd!important}.balance-cell{white-space:nowrap}.balance-cell.owed{color:#b0620a!important;font-weight:800}.balance-card{width:min(420px,100%)}.balance-card h2{margin:0;color:#213944}.balance-card p{color:#71858f}.balance-card label{display:grid;gap:7px;color:#536b78;font-weight:700;margin-top:14px}.balance-card-actions{display:flex;gap:10px;margin-top:18px}.balance-confirm-btn{background:#318fbe;color:#fff}.balance-summary{display:flex;justify-content:space-between;gap:12px;padding:13px 15px;border-radius:12px;background:#f5fbfd;border:1px solid #dbe7ec;margin-top:10px}.balance-summary div{display:grid;gap:2px}.balance-summary span{color:#6F7F88;font-size:12px;text-transform:uppercase}.balance-summary strong{font-size:17px;color:#213944}.payment-history-list{display:grid;gap:8px;margin-top:10px}.payment-history-row{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #eef3f5;border-radius:10px;background:#fbfeff;font-size:14px;color:#415a66}.payment-history-row b{color:#213944}.outstanding-rx-module{margin-bottom:25px}.rx-search{margin:14px 0 6px;max-width:420px}.outstanding-rx-table{width:100%;min-width:1080px;border-collapse:collapse;margin-top:10px;font-size:15px;white-space:nowrap}.outstanding-rx-table th{padding:12px 13px;text-align:left;color:#536b78;font-size:12px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #dce9ed}.outstanding-rx-table td{padding:14px 13px;color:#334f5d;border-bottom:1px solid #edf3f5;vertical-align:top}.outstanding-rx-table tbody tr:last-child td{border-bottom:0}.continue-purchase-btn{display:inline-flex;align-items:center;gap:7px;border:0;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(135deg,#318fbe,#2c5c74);white-space:nowrap}.continue-purchase-btn:hover{opacity:.92}.rx-panel{display:grid;gap:10px;border:1px solid #dbe7ec;border-radius:12px;padding:14px;background:#fbfeff;margin:8px 0 16px}.rx-row{display:grid;grid-template-columns:1.6fr repeat(4,1fr) auto;gap:12px;align-items:center;font-size:14px}.rx-row.head{color:#536b78;font-size:12px;text-transform:uppercase;font-weight:800}.rx-qty-input{width:100%;padding:7px 8px;font-size:14px}.rx-actions{display:flex;gap:6px;justify-content:flex-end}.elsewhere-btn{border:1px solid #e4d3ba;background:#fff8ee;color:#8a6414;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}.elsewhere-btn:hover{background:#fbeeda}.elsewhere-btn:disabled{opacity:.5;cursor:not-allowed}.owner-balance-note{display:flex;align-items:center;gap:8px;margin-top:10px;padding:12px 14px;border-radius:12px;background:#fff2e2;color:#a5650f;font-size:15px;font-weight:700}.rx-meta{margin-top:4px;color:#6F7F88}.rx-meta small{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.rx-qty-inline{width:64px!important;display:inline-block;padding:4px 6px!important;font-size:13px!important}@media(max-width:900px){.rx-row{grid-template-columns:1fr}.rx-row.head{display:none}.fee-row,.payment-amount-row,.split-payment-form,.detail-grid{grid-template-columns:1fr}.history-filters{grid-template-columns:1fr 1fr}.history-search{grid-column:1/-1}.split-payment-form p{grid-column:auto}}@media(max-width:650px){.card,.history-module{padding:18px}.pos-card-head{flex-direction:column;align-items:flex-start;gap:10px}.pos-back-btn{width:100%;justify-content:center}.history-heading{flex-direction:column}.history-heading-actions{width:100%}.history-refresh{flex:1}.history-filters{grid-template-columns:1fr}.history-search{grid-column:auto}.result-row{flex-direction:column;gap:3px}.detail-item{grid-template-columns:1fr auto}.detail-actions>*{flex:1}.payment-amount-row{gap:9px}.consult-summary{grid-template-columns:1fr}}
+      .pos-grid,.history-module{width:100%;max-width:1280px;box-sizing:border-box;margin-left:auto;margin-right:auto}.card,.history-module{background:#fff;border-radius:18px;padding:28px;box-shadow:0 8px 24px rgba(47,117,150,.09)}.card h2,.history-heading h2{display:flex;align-items:center;gap:10px;margin:0 0 20px;color:#213944;font-size:25px}.pos-card-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}.pos-card-head h2{margin:0}.pos-back-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #cfe4ed;background:#fff;color:#536b78;border-radius:10px;padding:9px 14px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap}.pos-back-btn:hover{background:#f5f9fb;border-color:#b8d2dc}.field-label{display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:#536b78;text-transform:uppercase;letter-spacing:.45px;margin:21px 0 8px}.search-box,.history-search{display:flex;align-items:center;gap:10px;border:1px solid #dbe7ec;border-radius:12px;padding:13px 14px;background:#f8fbfc}.search-box input,.history-search input{border:0;background:transparent;outline:0;width:100%;font-size:17px;color:#213944}.search-box input::placeholder,.history-search input::placeholder,.notes-input::placeholder{font-size:17px;color:#80929b;opacity:1}.results-list{margin-top:8px;border:1px solid #eef3f5;border-radius:12px;overflow:hidden}.result-row{display:flex;justify-content:space-between;gap:16px;width:100%;padding:13px 14px;background:#fff;border:0;border-bottom:1px solid #f2f6f8;cursor:pointer;text-align:left;font-size:16px}.result-row:last-child{border-bottom:0}.result-row:hover{background:#f5fbfd}.result-row:disabled{opacity:.45;cursor:not-allowed}.results-empty{padding:14px 10px;color:#71858f;font-size:16px;display:flex;align-items:center;gap:8px}.cart-empty{border:1px dashed #dbe7ec;border-radius:12px;justify-content:center}.muted{color:#71858f;font-size:14px}.selected-pet{display:flex;justify-content:space-between;align-items:center;border:1px solid #dbe7ec;border-radius:12px;padding:15px;background:#f5fbfd;font-size:17px}.selected-pet span{display:block;color:#6F7F88;font-size:14px;margin-top:3px}.link-btn{display:flex;align-items:center;gap:5px;background:none;border:0;color:#318fbe;cursor:pointer;font-size:15px}.cart-scroll,.history-table-wrap{overflow-x:auto}.cart-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:16px}.cart-table th{text-align:left;color:#536b78;font-size:13px;text-transform:uppercase;padding:9px 8px}.cart-table td{padding:11px 8px;border-top:1px solid #f2f6f8}.qty-stepper{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.skip-toggle{display:flex;align-items:center;gap:5px;font-size:12px;color:#71858f;font-weight:700;cursor:pointer;white-space:nowrap}.skip-toggle input{width:auto!important;accent-color:#318fbe;cursor:pointer}.qty-stepper button{border:1px solid #dbe7ec;background:#fff;border-radius:6px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer}.qty-stepper input{width:58px;text-align:center;padding:5px}.icon-btn{border:0;background:none;color:#bf4b42;cursor:pointer}.locked-items{display:flex;flex-direction:column;gap:8px;border:1px solid #dbe7ec;border-radius:12px;padding:12px 14px;background:#f5fbfd}.locked-item{display:flex;justify-content:space-between;gap:12px;font-size:16px;color:#213944;font-weight:700}.locked-badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#eaf6fb;color:#21697f;font-size:12px;font-weight:800;white-space:nowrap;margin-left:6px}.extra-items-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:21px 0 8px}.extra-items-row .field-label{margin:0}.add-toggle-btn{display:flex;align-items:center;gap:6px;border:1px solid #cfe4ed;border-radius:10px;padding:8px 13px;background:#fff;color:#257fa9;font-weight:700;cursor:pointer;white-space:nowrap}.add-toggle-btn:disabled{opacity:.5;cursor:not-allowed}.fee-row{display:grid;grid-template-columns:1fr 1fr;gap:18px}.toggle-label{cursor:pointer}.inline-checkbox{width:auto!important;accent-color:#318fbe;cursor:pointer}.fee-off-note{display:block;margin-top:5px}input:disabled{background:#f2f6f8;color:#9fb0b8;cursor:not-allowed}input.fee-disabled{background:#e9eef1!important;color:#9aa8b0!important;border-color:#dce4e8!important}input[type=number],input[type=text],select,textarea{width:100%;box-sizing:border-box;border:1px solid #dbe7ec;border-radius:10px;padding:11px 12px;font-size:17px;color:#213944;background:#fff}.split-payment-form{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;padding:17px;border:1px solid #dbe7ec;border-radius:12px;background:#f8fbfc;margin-top:17px}.split-payment-form label,.payment-amount-row label{display:grid;gap:7px;color:#536b78;font-size:15px;font-weight:700}.split-payment-form p{grid-column:1/-1;margin:0;color:#536b78;font-size:16px}.online-payment-note{display:flex;align-items:center;gap:8px;margin-top:17px;padding:14px;border-radius:12px;background:#edfaff;color:#286f91;font-size:16px}.payment-amount-row{display:grid;grid-template-columns:1fr 1fr;align-items:end;gap:18px;margin-top:17px}.payment-amount-row>div{padding:11px 12px;border:1px solid #dbe7ec;border-radius:10px;min-height:24px;display:flex;justify-content:space-between;align-items:center;color:#536b78;font-size:16px}.payment-amount-row strong{color:#213944;font-size:19px}.notes-input{margin-top:20px;min-height:90px;resize:vertical}.totals{margin-top:20px;border-top:1px solid #eef3f5;padding-top:13px;max-width:520px;margin-left:auto}.totals div{display:flex;justify-content:space-between;font-size:16px;color:#536b78;padding:5px 0}.grand-total{font-size:21px!important;color:#267fa8!important;font-weight:800}.checkout-btn,.receipt-print{margin-top:20px;width:100%;display:flex;align-items:center;justify-content:center;gap:9px;background:linear-gradient(135deg,#318fbe,#2c5c74);color:#fff;border:0;border-radius:12px;padding:15px;font-size:17px;font-weight:700;cursor:pointer}.checkout-btn:disabled{opacity:.6;cursor:wait}.history-module{margin-top:25px}.history-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}.history-heading h2{margin:0;font-size:24px}.history-heading p{margin:6px 0 0;color:#627985;font-size:16px}.history-heading-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.new-transaction-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;background:linear-gradient(135deg,#318fbe,#2c5c74);color:#fff;border-radius:10px;padding:11px 15px;font-size:15px;font-weight:700;cursor:pointer;white-space:nowrap}.history-refresh,.table-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid #c7e4ef;background:#effaff;color:#247fa8;border-radius:10px;padding:11px 13px;font-size:15px;font-weight:700;cursor:pointer}.history-refresh:disabled{opacity:.6;cursor:wait}.history-filters{display:grid;grid-template-columns:2fr repeat(4,1fr);gap:12px;padding:17px;border-radius:14px;background:#f8fbfc;border:1px solid #edf3f5}.history-filters>label:not(.history-search){display:grid;gap:6px;color:#536b78;font-size:13px;font-weight:800;text-transform:uppercase}.history-filters input,.history-filters select{font-size:15px;padding:10px}.history-search{padding:9px 11px}.history-search input{font-size:15px}.history-error{margin-top:15px;padding:13px 15px;border-radius:10px;background:#fff0f0;color:#a33c3c;font-size:16px}.history-table{width:100%;min-width:1020px;border-collapse:collapse;margin-top:18px;font-size:15px}.history-table th{padding:12px 13px;text-align:left;color:#536b78;font-size:12px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #dce9ed}.history-table td{padding:14px 13px;color:#334f5d;border-bottom:1px solid #edf3f5;vertical-align:middle;line-height:1.45;white-space:nowrap}.history-table tbody tr:last-child td{border-bottom:0}.or-number{font-weight:800;color:#287ea5!important;white-space:nowrap}.amount-cell{font-weight:800;white-space:nowrap;color:#213944!important}.payment-status{display:inline-block;padding:5px 10px;border-radius:999px;font-size:13px;font-weight:800;white-space:nowrap}.status-paid{background:#e6f7ee;color:#1f8550}.status-pending{background:#fff6e0;color:#9a7000}.status-voided,.status-cancelled{background:#fbe9e9;color:#b33d35}.row-actions{display:flex;gap:7px;flex-wrap:wrap}.table-action{padding:7px 9px;font-size:13px;white-space:nowrap}.action-details{background:#e7f0ff!important;border-color:#c3d7fb!important;color:#2c5ab5!important}.action-details:hover{background:#d9e6ff!important}.action-reprint{background:#eef4f0!important;border-color:#cfe0d5!important;color:#3d7a55!important}.action-reprint:hover{background:#e0ede4!important}.table-message{text-align:center!important;padding:35px!important;color:#71858f!important;font-size:16px!important}.history-summary{margin-top:16px;color:#536b78;font-size:14px;font-weight:700}.history-pagination{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:20px;padding-top:18px;border-top:1px solid #edf3f6}.page-nav{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;flex-shrink:0;border:1px solid #cfe4ed;border-radius:50%;background:#fff;color:#2b6f8f;cursor:pointer}.page-nav:hover:not(:disabled){background:#eaf6fb;border-color:#a9dff0}.page-nav:disabled{cursor:not-allowed;opacity:.4}.history-pagination-pages{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center}.history-pagination-pages button{min-width:40px;min-height:40px;border:1px solid transparent;border-radius:10px;background:transparent;color:#536b78;font-weight:700;font-size:15px;cursor:pointer}.history-pagination-pages button:hover{background:#eaf6fb}.history-pagination-pages button.active{border-color:#318fbe;background:#318fbe;color:#fff}.receipt-overlay{position:fixed;inset:0;background:rgba(20,40,50,.5);display:flex;align-items:center;justify-content:center;z-index:500;padding:20px}.receipt-card,.gcash-modal,.transaction-detail-card,.reversal-card,.balance-card{background:#fff;border-radius:18px;padding:26px;position:relative;box-shadow:0 18px 44px rgba(16,50,67,.24)}.receipt-card{width:min(390px,100%)}.receipt-close,.detail-close{position:absolute;right:14px;top:14px}.receipt-card h2{margin:0 0 8px;color:#213944}.receipt-or{color:#267fa8;font-size:17px}.receipt-line{display:flex;justify-content:space-between;gap:15px;font-size:16px;padding:8px 0;border-bottom:1px dashed #eef3f5}.receipt-total{font-weight:800;color:#267fa8;font-size:19px;border-bottom:0}.receipt-balance{font-weight:800;color:#b0620a}.receipt-print{margin-top:16px;padding:12px;font-size:15px}.receipt-redirect{text-align:center;color:#536b78;font-size:14px;font-weight:600;margin:17px 0 0}.gcash-modal{width:min(390px,100%);text-align:center;display:flex;flex-direction:column;align-items:center;gap:13px}.gcash-modal-header{width:100%;display:flex;justify-content:space-between;align-items:center;font-weight:800;color:#213944;font-size:18px}.gcash-qr{width:220px;height:220px;border:1px solid #eef3f5;border-radius:12px;padding:10px}.gcash-waiting{display:flex;align-items:center;gap:8px;font-size:16px;color:#318fbe;font-weight:700}.gcash-cancel{margin-top:0;color:#71858f}.gcash-status-text{font-size:16px;margin:8px 0}.gcash-status-text.err{color:#b33d35}.transaction-detail-card{width:min(1180px,96vw);max-height:94vh;overflow:auto}.detail-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding-right:32px}.detail-eyebrow{color:#647b87;text-transform:uppercase;letter-spacing:.5px;font-size:13px;font-weight:800}.detail-top h2{margin:3px 0;color:#213944}.detail-top p{margin:0;color:#71858f}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:19px 0}.detail-grid>div{display:grid;gap:4px;padding:12px;border:1px solid #e4eff3;border-radius:11px;background:#fbfeff}.detail-grid span,.detail-totals span:first-child{color:#647b87;font-size:13px;text-transform:uppercase;font-weight:700}.detail-grid strong{color:#213944;font-size:16px}.detail-items h3,.audit-trail h3{margin:18px 0 9px;color:#213944;font-size:17px}.detail-item{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #eef3f5}.detail-item span{display:grid;gap:3px}.detail-item small{color:#71858f;font-size:13px}.detail-totals{margin-top:16px;border-top:1px solid #dce9ed;padding-top:10px;margin-left:auto;max-width:400px}.detail-totals div{display:flex;justify-content:space-between;padding:5px 0;color:#415a66;font-size:16px}.detail-totals strong{color:#267fa8;font-size:19px}.split-summary,.detail-note{margin-top:16px;padding:12px;border-radius:10px;background:#f7fbfd;color:#536b78;display:flex;gap:9px;flex-wrap:wrap}.audit-trail{margin-top:18px;border-top:1px solid #e5eef1}.audit-trail p{margin:7px 0;color:#5e7480;font-size:14px}.detail-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:20px}.detail-actions button{width:auto;margin:0;padding:11px 13px;font-size:14px}.void-button{border:0;border-radius:10px;display:inline-flex;align-items:center;gap:7px;color:#fff;font-weight:700;cursor:pointer;background:#b33d35}.reversal-card{width:min(420px,100%)}.reversal-card h2{margin:0;color:#213944}.reversal-card p{color:#71858f}.reversal-card label{display:grid;gap:7px;color:#536b78;font-weight:700}.reversal-card textarea{min-height:100px;margin-bottom:15px}.reversal-card>div:last-child{display:flex;gap:10px}.modal-cancel,.modal-confirm{flex:1;border-radius:10px;padding:11px;border:0;font-size:15px;font-weight:700;cursor:pointer}.modal-cancel{background:#eff4f6;color:#536b78}.modal-confirm{background:#b33d35;color:#fff}.modal-confirm:disabled{opacity:.55;cursor:not-allowed}.spin{animation:spin 1s linear infinite}@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.pending-billing-module{margin-bottom:25px}.pending-billing-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}.pending-billing-heading h2{margin:0;font-size:24px;display:flex;align-items:center;gap:10px;color:#213944}.pending-billing-heading p{margin:6px 0 0;color:#627985;font-size:16px}.pending-billing-table{width:100%;min-width:900px;border-collapse:collapse;margin-top:10px;font-size:15px}.pending-billing-table th{padding:12px 13px;text-align:left;color:#536b78;font-size:12px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #dce9ed}.pending-billing-table td{padding:14px 13px;color:#334f5d;border-bottom:1px solid #edf3f5;vertical-align:top}.pending-billing-table tbody tr:last-child td{border-bottom:0}.rank-cell{font-weight:800;color:#318fbe;text-align:center;width:36px}.status-pending-billing{background:#fff6e0;color:#9a7000}.status-processing{background:#e7f0ff;color:#2c5ab5}.process-payment-btn{display:inline-flex;align-items:center;gap:7px;border:0;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(135deg,#318fbe,#2c5c74);white-space:nowrap}.process-payment-btn:hover{opacity:.92}.consult-summary{display:grid;grid-template-columns:1fr 1fr;gap:12px;border:1px solid #dbe7ec;border-radius:12px;padding:15px;background:#f5fbfd}.consult-summary-row{display:flex;flex-direction:column;gap:3px;font-size:15px}.consult-summary-row span{color:#6F7F88;font-size:13px;text-transform:uppercase;letter-spacing:.3px}.consult-notes{display:grid;gap:14px;margin:21px 0 8px;padding:15px;border:1px solid #dbe7ec;border-radius:12px;background:#fbfeff}.consult-notes>div span{display:block;color:#536b78;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}.consult-notes>div p{margin:0;color:#334f5d;font-size:15px;white-space:pre-wrap}.locked-badge.rx{background:#e6f7ee;color:#1f8550}.status-unpaid{background:#fff6e0;color:#9a7000}.status-partially-paid{background:#fff0da;color:#b0620a}.payment-preview-note{display:inline-block;font-weight:800;font-size:13px}.payment-preview-note.partial{color:#b0620a}.payment-preview-note.unpaid{color:#9a7000}.status-not-purchased{background:#fff6e0;color:#9a7000}.status-partially-purchased{background:#fff0da;color:#b0620a}.status-fully-purchased{background:#e6f7ee;color:#1f8550}.status-purchasing-elsewhere{background:#eef1f4;color:#5b6b76}.collect-balance-btn{background:#fff2e2!important;border-color:#f3d7ae!important;color:#a5650f!important}.collect-balance-btn:hover{background:#fbe8cd!important}.balance-cell{white-space:nowrap}.balance-cell.owed{color:#b0620a!important;font-weight:800}.balance-card{width:min(420px,100%)}.balance-card h2{margin:0;color:#213944}.balance-card p{color:#71858f}.balance-card label{display:grid;gap:7px;color:#536b78;font-weight:700;margin-top:14px}.balance-card-actions{display:flex;gap:10px;margin-top:18px}.balance-confirm-btn{background:#318fbe;color:#fff}.balance-summary{display:flex;justify-content:space-between;gap:12px;padding:13px 15px;border-radius:12px;background:#f5fbfd;border:1px solid #dbe7ec;margin-top:10px}.balance-summary div{display:grid;gap:2px}.balance-summary span{color:#6F7F88;font-size:12px;text-transform:uppercase}.balance-summary strong{font-size:17px;color:#213944}.payment-history-list{display:grid;gap:8px;margin-top:10px}.payment-history-row{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #eef3f5;border-radius:10px;background:#fbfeff;font-size:14px;color:#415a66}.payment-history-row b{color:#213944}.outstanding-rx-module{margin-bottom:25px}.rx-search{margin:14px 0 6px;max-width:420px}.outstanding-rx-table{width:100%;min-width:760px;border-collapse:collapse;margin-top:10px;font-size:14.5px}.outstanding-rx-table th{padding:12px 13px;text-align:left;color:#536b78;font-size:12px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #dce9ed}.outstanding-rx-table td{padding:14px 13px;color:#334f5d;border-bottom:1px solid #edf3f5;vertical-align:top}.outstanding-rx-table tbody tr:last-child td{border-bottom:0}.continue-purchase-btn{display:inline-flex;align-items:center;gap:7px;border:0;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(135deg,#318fbe,#2c5c74);white-space:nowrap}.continue-purchase-btn:hover{opacity:.92}.rx-panel{display:grid;gap:10px;border:1px solid #dbe7ec;border-radius:12px;padding:14px;background:#fbfeff;margin:8px 0 16px}.rx-row{display:grid;grid-template-columns:1.6fr repeat(4,1fr) auto;gap:12px;align-items:center;font-size:14px}.rx-row.head{color:#536b78;font-size:12px;text-transform:uppercase;font-weight:800}.rx-qty-input{width:100%;padding:7px 8px;font-size:14px}.rx-actions{display:flex;gap:6px;justify-content:flex-end}.elsewhere-btn{border:1px solid #e4d3ba;background:#fff8ee;color:#8a6414;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}.elsewhere-btn:hover{background:#fbeeda}.elsewhere-btn:disabled{opacity:.5;cursor:not-allowed}.other-rx-items{padding-top:6px;border-top:1px dashed #dce9ed}.other-rx-row{align-items:flex-start!important}.other-rx-status{display:flex;flex-direction:column;align-items:flex-end;gap:8px}.owner-balance-note{display:flex;align-items:center;gap:8px;margin-top:10px;padding:12px 14px;border-radius:12px;background:#fff2e2;color:#a5650f;font-size:15px;font-weight:700}.rx-meta{margin-top:4px;color:#6F7F88}.rx-meta small{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.rx-qty-inline{width:64px!important;display:inline-block;padding:4px 6px!important;font-size:13px!important}@media(max-width:900px){.rx-row{grid-template-columns:1fr}.rx-row.head{display:none}.fee-row,.payment-amount-row,.split-payment-form,.detail-grid{grid-template-columns:1fr}.history-filters{grid-template-columns:1fr 1fr}.history-search{grid-column:1/-1}.split-payment-form p{grid-column:auto}}@media(max-width:650px){.card,.history-module{padding:18px}.pos-card-head{flex-direction:column;align-items:flex-start;gap:10px}.pos-back-btn{width:100%;justify-content:center}.history-heading{flex-direction:column}.history-heading-actions{width:100%}.history-refresh{flex:1}.history-filters{grid-template-columns:1fr}.history-search{grid-column:auto}.result-row{flex-direction:column;gap:3px}.detail-item{grid-template-columns:1fr auto}.detail-actions>*{flex:1}.payment-amount-row{gap:9px}.consult-summary{grid-template-columns:1fr}}.billing-queue-tabs{position:relative;display:flex;margin-bottom:20px;padding:4px;border-radius:12px;background:#eaf3f7}.billing-queue-tabs-slider{position:absolute;top:4px;bottom:4px;border-radius:9px;background:#fff;box-shadow:0 2px 8px rgba(33,105,127,.18);transition:left .22s ease}.billing-queue-tab{position:relative;z-index:1;flex:1;display:flex;align-items:center;justify-content:center;gap:8px;border:0;background:none;padding:11px 10px;font-size:15px;font-weight:800;color:#627985;cursor:pointer;border-radius:9px}.billing-queue-tab.active{color:#21697f}.pending-billing-module.embedded,.outstanding-rx-module.embedded{margin:0}.rx-progress-cell{font-weight:700;color:#213944;white-space:nowrap}.rx-progress-cell span{display:block;color:#8096a1;font-weight:600;font-size:11.5px;margin-top:2px}.rx-row-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;min-width:190px}.rx-row-actions .continue-purchase-btn,.rx-row-actions .elsewhere-btn,.rx-row-actions .table-action{padding:7px 8px;font-size:12px;justify-content:center;white-space:nowrap}.rx-row-actions .table-action{grid-column:1/-1}.locked-qty-cell{display:flex;align-items:center;gap:6px}.locked-qty-cell strong{color:#213944;font-size:16px}.locked-qty-cell .locked-badge{margin-left:0}.elsewhere-row{background:#fbfcfd}.elsewhere-note{color:#71858f;font-size:12.5px;white-space:normal;line-height:1.4}@media(max-width:900px){.billing-queue-tab{font-size:13px;padding:10px 6px}.rx-row-actions{grid-template-columns:1fr}}
     `;
 
-function PendingBillingQueue({ profile }) {
+function PendingBillingQueue({ profile, embedded }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -172,7 +185,7 @@ function PendingBillingQueue({ profile }) {
   }
 
   return (
-    <section className="card pending-billing-module" id="pending-billing">
+    <section className={embedded ? "pending-billing-module embedded" : "card pending-billing-module"} id="pending-billing">
       <div className="pending-billing-heading">
         <div>
           <h2><Clock size={22} /> Pending Billing Queue</h2>
@@ -220,7 +233,7 @@ function PendingBillingQueue({ profile }) {
 
 const RX_PAGE_SIZE = 10;
 
-function OutstandingPrescriptions({ profile }) {
+function OutstandingPrescriptions({ profile, embedded }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -273,7 +286,7 @@ function OutstandingPrescriptions({ profile }) {
     setError("");
     setBusyId(row.id);
     try {
-      await markPrescriptionElsewhere(row.id);
+      await markPrescriptionElsewhere(row.id, profile);
       await load();
     } catch (elsewhereError) {
       setError(elsewhereError.message || "Unable to update this prescription.");
@@ -283,7 +296,7 @@ function OutstandingPrescriptions({ profile }) {
   }
 
   return (
-    <section className="card outstanding-rx-module" id="outstanding-prescriptions">
+    <section className={embedded ? "outstanding-rx-module embedded" : "card outstanding-rx-module"} id="outstanding-prescriptions">
       <div className="pending-billing-heading">
         <div>
           <h2><Pill size={22} /> Outstanding Prescriptions</h2>
@@ -306,26 +319,27 @@ function OutstandingPrescriptions({ profile }) {
 
       <div className="history-table-wrap">
         <table className="outstanding-rx-table">
-          <thead><tr><th>Date</th><th>Pet Owner</th><th>Pet</th><th>Medicine</th><th>Prescribed</th><th>Purchased</th><th>Remaining</th><th>Status</th><th>Action</th></tr></thead>
+          <thead><tr><th>Date</th><th>Pet Owner</th><th>Pet</th><th>Medicine</th><th>Progress</th><th>Status</th><th>Action</th></tr></thead>
           <tbody>
-            {loading && <tr><td className="table-message" colSpan="9">Loading outstanding prescriptions…</td></tr>}
-            {!loading && visibleRows.length === 0 && <tr><td className="table-message" colSpan="9">No outstanding prescriptions match this search.</td></tr>}
+            {loading && <tr><td className="table-message" colSpan="7">Loading outstanding prescriptions…</td></tr>}
+            {!loading && visibleRows.length === 0 && <tr><td className="table-message" colSpan="7">No outstanding prescriptions match this search.</td></tr>}
             {!loading && paginatedRows.map((row) => <tr key={row.id}>
               <td>{formatDateTime(row.created_at)}</td>
               <td>{row.owner?.full_name || "—"}</td>
               <td>{row.pet?.pet_name || "—"}</td>
               <td>{row.item_name}</td>
-              <td>{row.prescribed_quantity}</td>
-              <td>{row.total_quantity_purchased}</td>
-              <td>{row.remainingQuantity}</td>
+              <td className="rx-progress-cell">{row.total_quantity_purchased}/{row.prescribed_quantity} <span>{row.remainingQuantity} left</span></td>
               <td><StatusPill status={row.fulfillment_status} /></td>
               <td>
-                <div className="row-actions">
+                <div className="rx-row-actions">
                   <button type="button" className="continue-purchase-btn" onClick={() => navigate(`/staff/transactions/new?prescription=${row.id}`)}>
-                    <ShoppingCart size={15} /> Continue Purchase
+                    <ShoppingCart size={14} /> Continue
                   </button>
                   <button type="button" className="elsewhere-btn" disabled={busyId === row.id} onClick={() => handleElsewhere(row)}>
-                    Purchasing Elsewhere
+                    Elsewhere
+                  </button>
+                  <button type="button" className="table-action action-details" onClick={() => downloadPrescriptionNoticePdf(row, { petName: row.pet?.pet_name, ownerName: row.owner?.full_name })}>
+                    <Download size={14} /> Download
                   </button>
                 </div>
               </td>
@@ -360,9 +374,48 @@ function OutstandingPrescriptions({ profile }) {
   );
 }
 
+const BILLING_QUEUE_TABS = ["Pending Billing Queue", "Outstanding Prescriptions"];
+
+function PendingBillingAndOutstanding({ profile }) {
+  const [tab, setTab] = useState(BILLING_QUEUE_TABS[0]);
+  const activeIndex = BILLING_QUEUE_TABS.indexOf(tab);
+
+  return (
+    <section className="card billing-queue-module">
+      <div className="billing-queue-tabs" role="tablist" aria-label="Billing queue view">
+        <div
+          className="billing-queue-tabs-slider"
+          style={{ width: `${100 / BILLING_QUEUE_TABS.length}%`, left: `${(activeIndex * 100) / BILLING_QUEUE_TABS.length}%` }}
+        />
+        {BILLING_QUEUE_TABS.map((label) => (
+          <button
+            key={label}
+            type="button"
+            role="tab"
+            aria-selected={tab === label}
+            className={`billing-queue-tab${tab === label ? " active" : ""}`}
+            onClick={() => setTab(label)}
+          >
+            {label === "Pending Billing Queue" ? <Clock size={16} /> : <Pill size={16} />} {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: tab === "Pending Billing Queue" ? "block" : "none" }}>
+        <PendingBillingQueue profile={profile} embedded />
+      </div>
+      <div style={{ display: tab === "Outstanding Prescriptions" ? "block" : "none" }}>
+        <OutstandingPrescriptions profile={profile} embedded />
+      </div>
+    </section>
+  );
+}
+
 function PaymentTransactionHistory({ profile }) {
+  const navigate = useNavigate();
   const [filters, setFilters] = useState({ search: "", from: "", to: "", paymentMethod: "", paymentStatus: "" });
   const [transactions, setTransactions] = useState([]);
+  const [elsewhereLog, setElsewhereLog] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
@@ -370,6 +423,8 @@ function PaymentTransactionHistory({ profile }) {
   const [auditTrail, setAuditTrail] = useState([]);
   const [payments, setPayments] = useState([]);
   const [prescriptionsById, setPrescriptionsById] = useState(new Map());
+  const [otherPrescriptions, setOtherPrescriptions] = useState([]);
+  const [otherRxBusyId, setOtherRxBusyId] = useState(null);
   const [ownerBalance, setOwnerBalance] = useState(0);
   const [actionDialog, setActionDialog] = useState(null);
   const [reversalReason, setReversalReason] = useState("");
@@ -378,6 +433,13 @@ function PaymentTransactionHistory({ profile }) {
   const [balanceAmount, setBalanceAmount] = useState("");
   const [balanceMethod, setBalanceMethod] = useState("Cash");
   const [collecting, setCollecting] = useState(false);
+
+  useEffect(() => {
+    if (!details && !actionDialog) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = original; };
+  }, [details, actionDialog]);
 
   const canReverse = ["staff", "admin"].includes(profile?.role);
   const loadHistory = useCallback(async () => {
@@ -396,6 +458,16 @@ function PaymentTransactionHistory({ profile }) {
     } finally {
       setLoading(false);
     }
+
+    // Best-effort and independent of the transactions load above -- if the
+    // elsewhere-log table isn't set up yet (or errors for any reason), the
+    // real transaction history must still load and render normally.
+    try {
+      setElsewhereLog(await getPrescriptionElsewhereLog());
+    } catch (logError) {
+      console.warn("Unable to load the purchasing-elsewhere log:", logError.message);
+      setElsewhereLog([]);
+    }
   }, [filters.from, filters.paymentMethod, filters.paymentStatus, filters.to]);
 
   useEffect(() => {
@@ -407,17 +479,44 @@ function PaymentTransactionHistory({ profile }) {
     return () => off();
   }, [loadHistory]);
 
+  // "Purchasing Elsewhere" declarations never touch the transactions table
+  // (nothing was billed), but staff still need them visible in the same
+  // permanent history a real sale shows up in -- merged in as their own row
+  // type, respecting the same date/method/status filters a transaction
+  // would.
+  const combinedRows = useMemo(() => {
+    const dateInRange = (value) => {
+      if (!value) return true;
+      const day = value.slice(0, 10);
+      if (filters.from && day < filters.from) return false;
+      if (filters.to && day > filters.to) return false;
+      return true;
+    };
+    const includeElsewhere =
+      !filters.paymentMethod &&
+      (!filters.paymentStatus || filters.paymentStatus === "Purchasing Elsewhere");
+
+    const txRows = transactions.map((row) => ({ type: "transaction", key: `tx-${row.id}`, date: row.created_at, data: row }));
+    const rxRows = includeElsewhere
+      ? elsewhereLog
+          .filter((row) => dateInRange(row.created_at))
+          .map((row) => ({ type: "elsewhere", key: `rx-${row.id}`, date: row.created_at, data: row }))
+      : [];
+
+    return [...txRows, ...rxRows].sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [transactions, elsewhereLog, filters.from, filters.to, filters.paymentMethod, filters.paymentStatus]);
+
   const visibleTransactions = useMemo(() => {
     const query = filters.search.trim().toLowerCase();
-    if (!query) return transactions;
-    return transactions.filter((transaction) => [
-      transaction.or_number,
-      transaction.id,
-      transaction.owner?.full_name,
-      transaction.pet?.pet_name,
-      transaction.cashier?.full_name,
-    ].filter(Boolean).join(" ").toLowerCase().includes(query));
-  }, [filters.search, transactions]);
+    if (!query) return combinedRows;
+    return combinedRows.filter((row) => (
+      row.type === "transaction"
+        ? [row.data.or_number, row.data.id, row.data.owner?.full_name, row.data.pet?.pet_name, row.data.cashier?.full_name]
+            .filter(Boolean).join(" ").toLowerCase().includes(query)
+        : [row.data.owner?.full_name, row.data.pet?.pet_name, row.data.item_name]
+            .filter(Boolean).join(" ").toLowerCase().includes(query)
+    ));
+  }, [filters.search, combinedRows]);
 
   useEffect(() => {
     setPage(1);
@@ -435,6 +534,7 @@ function PaymentTransactionHistory({ profile }) {
     setAuditTrail([]);
     setPayments([]);
     setPrescriptionsById(new Map());
+    setOtherPrescriptions([]);
     setOwnerBalance(0);
     try {
       const [completeTransaction, audit, paymentRows] = await Promise.all([
@@ -454,6 +554,11 @@ function PaymentTransactionHistory({ profile }) {
         setPrescriptionsById(new Map(rxRows.map((row) => [row.id, row])));
       }
 
+      if (completeTransaction.queue_entry_id) {
+        const allRx = await getPrescriptionsForConsultation(completeTransaction.queue_entry_id);
+        setOtherPrescriptions(allRx.filter((rx) => !prescriptionIds.includes(rx.id)));
+      }
+
       if (completeTransaction.owner_id) {
         getOwnerOutstandingBalance(completeTransaction.owner_id)
           .then(setOwnerBalance)
@@ -461,6 +566,21 @@ function PaymentTransactionHistory({ profile }) {
       }
     } catch (detailError) {
       setError(detailError.message || "Unable to load transaction details.");
+    }
+  }
+
+  async function handleOtherElsewhere(prescriptionId) {
+    if (otherRxBusyId) return;
+    setOtherRxBusyId(prescriptionId);
+    try {
+      await markPrescriptionElsewhere(prescriptionId, profile);
+      setOtherPrescriptions((current) => current.map((rx) => (
+        rx.id === prescriptionId ? { ...rx, fulfillment_status: "Purchasing Elsewhere" } : rx
+      )));
+    } catch (elsewhereError) {
+      setError(elsewhereError.message || "Unable to update this prescription.");
+    } finally {
+      setOtherRxBusyId(null);
     }
   }
 
@@ -537,7 +657,7 @@ function PaymentTransactionHistory({ profile }) {
 
       {!loading && visibleTransactions.length > 0 && (
         <div className="history-summary">
-          Showing {(currentPage - 1) * HISTORY_PAGE_SIZE + 1}–{Math.min(currentPage * HISTORY_PAGE_SIZE, visibleTransactions.length)} of {visibleTransactions.length} transactions
+          Showing {(currentPage - 1) * HISTORY_PAGE_SIZE + 1}–{Math.min(currentPage * HISTORY_PAGE_SIZE, visibleTransactions.length)} of {visibleTransactions.length} records
         </div>
       )}
 
@@ -547,7 +667,23 @@ function PaymentTransactionHistory({ profile }) {
           <tbody>
             {loading && <tr><td className="table-message" colSpan="8">Loading payment history…</td></tr>}
             {!loading && visibleTransactions.length === 0 && <tr><td className="table-message" colSpan="8">No payment transactions match these filters.</td></tr>}
-            {!loading && paginatedTransactions.map((transaction) => <tr key={transaction.id}>
+            {!loading && paginatedTransactions.map((row) => {
+              if (row.type === "elsewhere") {
+                const rx = row.data;
+                return <tr key={row.key} className="elsewhere-row">
+                  <td>{formatDateTime(rx.created_at)}</td>
+                  <td>{rx.owner?.full_name || "—"}</td>
+                  <td>{rx.pet?.pet_name || "—"}</td>
+                  <td className="amount-cell">—</td>
+                  <td className="amount-cell">—</td>
+                  <td>—</td>
+                  <td><StatusPill status="Purchasing Elsewhere" /></td>
+                  <td><small className="elsewhere-note">{rx.item_name} · {rx.remaining_quantity} remaining · recorded by {rx.performedByProfile?.full_name || "—"}</small></td>
+                </tr>;
+              }
+
+              const transaction = row.data;
+              return <tr key={row.key}>
               <td>{formatDateTime(transaction.created_at)}</td>
               <td>{transaction.owner?.full_name || "—"}</td>
               <td>{transaction.pet?.pet_name || "—"}</td>
@@ -560,7 +696,8 @@ function PaymentTransactionHistory({ profile }) {
                 <button type="button" className="table-action action-reprint" onClick={() => printReceipt(transaction)}><Printer size={16} /> Print Invoice</button>
                 {["Unpaid", "Partially Paid"].includes(transaction.payment_status) && <button type="button" className="table-action collect-balance-btn" onClick={() => openCollectBalance(transaction)}><Wallet size={16} /> Collect Balance</button>}
               </div></td>
-            </tr>)}
+              </tr>;
+            })}
           </tbody>
         </table>
       </div>
@@ -607,6 +744,25 @@ function PaymentTransactionHistory({ profile }) {
               <strong>{money(item.line_total)}</strong>
             </div>;
           })}</div>
+          {otherPrescriptions.length > 0 && <div className="detail-items other-rx-items">
+            <h3>Prescribed for this visit, not on this invoice</h3>
+            {otherPrescriptions.map((rx) => <div className="detail-item other-rx-row" key={rx.id}>
+              <span>
+                <b>{rx.item_name}</b>
+                <small>Prescribed {rx.prescribed_quantity} · Purchased {rx.total_quantity_purchased} · Remaining {Math.max(0, Number(rx.prescribed_quantity) - Number(rx.total_quantity_purchased))}</small>
+              </span>
+              <div className="other-rx-status">
+                <StatusPill status={rx.fulfillment_status} />
+                <div className="row-actions">
+                  {!["Fully Purchased", "Purchasing Elsewhere"].includes(rx.fulfillment_status) && <>
+                    <button type="button" className="continue-purchase-btn" onClick={() => navigate(`/staff/transactions/new?prescription=${rx.id}`)}><ShoppingCart size={15} /> Continue Purchase</button>
+                    <button type="button" className="elsewhere-btn" disabled={otherRxBusyId === rx.id} onClick={() => handleOtherElsewhere(rx.id)}>Purchasing Elsewhere</button>
+                  </>}
+                  <button type="button" className="table-action action-details" onClick={() => downloadPrescriptionNoticePdf(rx, { petName: details.pet?.pet_name, ownerName: details.owner?.full_name })}><Download size={15} /> Download</button>
+                </div>
+              </div>
+            </div>)}
+          </div>}
           <div className="detail-totals">{Number(details.discount_amount) > 0 && <div><span>Discount</span><span>-{money(details.discount_amount)}</span></div>}<div><span>Original invoice total</span><strong>{money(details.total_amount)}</strong></div><div><span>Total amount paid</span><span>{money(details.amount_paid)}</span></div><div><span>Remaining balance</span><span>{money(remainingBalance(details))}</span></div><div><span>Change</span><span>{money(details.change_amount)}</span></div></div>
           {details.split_payment_details && <div className="split-summary"><b>Split payment</b><span>{Object.entries(details.split_payment_details).filter(([, value]) => Number(value) > 0).map(([method, value]) => `${method}: ${money(value)}`).join(" · ")}</span></div>}
           {details.notes && <p className="detail-note"><b>Notes:</b> {details.notes}</p>}
@@ -680,6 +836,13 @@ export function NewTransaction({ profile }) {
   const gcashTimerRef = useRef(null);
   const gcashPendingTransactionRef = useRef(null);
   const gcashStatus = gcashModal?.status;
+
+  useEffect(() => {
+    if (!successReceipt && !gcashModal) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = original; };
+  }, [successReceipt, gcashModal]);
   const gcashTransactionId = gcashModal?.transactionId;
 
   useEffect(() => {
@@ -772,12 +935,12 @@ export function NewTransaction({ profile }) {
           inventory_item_id: entry.id,
           item_name: fresh?.item_name || entry.item_name,
           item_type: itemType,
-          quantity: 1,
+          quantity: Math.max(1, Math.round(Number(entry.quantity) || 1)),
           unit_price: Number((fresh?.unit_price ?? entry.unit_price) || 0),
           available: Number(fresh?.quantity || 0),
           deduct_inventory: true,
           locked: true,
-          qtyLocked: true,
+          qtyLocked: false,
         }));
 
         let rxRows = [];
@@ -793,6 +956,7 @@ export function NewTransaction({ profile }) {
               id: entry.id,
               item_name: fresh?.item_name || entry.item_name,
               unit_price: Number((fresh?.unit_price ?? entry.unit_price) || 0),
+              quantity: Number(entry.quantity || 1),
             })),
           }, profile);
           if (cancelled) return;
@@ -877,32 +1041,13 @@ export function NewTransaction({ profile }) {
     setError("");
     setRxBusyId(line.prescriptionId);
     try {
-      await markPrescriptionElsewhere(line.prescriptionId);
+      await markPrescriptionElsewhere(line.prescriptionId, profile);
       setCart((current) => current.filter((entry) => entry.prescriptionId !== line.prescriptionId));
       setPrescriptions((current) => current.map((rx) => (rx.id === line.prescriptionId ? { ...rx, fulfillment_status: "Purchasing Elsewhere" } : rx)));
     } catch (elsewhereError) {
       setError(elsewhereError.message || "Unable to update this prescription.");
     } finally {
       setRxBusyId(null);
-    }
-  }
-
-  // Only reachable while nothing has been purchased against the
-  // prescription yet (the input is disabled otherwise).
-  async function handlePrescribedQuantityChange(line, value) {
-    const quantity = Number(value);
-    if (!Number.isFinite(quantity) || quantity <= 0) return;
-    setError("");
-    try {
-      await updatePrescribedQuantity(line.prescriptionId, quantity);
-      setCart((current) => current.map((entry) => {
-        if (entry.prescriptionId !== line.prescriptionId) return entry;
-        const remaining = quantity - entry.totalPurchased;
-        return { ...entry, prescribedQuantity: quantity, remainingQuantity: remaining, quantity: Math.min(entry.quantity, remaining) };
-      }));
-      setPrescriptions((current) => current.map((rx) => (rx.id === line.prescriptionId ? { ...rx, prescribed_quantity: quantity } : rx)));
-    } catch (qtyError) {
-      setError(qtyError.message || "Unable to update the prescribed quantity.");
     }
   }
 
@@ -915,6 +1060,7 @@ export function NewTransaction({ profile }) {
   function closeGcashModal() { stopGcashTimers(); gcashPendingTransactionRef.current = null; setGcashModal(null); }
 
   async function handleCheckout() {
+    if (submitting) return;
     setError("");
     if (!billing) { setError("This consultation could not be loaded."); return; }
     const overStock = cart.find((line) => Number(line.quantity) > Number(line.available));
@@ -1054,15 +1200,13 @@ export function NewTransaction({ profile }) {
         return <tr key={`${line.inventory_item_id}-${line.locked ? "vet" : "extra"}`}>
           <td>
             {line.item_name}
-            {line.locked && !line.qtyLocked && <span className="locked-badge rx">Prescribed</span>}
+            {isMedicine && <span className="locked-badge rx">Prescribed</span>}
             {isMedicine && <div className="rx-meta">
-              {line.totalPurchased > 0
-                ? <small>Prescribed {line.prescribedQuantity} · Purchased {line.totalPurchased} · Remaining {line.remainingQuantity}</small>
-                : <small>Prescribed qty <input type="number" min="1" className="rx-qty-input rx-qty-inline" defaultValue={line.prescribedQuantity} onBlur={(event) => handlePrescribedQuantityChange(line, event.target.value)} /> · Remaining {line.remainingQuantity}</small>}
+              <small>Prescribed {line.prescribedQuantity} · Purchased {line.totalPurchased} · Remaining {line.remainingQuantity}</small>
             </div>}
           </td>
           <td>{line.item_type}</td>
-          <td>{(!line.locked || !line.qtyLocked) ? <div className="qty-stepper"><button type="button" disabled={isMedicine && Number(line.quantity) <= 0} onClick={() => updateCartLine(line.inventory_item_id, { quantity: Math.max(isMedicine ? 0 : 1, Number(line.quantity) - 1) })}><Minus size={14} /></button><input type="number" min={isMedicine ? 0 : 1} max={qtyMax} value={line.quantity} onChange={(event) => updateCartLine(line.inventory_item_id, { quantity: event.target.value })} /><button type="button" onClick={() => updateCartLine(line.inventory_item_id, { quantity: Math.min(qtyMax, Number(line.quantity) + 1) })}><Plus size={14} /></button>{isMedicine && <label className="skip-toggle"><input type="checkbox" checked={Number(line.quantity) <= 0} onChange={(event) => updateCartLine(line.inventory_item_id, { quantity: event.target.checked ? 0 : Math.min(qtyMax, 1) })} /> Skip for now</label>}</div> : <span className="locked-badge">Vet-selected</span>}</td>
+          <td>{(!line.locked || !line.qtyLocked) ? <div className="qty-stepper"><button type="button" disabled={isMedicine && Number(line.quantity) <= 0} onClick={() => updateCartLine(line.inventory_item_id, { quantity: Math.max(isMedicine ? 0 : 1, Number(line.quantity) - 1) })}><Minus size={14} /></button><input type="number" min={isMedicine ? 0 : 1} max={qtyMax} value={line.quantity} onChange={(event) => updateCartLine(line.inventory_item_id, { quantity: event.target.value })} /><button type="button" onClick={() => updateCartLine(line.inventory_item_id, { quantity: Math.min(qtyMax, Number(line.quantity) + 1) })}><Plus size={14} /></button>{isMedicine && <label className="skip-toggle"><input type="checkbox" checked={Number(line.quantity) <= 0} onChange={(event) => { updateCartLine(line.inventory_item_id, { quantity: event.target.checked ? 0 : Math.min(qtyMax, 1) }); setAmountTouched(false); }} /> Skip for now</label>}</div> : <div className="locked-qty-cell"><strong>{line.quantity}</strong><span className="locked-badge">Vet-selected</span></div>}</td>
           <td>{money(line.unit_price)}</td>
           <td>{money(Number(line.quantity) * Number(line.unit_price))}</td>
           <td>
@@ -1081,7 +1225,7 @@ export function NewTransaction({ profile }) {
         </div>
       </>}
 
-      <div className="fee-row"><div><label className="field-label toggle-label"><input type="checkbox" className="inline-checkbox" checked={includeCheckupFee} onChange={(event) => setIncludeCheckupFee(event.target.checked)} /> Checkup fee (PHP)</label><input type="number" min="0" step="0.01" value={checkupFee} disabled={!includeCheckupFee} className={!includeCheckupFee ? "fee-disabled" : ""} onChange={(event) => setCheckupFee(event.target.value)} />{!includeCheckupFee && <span className="muted fee-off-note">Off — product-only POS sale.</span>}</div><div><label className="field-label">Payment method</label><select value={paymentMethod} onChange={(event) => { setPaymentMethod(event.target.value); setAmountTouched(false); }}>{PAYMENT_METHODS.map((method) => <option key={method}>{method}</option>)}</select></div></div>
+      <div className="fee-row"><div><label className="field-label toggle-label"><input type="checkbox" className="inline-checkbox" checked={includeCheckupFee} onChange={(event) => setIncludeCheckupFee(event.target.checked)} /> Checkup fee (PHP)</label><input type="number" min="0" step="0.01" value={checkupFee} disabled={!includeCheckupFee} readOnly className={!includeCheckupFee ? "fee-disabled" : ""} />{!includeCheckupFee && <span className="muted fee-off-note">Off — product-only POS sale.</span>}</div><div><label className="field-label">Payment method</label><select value={paymentMethod} onChange={(event) => { setPaymentMethod(event.target.value); setAmountTouched(false); }}>{PAYMENT_METHODS.map((method) => <option key={method}>{method}</option>)}</select></div></div>
 
       {paymentMethod === "Split Payment" ? <div className="split-payment-form"><label>Cash portion<input type="number" min="0" step="0.01" value={splitPayment.cash} onChange={(event) => setSplitPayment((current) => ({ ...current, cash: event.target.value }))} placeholder="0.00" /></label><label>{splitPayment.digitalMethod} portion<input type="number" min="0" step="0.01" value={splitPayment.digital} onChange={(event) => setSplitPayment((current) => ({ ...current, digital: event.target.value }))} placeholder="0.00" /></label><label>Digital method<select value={splitPayment.digitalMethod} onChange={(event) => setSplitPayment((current) => ({ ...current, digitalMethod: event.target.value }))}>{PAYMENT_METHODS.filter((method) => !["Cash", "Split Payment"].includes(method)).map((method) => <option key={method}>{method}</option>)}</select></label><p>Total received: <b>{money(splitTotal)}</b>{paymentStatusPreview && paymentStatusPreview !== "Full Payment" && <span className={`payment-preview-note ${paymentStatusPreview === "Unpaid" ? "unpaid" : "partial"}`}> · {paymentStatusPreview}</span>}</p></div> : isGcash ? <div className="online-payment-note"><CreditCard size={18} /> GCash is saved as <b>Pending</b>; inventory is deducted only after PayMongo confirms payment.</div> : <div className="payment-amount-row"><label>Amount paid<input type="number" min="0" max={totalAmount.toFixed(2)} step="0.01" value={amountPaid} onChange={(event) => { const raw = event.target.value; const numeric = Number(raw); const clamped = Number.isFinite(numeric) && numeric > totalAmount ? totalAmount.toFixed(2) : raw; setAmountPaid(clamped); setAmountTouched(true); }} placeholder="0.00" />{paymentStatusPreview && paymentStatusPreview !== "Full Payment" && <small className={`payment-preview-note ${paymentStatusPreview === "Unpaid" ? "unpaid" : "partial"}`}>{paymentStatusPreview}</small>}</label><div><span>Change</span><strong>{money(changeAmount)}</strong></div></div>}
       <textarea className="notes-input" placeholder="Notes (optional)" value={notes} onChange={(event) => setNotes(event.target.value)} />
@@ -1110,8 +1254,7 @@ export function NewTransaction({ profile }) {
 
 export default function TransactionHistoryPage({ profile }) {
   return <AppShell profile={profile} title="Transactions"><div className="transaction-module">
-    <PendingBillingQueue profile={profile} />
-    <OutstandingPrescriptions profile={profile} />
+    <PendingBillingAndOutstanding profile={profile} />
     <PaymentTransactionHistory profile={profile} />
     <style>{styles}</style>
   </div></AppShell>;
