@@ -19,6 +19,7 @@ import { CalendarCheck, Download, Printer, Receipt, RefreshCw, Stethoscope, Tria
 import AppShell from "../../components/AppShell";
 import { supabase } from "../../config/supabaseClient";
 import { exportCsv, loadReports } from "../../services/reportService";
+import { formatDateTime12h } from "../../utils/timeFormat";
 import pawLogo from "../../assets/reference/paw.png";
 
 const PALETTE = ["#4DA8DA", "#4CAF78", "#F4B942", "#e16e64", "#8E7CC3", "#34B3A4"];
@@ -184,7 +185,7 @@ export default function ReportsAnalytics({ profile }) {
 
   // ---- Print-only report data (screen data reorganized for a printable
   // clinic report; no new sources, everything comes from `data` above) ----
-  const generatedAt = new Date().toLocaleString("en-PH", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const generatedAt = formatDateTime12h(new Date());
   const inventoryItems = data?.inventory || [];
   const lowStockOnly = inventoryItems.filter((item) => item.status === "Low Stock");
   const outOfStockOnly = inventoryItems.filter((item) => item.status === "Out of Stock");

@@ -47,6 +47,7 @@ import {
   updateInventoryBatch,
 } from "../services/inventoryService";
 
+import { formatDateTime12h } from "../utils/timeFormat";
 import ConfirmDialog from "./ConfirmDialog";
 import InventoryForecastReport from "./InventoryForecastReport";
 
@@ -1141,17 +1142,9 @@ export default function InventoryManagementModule({
       pdf.setCharSpace(0);
       pdf.setTextColor(...MUTED);
 
-      const generatedDate =
-        new Date().toLocaleString(
-          "en-PH",
-          {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          }
-        );
+      const generatedDate = formatDateTime12h(new Date(), {
+        month: "long",
+      });
 
       pdf.text(
         `Generated on ${generatedDate}`,
@@ -2693,9 +2686,7 @@ export default function InventoryManagementModule({
                           ?.item_name ||
                           "Inventory item"}{" "}
                         •{" "}
-                        {new Date(
-                          tx.created_at
-                        ).toLocaleString()}
+                        {formatDateTime12h(tx.created_at)}
                       </span>
 
                       <small>
@@ -3114,7 +3105,7 @@ export default function InventoryManagementModule({
                       <div>
                         <strong>{tx.transaction_type}</strong>
                         <span>
-                          {new Date(tx.created_at).toLocaleString()}
+                          {formatDateTime12h(tx.created_at)}
                           {tx.batch?.batch_number
                             ? ` · Batch ${tx.batch.batch_number}`
                             : ""}

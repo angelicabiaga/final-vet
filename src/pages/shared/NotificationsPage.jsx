@@ -18,6 +18,7 @@ import {
   sendBroadcast,
   subscribeNotifications,
 } from "../../services/notificationService";
+import { formatDateTime12h } from "../../utils/timeFormat";
 
 const FILTER_OPTIONS = [
   "Appointment Confirmation",
@@ -615,9 +616,7 @@ export default function NotificationsPage({ profile }) {
                     {notification.notification_type || "General"}
                     {" • "}
                     {notification.created_at
-                      ? new Date(
-                          notification.created_at
-                        ).toLocaleString()
+                      ? formatDateTime12h(notification.created_at)
                       : "Date unavailable"}
                   </small>
                 </div>

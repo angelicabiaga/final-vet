@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabaseClient";
+import { formatTime12h } from "../utils/timeFormat";
 
 async function safe(table, select = "*") {
   const { data, error } = await supabase.from(table).select(select);
@@ -185,7 +186,7 @@ function buildBusiestHours(queues) {
     if (!queue.arrived_at) return;
     counts[new Date(queue.arrived_at).getHours()] += 1;
   });
-  return counts.map((count, hour) => ({ hour: `${String(hour).padStart(2, "0")}:00`, count }));
+  return counts.map((count, hour) => ({ hour: formatTime12h(`${String(hour).padStart(2, "0")}:00`), count }));
 }
 
 function buildBusiestDays(queues) {

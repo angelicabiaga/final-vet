@@ -1,4 +1,5 @@
 import { supabase } from '../config/supabaseClient';
+import { formatTime12h } from '../utils/timeFormat';
 
 export const APPOINTMENT_STATUSES = ['Confirmed', 'Completed', 'Cancelled'];
 const ACTIVE_STATUSES = ['Confirmed'];
@@ -17,10 +18,7 @@ export const addTenMinutes = (value) => {
 };
 
 export const formatTime = (value) => {
-  if (!value) return '—';
-  const [hour, minute] = normalizeTime(value).split(':').map(Number);
-  const date = new Date(2000, 0, 1, hour, minute);
-  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return formatTime12h(normalizeTime(value));
 };
 
 export async function getPetsByOwner(ownerId) {

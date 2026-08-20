@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabaseClient";
+import { formatTime12h } from "../utils/timeFormat";
 
 export async function getNotifications(profileId) {
   if (!profileId) return [];
@@ -197,7 +198,7 @@ export async function checkUpcomingAppointmentReminders(profile) {
     await supabase.from("notifications").insert({
       recipient_id: profile.id,
       title: "Upcoming Appointment",
-      message: `${pet?.pet_name || "Your pet"}'s appointment starts at ${appointment.start_time.slice(0, 5)} today.`,
+      message: `${pet?.pet_name || "Your pet"}'s appointment starts at ${formatTime12h(appointment.start_time)} today.`,
       notification_type: "Appointment Reminder",
       related_module: "Appointments",
       related_record: appointment.id,

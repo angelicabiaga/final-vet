@@ -32,6 +32,8 @@ import {
   getPetOptions,
 } from "../../services/petService";
 
+import { formatClockTime } from "../../utils/timeFormat";
+
 const SUGGESTED_PROMPTS = [
   "My dog has no appetite. What should I check?",
   "What are your clinic hours?",
@@ -42,13 +44,7 @@ const SUGGESTED_PROMPTS = [
 const CHAT_STORAGE_VERSION = "v1";
 
 function formatTime(date) {
-  return date.toLocaleTimeString(
-    [],
-    {
-      hour: "numeric",
-      minute: "2-digit",
-    }
-  );
+  return formatClockTime(date);
 }
 
 function getChatStorageKey(profileId) {

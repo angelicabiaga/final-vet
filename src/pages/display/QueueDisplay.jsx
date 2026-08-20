@@ -10,6 +10,7 @@ import {
   getQueue,
   subscribeToQueue,
 } from '../../services/queueService';
+import { formatClockTime } from '../../utils/timeFormat';
 
 const QUEUE_REFRESH_INTERVAL_MS = 15_000;
 
@@ -599,11 +600,7 @@ export default function QueueDisplay() {
             <Clock3 size={28} strokeWidth={2.1} />
             <div>
               <strong>
-                {now.toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                })}
+                {formatClockTime(now, { second: '2-digit' })}
               </strong>
               <span>
                 {now.toLocaleDateString([], {

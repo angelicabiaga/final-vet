@@ -62,12 +62,17 @@ function invoiceBalance(transaction) {
   return Math.max(0, Number(transaction?.total_amount || 0) - Number(transaction?.amount_paid || 0));
 }
 
+const MANILA_TIME_ZONE = "Asia/Manila";
+
 function formatPurchaseDateTime(value) {
   if (!value) return "—";
-  return new Date(value).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" });
+  return new Date(value).toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    hour12: true,
+    timeZone: MANILA_TIME_ZONE,
+  });
 }
-
-const MANILA_TIME_ZONE = "Asia/Manila";
 
 // Resolves the real moment a timeline entry happened. appointments.start_time
 // is a plain "time" column with no zone -- it's clinic-local wall time, so

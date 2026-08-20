@@ -121,9 +121,11 @@ const CHAT_DIRECTORY = {
 };
 
 const formatCurrentTime = (date) =>
-  date.toLocaleTimeString([], {
+  date.toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Manila',
   }).toLowerCase();
 
 const StaffMessages = ({ navigation, route }) => {

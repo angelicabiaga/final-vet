@@ -8,6 +8,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import AppShell from "./AppShell";
 import { loadDashboardData } from "../services/dashboardService";
 import { subscribeToQueue } from "../services/queueService";
+import { formatTime12h, formatClockTime } from "../utils/timeFormat";
 
 const ACTIVE_QUEUE = ["Waiting", "Serving"];
 const TODAY_STATUSES = ["Confirmed", "Completed"];
@@ -56,12 +57,7 @@ function dateKey(value) {
   return String(value).slice(0, 10);
 }
 
-function formatTime(value) {
-  if (!value) return "—";
-  const [h, m] = String(value).split(":");
-  const hour = Number(h);
-  return `${hour % 12 || 12}:${m} ${hour >= 12 ? "PM" : "AM"}`;
-}
+const formatTime = formatTime12h;
 
 // A queue row's time is either its linked appointment's scheduled slot
 // ("HH:MM") or, for a walk-in with no appointment, the timestamp it
@@ -69,10 +65,7 @@ function formatTime(value) {
 function formatQueueTime(row) {
   const slot = row.appointment?.start_time;
   if (slot) return formatTime(slot);
-  if (row.arrived_at) {
-    const parsed = new Date(row.arrived_at);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }
+  if (row.arrived_at) return formatClockTime(row.arrived_at);
   return "—";
 }
 

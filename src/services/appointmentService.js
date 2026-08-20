@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabaseClient";
 import { describeDbError } from "../utils/supabaseErrors";
+import { formatTime12h } from "../utils/timeFormat";
 
 export const APPOINTMENT_STATUSES = ["Confirmed", "Completed", "Cancelled"];
 
@@ -25,9 +26,7 @@ function nowMinutesLocal() {
 }
 
 export function formatTime(time) {
-  if (!time) return "—";
-  const [hour, minute] = normalizeTime(time).split(":").map(Number);
-  return new Date(2000, 0, 1, hour, minute).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return formatTime12h(normalizeTime(time));
 }
 
 export async function getOwners() {

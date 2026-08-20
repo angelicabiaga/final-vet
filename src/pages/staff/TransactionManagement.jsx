@@ -31,6 +31,7 @@ import AppShell from "../../components/AppShell";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { getInventoryItems, getInventoryItemsByIds } from "../../services/inventoryService";
 import { downloadPrescriptionNoticePdf } from "../../utils/invoicePdf";
+import { formatDateTime12h } from "../../utils/timeFormat";
 import {
   getConsultationForBilling,
   getOutstandingPrescriptions,
@@ -72,7 +73,7 @@ function money(value) {
 }
 
 function formatDateTime(value) {
-  return value ? new Date(value).toLocaleString("en-PH") : "—";
+  return value ? formatDateTime12h(value) : "—";
 }
 
 // Anything the vet dispenses/administers with a meaningful purchase

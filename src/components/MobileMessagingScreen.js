@@ -9,6 +9,7 @@ import {
   createConversation, getConversations, getMessageContacts, getMessages,
   markConversationRead, sendMessage, subscribeToMessages,
 } from "../api/messageService";
+import { formatDateTime12h } from "../utils/timeFormat";
 
 const normalizeRole = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
 
@@ -151,7 +152,7 @@ export default function MobileMessagingScreen({ navigation, route, allowedRoles 
                 <View style={styles.conversationBody}>
                   <View style={styles.row}><Text style={styles.conversationTitle} numberOfLines={1}>{titleFor(item)}</Text>{item.unread > 0 ? <View style={styles.badge}><Text style={styles.badgeText}>{item.unread}</Text></View> : null}</View>
                   <Text style={styles.preview} numberOfLines={1}>{item.latest?.body || item.latest?.attachment_name || "No messages yet"}</Text>
-                  <Text style={styles.time}>{new Date(item.last_message_at || item.created_at).toLocaleString()}</Text>
+                  <Text style={styles.time}>{formatDateTime12h(item.last_message_at || item.created_at)}</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -178,7 +179,7 @@ export default function MobileMessagingScreen({ navigation, route, allowedRoles 
                   {!mine ? <Text style={styles.sender}>{item.sender?.full_name || "PawCruz User"}</Text> : null}
                   {item.body ? <Text style={styles.messageText}>{item.body}</Text> : null}
                   {item.attachment_url ? <TouchableOpacity onPress={() => Linking.openURL(item.attachment_url)}><Text style={styles.attachment}>📎 {item.attachment_name || "Attachment"}</Text></TouchableOpacity> : null}
-                  <Text style={styles.messageTime}>{new Date(item.created_at).toLocaleString()}</Text>
+                  <Text style={styles.messageTime}>{formatDateTime12h(item.created_at)}</Text>
                 </View>;
               }}
               ListEmptyComponent={!messagesLoading ? <View style={styles.emptyChat}><Text style={styles.emptyText}>No messages yet. Say hello.</Text></View> : null}

@@ -29,7 +29,6 @@ const VeterinarianScheduleManagement = lazy(() => import("./pages/staff/Veterina
 const AnimalPatientManagement = lazy(() => import("./pages/staff/AnimalPatientManagement"));
 const VeterinarianPatients = lazy(() => import("./pages/veterinarian/VeterinarianPatients"));
 const AdminPetManagement = lazy(() => import("./pages/admin/PetManagement"));
-const StaffVeterinarians = lazy(() => import("./pages/staff/Veterinarians"));
 const AdminMedicalRecords = lazy(() => import("./pages/admin/AdminMedicalRecords"));
 const StaffMedicalRecords = lazy(() => import("./pages/staff/MedicalRecordsManagement"));
 const VeterinarianMedicalRecords = lazy(() => import("./pages/veterinarian/MedicalRecordsManagement"));
@@ -107,7 +106,6 @@ export default function App() {
         <Route path="/staff/appointments" element={guarded(["staff", "admin"], <AppointmentManagement profile={profile} />)} />
         <Route path="/staff/walk-in" element={guarded(["staff", "admin"], <WalkInRegistration profile={profile} />)} />
         <Route path="/staff/veterinarian-schedules" element={guarded(["staff", "admin"], <VeterinarianScheduleManagement profile={profile} />)} />
-        <Route path="/staff/veterinarians" element={guarded(["staff"], <StaffVeterinarians profile={profile} />)} />
         <Route path="/staff/patients" element={guarded(["staff"], <AnimalPatientManagement profile={profile} />)} />
         <Route path="/admin/pets" element={guarded(["admin"], <AdminPetManagement profile={profile} />)} />
         <Route path="/veterinarian/appointments" element={guarded(["veterinarian"], <VeterinarianAppointments profile={profile} />)} />

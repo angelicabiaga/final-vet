@@ -1,11 +1,12 @@
 import jsPDF from "jspdf";
+import { formatDateTime12h } from "./timeFormat";
 
 function money(value) {
   return Number(value || 0).toLocaleString("en-PH", { style: "currency", currency: "PHP" });
 }
 
 function formatDateTime(value) {
-  return value ? new Date(value).toLocaleString("en-PH") : "—";
+  return value ? formatDateTime12h(value) : "—";
 }
 
 function remainingInvoiceBalance(transaction) {

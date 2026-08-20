@@ -42,6 +42,8 @@ import {
   uploadMedicalAttachment,
 } from "../services/medicalRecordService";
 
+import { formatDateTime12h } from "../utils/timeFormat";
+
 import { getInventoryItems } from "../services/inventoryService";
 import PredictiveHealthReport from "./PredictiveHealthReport";
 import ConfirmDialog from "./ConfirmDialog";
@@ -2201,9 +2203,7 @@ export default function MedicalRecordsModule({
       y += 5;
 
       pdf.text(
-        `Generated: ${new Date().toLocaleString(
-          "en-PH"
-        )}`,
+        `Generated: ${formatDateTime12h(new Date())}`,
         left,
         y
       );

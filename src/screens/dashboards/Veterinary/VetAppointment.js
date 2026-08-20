@@ -3,6 +3,7 @@ import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View }
 import VetShell, { getVetUser } from './VetShell';
 import { formatTime, getVeterinarianAppointments } from '../../../api/mobileAppointmentService';
 import { supabase } from '../../../config/supabaseClient';
+import { formatDateTime12h } from '../../../utils/timeFormat';
 
 const ALLOWED = ['Confirmed', 'Completed', 'Cancelled'];
 const label = (value) => value || '—';
@@ -14,7 +15,7 @@ const formatDate = (value) => {
 const formatTimestamp = (value) => {
   if (!value) return '—';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return Number.isNaN(date.getTime()) ? '—' : formatDateTime12h(date);
 };
 
 export default function VetAppointment({ navigation, route }) {

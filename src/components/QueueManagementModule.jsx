@@ -4,6 +4,7 @@ import {PawPrint}from"lucide-react";
 import AppShell from"./AppShell";
 import {getQueue,getTodayCheckinAppointments,checkInAppointment,updateQueueStatus,requeueToNextAvailable,subscribeToQueue,QUEUE_STATUSES}from"../services/queueService";
 import {getVeterinarians,formatTime,todayLocal}from"../services/appointmentService";
+import {formatClockTime}from"../utils/timeFormat";
 import {MEDICAL_RECORD_TEMPLATES}from"../constants/medicalRecordTemplates";
 
 // One representative photo per row -- multi-pet visits already collapse
@@ -15,7 +16,7 @@ function PetThumb({pet}){
 
 function bookingTime(r){
  if(r.original_appointment_time)return formatTime(r.original_appointment_time);
- if(r.arrived_at)return new Date(r.arrived_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+ if(r.arrived_at)return formatClockTime(r.arrived_at);
  return "—";
 }
 

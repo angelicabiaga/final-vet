@@ -27,18 +27,22 @@ const PetOwnerQuickAssist = ({ navigation, route }) => {
   const headerMenuAnimation = React.useRef(new Animated.Value(0)).current;
   const [isHeaderMenuVisible, setIsHeaderMenuVisible] = React.useState(false);
   const [currentTime, setCurrentTime] = React.useState(() =>
-    new Date().toLocaleTimeString([], {
+    new Date().toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Manila',
     }).toLowerCase(),
   );
 
   React.useEffect(() => {
     const timerId = setInterval(() => {
       setCurrentTime(
-        new Date().toLocaleTimeString([], {
+        new Date().toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
+          hour12: true,
+          timeZone: 'Asia/Manila',
         }).toLowerCase(),
       );
     }, 1000 * 30);

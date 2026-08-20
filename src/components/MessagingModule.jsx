@@ -18,6 +18,7 @@ import {
   subscribeToMessages,
   subscribeToMessagingOverview,
 } from "../services/messageService";
+import { formatDateTime12h } from "../utils/timeFormat";
 
 // Consistent default avatar whenever a profile photo isn't on file.
 function Avatar({ src, alt, size = 38 }) {
@@ -404,7 +405,7 @@ export default function MessagingModule({ profile }) {
                           📎 {message.attachment_name || "Attachment"}
                         </a>
                       )}
-                      <time>{new Date(message.created_at).toLocaleString()}</time>
+                      <time>{formatDateTime12h(message.created_at)}</time>
                     </div>
                   </div>
                 );

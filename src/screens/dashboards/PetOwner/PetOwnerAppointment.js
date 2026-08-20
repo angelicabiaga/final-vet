@@ -27,6 +27,7 @@ import {
   todayLocal,
 } from '../../../api/mobileAppointmentService';
 import { supabase } from '../../../config/supabaseClient';
+import { formatDateTime12h } from '../../../utils/timeFormat';
 
 const DATE_WINDOW_DAYS = 60;
 
@@ -42,7 +43,7 @@ const formatTimestamp = (value) => {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return formatDateTime12h(date);
 };
 
 export default function PetOwnerAppointment({ navigation, route }) {

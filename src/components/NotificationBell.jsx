@@ -18,6 +18,7 @@ import {
   subscribeNotifications,
 } from "../services/notificationService";
 import { hasBeenWelcomed, markWelcomed, playNotificationSound } from "../utils/notificationSound";
+import { formatDateTime12h } from "../utils/timeFormat";
 
 const TOAST_DURATION_MS = 7000;
 
@@ -187,13 +188,7 @@ export default function NotificationBell({ profile }) {
     if (!value) return "Recently";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "Recently";
-    return date.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
+    return formatDateTime12h(date);
   }
 
   function getNotificationTitle(notification) {
