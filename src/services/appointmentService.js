@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabaseClient";
+import { describeDbError } from "../utils/supabaseErrors";
 
 export const APPOINTMENT_STATUSES = ["Confirmed", "Completed", "Cancelled"];
 
@@ -161,9 +162,22 @@ export async function createAppointment(payload) {
   const { data, error } = await supabase.from("appointments").insert(row).select("id, queue_number").single();
   if (error) {
     if (error.code === "23505") throw new Error("That appointment time was just booked. Please choose another slot.");
-    throw new Error(error.message?.includes("outside") || error.message?.includes("schedule") ? error.message : "Unable to book the appointment.");
+    const fallback = error.message?.includes("outside") || error.message?.includes("schedule") ? error.message : "Unable to book the appointment. Please try again.";
+    throw new Error(describeDbError(error, fallback, "createAppointment"));
   }
   return data;
+}
+
+// Rollback helper for a partially-created multi-pet booking batch: cancels
+// the appointments that already succeeded in this submission so a failure
+// partway through doesn't leave orphaned bookings behind.
+export async function cancelAppointmentsByIds(ids) {
+  if (!ids?.length) return;
+  try {
+    await supabase.from("appointments").update({ status: "Cancelled" }).in("id", ids).eq("status", "Confirmed");
+  } catch {
+    // Best-effort rollback -- the caller already has a primary error to show.
+  }
 }
 
 export async function sendGuestBookingConfirmationEmail(details) {
@@ -184,8 +198,8 @@ export async function getAppointments(filters = {}) {
   let query = supabase.from("appointments").select(`
     id, appointment_date, start_time, end_time, appointment_source, consultation_type,
     visit_reason, notes, status, visit_group_id, created_at, updated_at,
-    pet:pets(id, pet_name, species, breed),
-    owner:profiles!appointments_owner_id_fkey(id, full_name, email, username),
+    pet:pets(id, pet_name, species, breed, photo_url),
+    owner:profiles!appointments_owner_id_fkey(id, full_name, email, username, avatar_url),
     veterinarian:profiles!appointments_veterinarian_id_fkey(id, full_name)
   `).order("appointment_date", { ascending: false }).order("start_time", { ascending: true });
   if (filters.ownerId) query = query.eq("owner_id", filters.ownerId);
@@ -259,11 +273,16 @@ function generateTempPassword() {
   return value.join("");
 }
 
-export async function createGuestOwner({ fullName, phone, email }) {
+export async function createGuestOwner({ fullName, phone, email, address }) {
   const trimmedName = fullName?.trim();
   const trimmedEmail = email?.trim().toLowerCase();
   const trimmedPhone = phone?.trim();
-  if (!trimmedName || !trimmedEmail || !trimmedPhone) throw new Error("Full name, phone, and email are required.");
+  const trimmedAddress = address?.trim();
+  if (!trimmedName || !trimmedEmail || !trimmedPhone || !trimmedAddress) {
+    throw new Error("Full name, phone, email, and address are required.");
+  }
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailPattern.test(trimmedEmail)) throw new Error("Enter a valid email address.");
   const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16) || "guest";
   const username = `${slug}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const tempPassword = generateTempPassword();
@@ -272,14 +291,15 @@ export async function createGuestOwner({ fullName, phone, email }) {
     username,
     email: trimmedEmail,
     phone: trimmedPhone,
+    address: trimmedAddress,
     role: "pet_owner",
     account_status: "active",
     password: tempPassword,
     must_change_password: true
-  }).select("id, full_name, username, email, phone").single();
+  }).select("id, full_name, username, email, phone, address").single();
   if (error) {
     if (error.code === "23505") throw new Error("That email is already registered. Search for them as an existing pet owner instead.");
-    throw new Error("Unable to register the guest.");
+    throw new Error(describeDbError(error, "Unable to register the guest. Please check the details and try again.", "createGuestOwner"));
   }
   return { ...data, tempPassword };
 }
@@ -307,6 +327,6 @@ export async function createPet(ownerId, values) {
     breed: values.breed?.trim() || null,
     sex: values.sex || "Unknown"
   }).select("*").single();
-  if (error) throw new Error("Unable to register the pet.");
+  if (error) throw new Error(describeDbError(error, "Unable to register the pet. Please try again.", "createPet"));
   return data;
 }

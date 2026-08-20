@@ -26,6 +26,7 @@ import {
   RotateCcw,
   Search,
   Stethoscope,
+  UserCircle,
   Users,
   X,
 } from "lucide-react";
@@ -1964,7 +1965,7 @@ export default function PetManagementModule({
                   <th>Pet</th>
                   <th>Species / Breed</th>
                   {canManageAll && <th>Owner</th>}
-                  <th>Details</th>
+                  <th>Records</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -1977,7 +1978,11 @@ export default function PetManagementModule({
                     className={pet.is_archived ? "archived" : ""}
                   >
                     <td>
-                      <div className="pet-cell">
+                      <button
+                        type="button"
+                        className="pet-cell pet-cell-link"
+                        onClick={() => handleOpenHistory(pet)}
+                      >
                         {pet.photo_url ? (
                           <img
                             src={pet.photo_url}
@@ -1992,7 +1997,7 @@ export default function PetManagementModule({
                         <span>
                           {pet.pet_name || "Unnamed Pet"}
                         </span>
-                      </div>
+                      </button>
                     </td>
 
                     <td>
@@ -2002,7 +2007,18 @@ export default function PetManagementModule({
 
                     {canManageAll && (
                       <td>
-                        {pet.owner?.full_name || "Not assigned"}
+                        {pet.owner ? (
+                          <button type="button" className="pet-cell pet-cell-link" onClick={() => openOwnerPets(pet.owner)}>
+                            {pet.owner.avatar_url ? (
+                              <img className="owner-avatar small" src={pet.owner.avatar_url} alt={pet.owner.full_name || "Pet owner"} />
+                            ) : (
+                              <div className="photo owner-avatar small">
+                                <Users size={13} />
+                              </div>
+                            )}
+                            <span>{pet.owner.full_name || "Unnamed Owner"}</span>
+                          </button>
+                        ) : "Not assigned"}
                       </td>
                     )}
 
@@ -2013,7 +2029,7 @@ export default function PetManagementModule({
                         onClick={() => handleOpenHistory(pet)}
                       >
                         <Eye size={14} />
-                        View Details
+                        View Records
                       </button>
                     </td>
 
@@ -2203,12 +2219,16 @@ export default function PetManagementModule({
                   {visibleOwners.map((owner) => (
                     <tr key={owner.id}>
                       <td>
-                        <div className="pet-cell">
-                          <div className="photo owner-avatar">
-                            <Users size={16} />
-                          </div>
+                        <button type="button" className="pet-cell pet-cell-link" onClick={() => openOwnerPets(owner)}>
+                          {owner.avatar_url ? (
+                            <img className="owner-avatar" src={owner.avatar_url} alt={owner.full_name || "Pet owner"} />
+                          ) : (
+                            <div className="photo owner-avatar">
+                              <Users size={16} />
+                            </div>
+                          )}
                           <span>{owner.full_name || "Unnamed Owner"}</span>
-                        </div>
+                        </button>
                       </td>
                       <td>{owner.phone || "Not recorded"}</td>
                       <td>{owner.email || "Not recorded"}</td>
@@ -2249,9 +2269,13 @@ export default function PetManagementModule({
           </button>
 
           <div className="owner-summary-card">
-            <div className="photo owner-avatar large">
-              <Users size={22} />
-            </div>
+            {browsingOwner.avatar_url ? (
+              <img className="owner-avatar large" src={browsingOwner.avatar_url} alt={browsingOwner.full_name || "Pet owner"} />
+            ) : (
+              <div className="photo owner-avatar large">
+                <Users size={22} />
+              </div>
+            )}
 
             <div>
               <h2>{browsingOwner.full_name || "Unnamed Owner"}</h2>
@@ -2383,6 +2407,13 @@ export default function PetManagementModule({
             <p className="modal-eyebrow">Animal Patient Profile</p>
 
             <div className="patient-header">
+              <div className="patient-header-photo">
+                {selectedPet.photo_url ? (
+                  <img src={selectedPet.photo_url} alt={selectedPet.pet_name || "Pet"} />
+                ) : (
+                  <PawPrint size={26} />
+                )}
+              </div>
               <div className="patient-header-main">
                 <h2>{selectedPet.pet_name || "Unnamed Pet"}</h2>
                 <div className="patient-chips">
@@ -2394,6 +2425,11 @@ export default function PetManagementModule({
                 </div>
                 {canManageAll && (
                   <p className="patient-owner-line">
+                    {selectedPet.owner?.avatar_url ? (
+                      <img className="patient-owner-avatar" src={selectedPet.owner.avatar_url} alt={selectedPet.owner.full_name || "Pet owner"} />
+                    ) : (
+                      <UserCircle size={16} className="patient-owner-avatar-fallback" />
+                    )}
                     Owner: {selectedPet.owner?.full_name || "Not assigned"}
                     {selectedPet.owner?.phone ? ` · ${selectedPet.owner.phone}` : ""}
                     {selectedPet.owner?.email ? ` · ${selectedPet.owner.email}` : ""}
@@ -3288,6 +3324,24 @@ export default function PetManagementModule({
           color: #20313b;
         }
 
+        .pet-cell-link {
+          border: 0;
+          background: none;
+          padding: 0;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          width: 100%;
+        }
+
+        .pet-cell-link:hover span {
+          text-decoration: underline;
+        }
+
+        .pet-cell img.owner-avatar {
+          border-radius: 50%;
+        }
+
         .pet-cell img,
         .photo {
           width: 40px;
@@ -3380,11 +3434,18 @@ export default function PetManagementModule({
 
         .owner-avatar {
           border-radius: 50%;
+          object-fit: cover;
+          flex-shrink: 0;
         }
 
         .owner-avatar.large {
           width: 58px;
           height: 58px;
+        }
+
+        .owner-avatar.small {
+          width: 28px;
+          height: 28px;
         }
 
         .back-to-owners {
@@ -3681,9 +3742,31 @@ export default function PetManagementModule({
         .patient-header {
           display: flex;
           align-items: flex-start;
-          justify-content: space-between;
-          gap: 20px;
+          gap: 16px;
           padding-right: 40px;
+        }
+
+        .patient-header-photo {
+          flex-shrink: 0;
+          width: 64px;
+          height: 64px;
+          border-radius: 16px;
+          background: #eaf8fd;
+          color: #4da8da;
+          display: grid;
+          place-items: center;
+          overflow: hidden;
+        }
+
+        .patient-header-photo img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .patient-header-main {
+          min-width: 0;
+          flex: 1;
         }
 
         .patient-header-main h2 {
@@ -3709,8 +3792,24 @@ export default function PetManagementModule({
 
         .patient-owner-line {
           margin: 0;
+          display: flex;
+          align-items: center;
+          gap: 6px;
           color: #6f7f88;
           font-size: 13px;
+        }
+
+        .patient-owner-avatar {
+          flex-shrink: 0;
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          object-fit: cover;
+        }
+
+        .patient-owner-avatar-fallback {
+          flex-shrink: 0;
+          color: #a9c1cb;
         }
 
         .patient-extra-details {

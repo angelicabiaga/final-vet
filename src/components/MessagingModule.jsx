@@ -5,6 +5,7 @@ import {
   Paperclip,
   Plus,
   Send,
+  UserCircle,
   X,
 } from "lucide-react";
 import {
@@ -17,6 +18,17 @@ import {
   subscribeToMessages,
   subscribeToMessagingOverview,
 } from "../services/messageService";
+
+// Consistent default avatar whenever a profile photo isn't on file.
+function Avatar({ src, alt, size = 38 }) {
+  return src ? (
+    <img className="msgAvatar" src={src} alt={alt} style={{ width: size, height: size }} />
+  ) : (
+    <span className="msgAvatar msgAvatarFallback" style={{ width: size, height: size }}>
+      <UserCircle size={Math.round(size * 0.72)} />
+    </span>
+  );
+}
 
 export default function MessagingModule({ profile }) {
   const [conversations, setConversations] = useState([]);
@@ -33,6 +45,9 @@ export default function MessagingModule({ profile }) {
   const [error, setError] = useState("");
 
   const endRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const shouldAutoScrollRef = useRef(true);
+  const previousConversationIdRef = useRef(null);
 
   async function loadConversations() {
     if (!profile?.id) return;
@@ -175,11 +190,27 @@ export default function MessagingModule({ profile }) {
     };
   }, [activeConversation?.id, profile?.id]);
 
+  // Only auto-scrolls to the newest message when the reader was already
+  // at (or near) the bottom -- either because they just opened this
+  // conversation, or because they haven't scrolled up to read older
+  // messages. Scrolling up to read history is never interrupted by a
+  // newly arriving message.
   useEffect(() => {
-    if (endRef.current) {
-      endRef.current.scrollIntoView({ behavior: "smooth" });
+    const isNewConversation = previousConversationIdRef.current !== activeConversation?.id;
+    previousConversationIdRef.current = activeConversation?.id;
+    if (isNewConversation) shouldAutoScrollRef.current = true;
+
+    if (shouldAutoScrollRef.current && endRef.current) {
+      endRef.current.scrollIntoView({ behavior: isNewConversation ? "auto" : "smooth" });
     }
-  }, [messages]);
+  }, [messages, activeConversation?.id]);
+
+  function handleMessagesScroll() {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom < 120;
+  }
 
   useEffect(() => {
     if (!showNewConversation) return;
@@ -278,6 +309,10 @@ export default function MessagingModule({ profile }) {
       .join(" • ") || "PawCruz";
   }
 
+  function getConversationAvatar(conversation) {
+    return getOtherParticipants(conversation).find((participant) => participant.avatar_url)?.avatar_url || "";
+  }
+
   function getConversationPreview(conversation) {
     const latest = conversation?.latest;
     if (!latest) return "No messages yet";
@@ -318,6 +353,7 @@ export default function MessagingModule({ profile }) {
               key={conversation.id}
               onClick={() => setActiveConversation(conversation)}
             >
+              <Avatar src={getConversationAvatar(conversation)} alt={getConversationTitle(conversation)} />
               <div>
                 <b>{getConversationTitle(conversation)}</b>
                 <em className="conversationRole">{getConversationRole(conversation)}</em>
@@ -339,34 +375,40 @@ export default function MessagingModule({ profile }) {
         ) : (
           <>
             <div className="chathead">
+              <Avatar src={getConversationAvatar(activeConversation)} alt={getConversationTitle(activeConversation)} size={40} />
               <div>
                 <b>{getConversationTitle(activeConversation)}</b>
                 <small>{getConversationRole(activeConversation)}</small>
               </div>
             </div>
 
-            <div className="messages">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`bubble ${
-                    message.sender_id === profile.id ? "mine" : ""
-                  }`}
-                >
-                  <small className="senderName">{message.sender_id === profile.id ? (profile.full_name || profile.username || "You") : (message.sender?.full_name || "PawCruz User")}</small>
-                  {message.body && <p>{message.body}</p>}
-                  {message.attachment_url && (
-                    <a
-                      href={message.attachment_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      📎 {message.attachment_name || "Attachment"}
-                    </a>
-                  )}
-                  <time>{new Date(message.created_at).toLocaleString()}</time>
-                </div>
-              ))}
+            <div className="messages" ref={messagesContainerRef} onScroll={handleMessagesScroll}>
+              {messages.map((message) => {
+                const mine = message.sender_id === profile.id;
+                return (
+                  <div key={message.id} className={`bubbleRow ${mine ? "mine" : ""}`}>
+                    <Avatar
+                      src={mine ? profile.avatar_url : message.sender?.avatar_url}
+                      alt={mine ? (profile.full_name || profile.username || "You") : (message.sender?.full_name || "PawCruz User")}
+                      size={28}
+                    />
+                    <div className={`bubble ${mine ? "mine" : ""}`}>
+                      <small className="senderName">{mine ? (profile.full_name || profile.username || "You") : (message.sender?.full_name || "PawCruz User")}</small>
+                      {message.body && <p>{message.body}</p>}
+                      {message.attachment_url && (
+                        <a
+                          href={message.attachment_url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          📎 {message.attachment_name || "Attachment"}
+                        </a>
+                      )}
+                      <time>{new Date(message.created_at).toLocaleString()}</time>
+                    </div>
+                  </div>
+                );
+              })}
               <div ref={endRef} />
             </div>
 
@@ -436,6 +478,7 @@ export default function MessagingModule({ profile }) {
                       )
                     }
                   />
+                  <Avatar src={contact.avatar_url} alt={contact.full_name} size={32} />
                   <span>
                     {contact.full_name}
                     <small>
@@ -457,7 +500,7 @@ export default function MessagingModule({ profile }) {
       )}
 
       <style>{`
-        .msg{height:calc(100vh - 138px);min-height:570px;background:#fff;border-radius:18px;display:grid;grid-template-columns:320px 1fr;overflow:hidden;box-shadow:0 8px 24px #2f759616}.left{border-right:1px solid #deedf2;overflow:auto}.lefthead{display:flex;align-items:center;justify-content:space-between;padding:18px}.lefthead h3{margin:0}.lefthead button,.composer button{border:0;background:#4DA8DA;color:white;border-radius:10px;padding:8px}.composer button:disabled{opacity:.6;cursor:not-allowed}.conv{width:100%;border:0;border-top:1px solid #edf5f7;background:white;padding:14px;text-align:left;display:flex;justify-content:space-between;cursor:pointer}.conv.active{background:#eaf7fc}.conv div{display:grid;gap:4px;min-width:0}.conversationRole{font-style:normal;color:#397d9d;font-size:11px;font-weight:700;text-transform:capitalize}.conv small{color:#73858e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}.conv span{background:#4DA8DA;color:#fff;border-radius:20px;padding:4px 8px;height:max-content}.chat{display:flex;flex-direction:column;min-width:0}.chathead{padding:17px;border-bottom:1px solid #deedf2}.chathead div{display:grid;gap:4px}.chathead small{color:#73858e}.messages{flex:1;overflow:auto;padding:20px;background:#f7fcfe}.bubble{max-width:72%;background:#fff;padding:11px 13px;border-radius:4px 14px 14px 14px;margin-bottom:12px;box-shadow:0 3px 12px #2f759610;display:grid;gap:5px}.bubble.mine{margin-left:auto;background:#dff3fb;border-radius:14px 4px 14px 14px}.bubble p{margin:0;white-space:pre-wrap}.bubble small,.bubble time{font-size:10px;color:#758790}.bubble .senderName{font-weight:800;color:#315f76;font-size:11px}.bubble.mine .senderName{text-align:right;color:#2b6f8d}.bubble a{color:#217ba7}.composer{display:flex;gap:8px;padding:13px;border-top:1px solid #deedf2}.composer>input{flex:1;border:1px solid #cfe2e9;border-radius:12px;padding:12px}.composer label{display:grid;place-items:center;cursor:pointer}.composer label input{display:none}.empty{margin:auto;text-align:center;color:#789}.muted{padding:15px;color:#789}.modal{position:fixed;inset:0;background:#20313b99;z-index:60;display:grid;place-items:center;padding:20px}.new{background:#fff;border-radius:18px;padding:24px;width:min(520px,100%);max-height:90vh;overflow-y:auto;box-sizing:border-box;position:relative}.x{position:absolute;right:15px;top:15px;border:0;background:#eef6f9;border-radius:50%;padding:6px}.new>label{display:grid;gap:6px}.new input[type=text],.new>label input{padding:11px;border:1px solid #cee2e9;border-radius:9px}.contacts{max-height:300px;overflow:auto;border:1px solid #e0edf1;border-radius:10px}.contacts label{display:flex;gap:10px;padding:11px;border-bottom:1px solid #edf3f5}.contacts span{display:grid}.contacts small{color:#789}.create{width:100%;margin-top:14px;border:0;background:#4DA8DA;color:white;padding:12px;border-radius:10px}.toast{position:fixed;right:20px;bottom:20px;background:#fff0f0;color:#a33;padding:12px;border-radius:10px;display:flex;gap:10px}.toast button{border:0;background:none}@media(max-width:750px){.msg{grid-template-columns:1fr;height:auto}.left{max-height:260px;border-right:0;border-bottom:1px solid #deedf2}.chat{min-height:500px}.bubble{max-width:88%}}
+        .msg{height:calc(100vh - 138px);min-height:570px;background:#fff;border-radius:18px;display:grid;grid-template-columns:320px 1fr;overflow:hidden;box-shadow:0 8px 24px #2f759616}.left{min-height:0;border-right:1px solid #deedf2;overflow-y:auto}.lefthead{display:flex;align-items:center;justify-content:space-between;padding:18px}.lefthead h3{margin:0}.lefthead button,.composer button{border:0;background:#4DA8DA;color:white;border-radius:10px;padding:8px}.composer button:disabled{opacity:.6;cursor:not-allowed}.conv{width:100%;border:0;border-top:1px solid #edf5f7;background:white;padding:14px;text-align:left;display:flex;align-items:center;gap:11px;justify-content:space-between;cursor:pointer}.conv.active{background:#eaf7fc}.conv div{flex:1;display:grid;gap:4px;min-width:0}.msgAvatar{flex-shrink:0;border-radius:50%;object-fit:cover;display:grid;place-items:center}.msgAvatarFallback{background:#e6f6fc;color:#4DA8DA}.conversationRole{font-style:normal;color:#397d9d;font-size:11px;font-weight:700;text-transform:capitalize}.conv small{color:#73858e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}.conv span{background:#4DA8DA;color:#fff;border-radius:20px;padding:4px 8px;height:max-content}.chat{display:flex;flex-direction:column;min-width:0;min-height:0}.chathead{flex-shrink:0;display:flex;align-items:center;gap:11px;padding:17px;border-bottom:1px solid #deedf2}.chathead div{display:grid;gap:4px;min-width:0}.chathead small{color:#73858e}.messages{flex:1;min-height:0;overflow-y:auto;padding:20px;background:#f7fcfe;scrollbar-width:thin;scrollbar-color:#b8dcec transparent}.messages::-webkit-scrollbar{width:8px}.messages::-webkit-scrollbar-track{background:transparent}.messages::-webkit-scrollbar-thumb{background:#b8dcec;border-radius:999px}.messages::-webkit-scrollbar-thumb:hover{background:#8fc4de}.bubbleRow{display:flex;align-items:flex-end;gap:8px;margin-bottom:12px}.bubbleRow.mine{flex-direction:row-reverse}.bubble{max-width:72%;background:#fff;padding:11px 13px;border-radius:4px 14px 14px 14px;box-shadow:0 3px 12px #2f759610;display:grid;gap:5px;min-width:0}.bubble.mine{background:#dff3fb;border-radius:14px 4px 14px 14px}.bubble p{margin:0;white-space:pre-wrap}.bubble small,.bubble time{font-size:10px;color:#758790}.bubble .senderName{font-weight:800;color:#315f76;font-size:11px}.bubble.mine .senderName{text-align:right;color:#2b6f8d}.bubble a{color:#217ba7}.composer{flex-shrink:0;display:flex;gap:8px;padding:13px;border-top:1px solid #deedf2}.composer>input{flex:1;border:1px solid #cfe2e9;border-radius:12px;padding:12px}.composer label{display:grid;place-items:center;cursor:pointer}.composer label input{display:none}.empty{margin:auto;text-align:center;color:#789}.muted{padding:15px;color:#789}.modal{position:fixed;inset:0;background:#20313b99;z-index:60;display:grid;place-items:center;padding:20px}.new{background:#fff;border-radius:18px;padding:24px;width:min(520px,100%);max-height:90vh;overflow-y:auto;box-sizing:border-box;position:relative}.x{position:absolute;right:15px;top:15px;border:0;background:#eef6f9;border-radius:50%;padding:6px}.new>label{display:grid;gap:6px}.new input[type=text],.new>label input{padding:11px;border:1px solid #cee2e9;border-radius:9px}.contacts{max-height:300px;overflow:auto;border:1px solid #e0edf1;border-radius:10px}.contacts label{display:flex;gap:10px;padding:11px;border-bottom:1px solid #edf3f5}.contacts span{display:grid}.contacts small{color:#789}.create{width:100%;margin-top:14px;border:0;background:#4DA8DA;color:white;padding:12px;border-radius:10px}.toast{position:fixed;right:20px;bottom:20px;background:#fff0f0;color:#a33;padding:12px;border-radius:10px;display:flex;gap:10px}.toast button{border:0;background:none}@media(max-width:750px){.msg{grid-template-columns:1fr;height:auto}.left{max-height:260px;border-right:0;border-bottom:1px solid #deedf2}.chat{min-height:500px}.bubble{max-width:88%}}
       `}</style>
     </div>
   );

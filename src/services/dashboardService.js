@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabaseClient";
+import { getQueue } from "./queueService";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -16,6 +17,24 @@ async function safeQuery(query, fallback = []) {
   }
 }
 
+// Reuses Queue Management's own getQueue() -- same table, same queue_date
+// (clinic-local, defaults inside getQueue), same status values, same join
+// data, and the same manual-order/priority sort. A failure here is kept
+// separate from the rest of the dashboard so one bad query doesn't blank
+// out appointments/pets/inventory too, but it is surfaced as a real error
+// instead of being swallowed into an empty list.
+async function loadQueue(role, profileId) {
+  const filters = {};
+  if (role === "veterinarian") filters.veterinarianId = profileId;
+  if (role === "pet_owner") filters.ownerId = profileId;
+  try {
+    return { queues: await getQueue(filters), queueError: null };
+  } catch (error) {
+    console.error("Dashboard queue load failed:", error);
+    return { queues: [], queueError: error.message || "Unable to load the live queue." };
+  }
+}
+
 export async function loadDashboardData(profile) {
   const role = profile?.role;
   const profileId = profile?.id;
@@ -29,19 +48,15 @@ export async function loadDashboardData(profile) {
   if (role === "pet_owner") appointmentQuery = appointmentQuery.eq("owner_id", profileId);
   if (role === "veterinarian") appointmentQuery = appointmentQuery.eq("veterinarian_id", profileId);
 
-  let queueQuery = supabase.from("queue_entries").select("id, queue_number, pet_id, owner_id, veterinarian_id, queue_status, source, checked_in_at, created_at").order("created_at", { ascending: false }).limit(100);
-  if (role === "pet_owner") queueQuery = queueQuery.eq("owner_id", profileId);
-  if (role === "veterinarian") queueQuery = queueQuery.eq("veterinarian_id", profileId);
-
   let medicalQuery = supabase.from("medical_records").select("id, pet_id, owner_id, veterinarian_id, consultation_date, diagnosis, record_status, created_at").order("consultation_date", { ascending: false }).limit(50);
   if (role === "pet_owner") medicalQuery = medicalQuery.eq("owner_id", profileId).eq("record_status", "Finalized");
   if (role === "veterinarian") medicalQuery = medicalQuery.eq("veterinarian_id", profileId);
 
-  const [profiles, pets, appointments, queues, inventory, medicalRecords, logs, participants] = await Promise.all([
+  const [profiles, pets, appointments, queueResult, inventory, medicalRecords, logs, participants] = await Promise.all([
     safeQuery(supabase.from("profiles").select("id, full_name, role, account_status, created_at").order("created_at", { ascending: false }).limit(100)),
     safeQuery(petQuery),
     safeQuery(appointmentQuery),
-    safeQuery(queueQuery),
+    loadQueue(role, profileId),
     safeQuery(supabase.from("inventory_items").select("id, item_name, quantity, reorder_level, status, expiry_date, updated_at").order("updated_at", { ascending: false }).limit(100)),
     safeQuery(medicalQuery),
     safeQuery(
@@ -57,5 +72,9 @@ export async function loadDashboardData(profile) {
     ? await safeQuery(supabase.from("messages").select("id, conversation_id, sender_id, message_text, created_at").in("conversation_id", conversationIds).order("created_at", { ascending: false }).limit(100))
     : [];
 
-  return { currentDate, profiles, pets, appointments, queues, inventory, medicalRecords, logs, participants, messages };
+  return {
+    currentDate, profiles, pets, appointments,
+    queues: queueResult.queues, queueError: queueResult.queueError,
+    inventory, medicalRecords, logs, participants, messages
+  };
 }

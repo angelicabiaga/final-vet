@@ -3,7 +3,8 @@ import { ArrowRight, CalendarDays, Check, ChevronDown, Clock3, PawPrint, Plus, R
 import { Link } from "react-router-dom";
 import {
   createAppointment, getVeterinarianAvailability, getOwners, getPetsByOwner,
-  createGuestOwner, sendGuestBookingConfirmationEmail, sendGuestAccountEmail, formatTime, todayLocal
+  createGuestOwner, sendGuestBookingConfirmationEmail, sendGuestAccountEmail, formatTime, todayLocal,
+  cancelAppointmentsByIds
 } from "../services/appointmentService";
 import { savePet } from "../services/petService";
 import { supabase } from "../config/supabaseClient";
@@ -26,7 +27,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const [ownerQuery, setOwnerQuery] = useState("");
   const [ownerDropdownOpen, setOwnerDropdownOpen] = useState(false);
   const [ownerRecord, setOwnerRecord] = useState(null);
-  const [guestForm, setGuestForm] = useState({ firstName: "", lastName: "", phone: "", email: "" });
+  const [guestForm, setGuestForm] = useState({ firstName: "", lastName: "", phone: "", email: "", address: "" });
+  const submittingRef = useRef(false);
+  const petModalSavingRef = useRef(false);
+  const guestOwnerPromiseRef = useRef(null);
   const [petDropdownOpen, setPetDropdownOpen] = useState(false);
   const petSelectRef = useRef(null);
   const [petModalOpen, setPetModalOpen] = useState(false);
@@ -170,15 +174,23 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   async function ensureOwnerId() {
     if (form.ownerId) return form.ownerId;
     if (!guestOwner) throw new Error("Search for and select a pet owner first.");
-    const { firstName, lastName, phone, email } = guestForm;
-    if (!firstName.trim() || !lastName.trim() || !phone.trim() || !email.trim()) {
-      throw new Error("Fill in the guest's first name, last name, phone, and email first.");
+    if (guestOwnerPromiseRef.current) return guestOwnerPromiseRef.current;
+    const { firstName, lastName, phone, email, address } = guestForm;
+    if (!firstName.trim() || !lastName.trim() || !phone.trim() || !email.trim() || !address.trim()) {
+      throw new Error("Fill in the guest's first name, last name, phone, email, and address first.");
     }
     const fullName = `${firstName.trim()} ${lastName.trim()}`;
-    const owner = await createGuestOwner({ fullName, phone, email });
-    setOwnerRecord(owner);
-    updateForm({ ownerId: owner.id });
-    return owner.id;
+    guestOwnerPromiseRef.current = createGuestOwner({ fullName, phone, email, address })
+      .then(owner => {
+        setOwnerRecord(owner);
+        updateForm({ ownerId: owner.id });
+        return owner.id;
+      })
+      .catch(error => {
+        guestOwnerPromiseRef.current = null;
+        throw error;
+      });
+    return guestOwnerPromiseRef.current;
   }
 
   function togglePet(id) {
@@ -205,6 +217,12 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
   async function submitPetModal(event) {
     event.preventDefault();
+    if (petModalSavingRef.current) return;
+    if (!petModalForm.petName.trim() || !petModalForm.species.trim()) {
+      setPetModalMessage("Pet name and species are required.");
+      return;
+    }
+    petModalSavingRef.current = true;
     try {
       setPetModalSaving(true);
       setPetModalMessage("");
@@ -214,12 +232,12 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       setForm(current => ({ ...current, petIds: [...current.petIds, newPet.id] }));
       setPetModalOpen(false);
     } catch (error) { setPetModalMessage(error.message); }
-    finally { setPetModalSaving(false); }
+    finally { setPetModalSaving(false); petModalSavingRef.current = false; }
   }
 
   async function submit(event) {
     event.preventDefault();
-    if (submitting) return;
+    if (submittingRef.current) return;
     if (!form.petIds.length) { setMessage({ type: "error", text: "Select at least one pet." }); return; }
     if (!form.veterinarianId) { setMessage({ type: "error", text: "Select a veterinarian." }); return; }
     if (consecutiveSlots.length < form.petIds.length) {
@@ -227,6 +245,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       return;
     }
 
+    submittingRef.current = true;
     try {
       setSubmitting(true);
       const ownerId = isStaff ? await ensureOwnerId() : profile.id;
@@ -235,21 +254,28 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         ? (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`)
         : null;
       const bookings = [];
+      const createdAppointmentIds = [];
       let queueNumber = null;
-      for (let index = 0; index < form.petIds.length; index++) {
-        const petId = form.petIds[index];
-        const startTime = consecutiveSlots[index];
-        const created = await createAppointment({
-          ownerId, petId, veterinarianId: form.veterinarianId,
-          appointmentDate: form.appointmentDate, startTime,
-          source, notes: form.notes, status: "Confirmed", createdBy: profile.id,
-          visitGroupId
-        });
-        if (!queueNumber) queueNumber = created?.queue_number || null;
-        bookings.push({
-          pet: pets.find(item => item.id === petId)?.pet_name || "Registered pet",
-          time: `${formatTime(startTime)} to ${formatTime(nextTime(startTime))}`
-        });
+      try {
+        for (let index = 0; index < form.petIds.length; index++) {
+          const petId = form.petIds[index];
+          const startTime = consecutiveSlots[index];
+          const created = await createAppointment({
+            ownerId, petId, veterinarianId: form.veterinarianId,
+            appointmentDate: form.appointmentDate, startTime,
+            source, notes: form.notes, status: "Confirmed", createdBy: profile.id,
+            visitGroupId
+          });
+          if (created?.id) createdAppointmentIds.push(created.id);
+          if (!queueNumber) queueNumber = created?.queue_number || null;
+          bookings.push({
+            pet: pets.find(item => item.id === petId)?.pet_name || "Registered pet",
+            time: `${formatTime(startTime)} to ${formatTime(nextTime(startTime))}`
+          });
+        }
+      } catch (bookingError) {
+        if (createdAppointmentIds.length) await cancelAppointmentsByIds(createdAppointmentIds);
+        throw bookingError;
       }
 
       const refreshed = await getVeterinarianAvailability(form.appointmentDate);
@@ -306,7 +332,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       setForm(current => ({ ...current, petIds: [], startTime: "", notes: "" }));
       onCreated?.();
     } catch (error) { setMessage({ type: "error", text: error.message }); }
-    finally { setSubmitting(false); }
+    finally { setSubmitting(false); submittingRef.current = false; }
   }
 
   if (loading) return <div className="appointment-card">Loading appointment form…</div>;
@@ -397,9 +423,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
               <label>Phone Number<span className="required-mark">*</span><input required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, phone: event.target.value }))} placeholder="Enter phone number" /></label>
               <label>Email<span className="required-mark">*</span><input required type="email" value={guestForm.email} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, email: event.target.value }))} placeholder="Enter email address" /></label>
             </div>
+            <label>Address<span className="required-mark">*</span><input required value={guestForm.address} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, address: event.target.value }))} placeholder="Enter home address" /></label>
             {ownerRecord && (
               <p className="help">
-                Registered as a new pet owner account for {ownerRecord.full_name}. <button type="button" className="appt-linklike" onClick={() => { setOwnerRecord(null); updateForm({ ownerId: "" }); }}>Not them? Start over</button>
+                Registered as a new pet owner account for {ownerRecord.full_name}. <button type="button" className="appt-linklike" onClick={() => { guestOwnerPromiseRef.current = null; setOwnerRecord(null); updateForm({ ownerId: "" }); }}>Not them? Start over</button>
               </p>
             )}
           </>
@@ -554,7 +581,8 @@ const styles = `
 
 .appt-owner-select{position:relative}.appt-owner-select input{padding-right:36px}.appt-clear{position:absolute;right:8px;top:12px;border:0;background:#edf5f8;color:#5d7782;border-radius:7px;padding:5px;cursor:pointer;display:grid;place-items:center}
 .appt-linklike{border:0;background:none;padding:0;color:#318fbe;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
-.appt-owner-dropdown,.appt-pet-dropdown{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;max-height:260px;overflow:auto;background:#fff;border:1px solid #cfe4ed;border-radius:12px;box-shadow:0 14px 30px rgba(45,111,143,.16);padding:6px}
+.appt-owner-dropdown{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;max-height:260px;overflow:auto;background:#fff;border:1px solid #cfe4ed;border-radius:12px;box-shadow:0 14px 30px rgba(45,111,143,.16);padding:6px}
+.appt-pet-dropdown{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;max-height:260px;overflow:auto;background:#fff;border:1px solid #cfe4ed;border-radius:12px;box-shadow:0 14px 30px rgba(45,111,143,.16);padding:6px;display:grid;gap:2px}
 .appt-dropdown-empty{padding:12px;color:#8496a0;font-size:13px;font-weight:400}
 .appt-dropdown-item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;font:inherit}
 .appt-dropdown-item:hover{background:#eaf8fd}.appt-dropdown-item strong{color:#20313B;font-size:14px;font-weight:700}.appt-dropdown-item span{color:#7c8c94;font-size:12px;font-weight:400}
@@ -563,8 +591,8 @@ const styles = `
 .appt-pet-trigger:disabled{opacity:.6;cursor:not-allowed}
 .appt-addpet-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #a9dff0;border-radius:12px;padding:12px 14px;background:#eaf8fd;color:#267da3;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
 .appt-addpet-btn:hover{background:#dcf1fa}.appt-addpet-btn:disabled{opacity:.6;cursor:not-allowed}
-.appt-pet-option{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;font-weight:400;cursor:pointer;margin-bottom:0}
-.appt-pet-option:hover{background:#eaf8fd}.appt-pet-option input{width:16px;height:16px;accent-color:#4DA8DA}
+.appt-pet-option{display:flex!important;align-items:center;gap:9px!important;padding:8px 10px;border-radius:8px;font-weight:400!important;cursor:pointer;margin-bottom:0!important}
+.appt-pet-option:hover{background:#eaf8fd}.appt-pet-option input{width:16px;height:16px;flex-shrink:0;accent-color:#4DA8DA}
 .appt-pet-chips{display:flex;flex-wrap:wrap;gap:8px}
 .appt-pet-chip{display:inline-flex;align-items:center;gap:6px;background:#eaf8fd;color:#267da3;border-radius:999px;padding:6px 6px 6px 12px;font-size:13px;font-weight:700}
 .appt-pet-chip button{display:grid;place-items:center;border:0;background:rgba(38,125,163,.14);color:#267da3;border-radius:50%;padding:3px;cursor:pointer}

@@ -36,6 +36,15 @@ button:not(:disabled):active{transform:translateY(0)}
   color:var(--pc-text)!important;outline:none!important;
 }
 .shell input:focus,.shell select:focus,.shell textarea:focus{border-color:var(--pc-blue)!important;box-shadow:0 0 0 3px rgba(67,143,181,.12)!important}
+.shell .search-box input,.shell .history-search input,.shell .vets-search input,.shell .search input,.shell .passwordBox input,.shell .vpd-passwordBox input{
+  border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;
+}
+.shell .search-box input:focus,.shell .history-search input:focus,.shell .vets-search input:focus,.shell .search input:focus,.shell .passwordBox input:focus,.shell .vpd-passwordBox input:focus{
+  border:0!important;box-shadow:none!important;
+}
+.shell .search-box:focus-within,.shell .history-search:focus-within,.shell .vets-search:focus-within,.shell .search:focus-within,.shell .passwordBox:focus-within,.shell .vpd-passwordBox:focus-within{
+  border-color:var(--pc-blue)!important;box-shadow:0 0 0 3px rgba(67,143,181,.12)!important;
+}
 .shell table{background:#fff;border-radius:12px;overflow:hidden}
 .shell th{background:#eef8fb!important;color:var(--pc-navy)!important;font-size:12px;text-transform:uppercase;letter-spacing:.35px}
 .shell td{color:#334f5e}

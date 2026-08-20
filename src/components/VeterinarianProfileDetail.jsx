@@ -258,10 +258,12 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
 
       <section className="vpd-hero">
         <div className="vpd-avatar">
-          {photoUrl ? <img src={photoUrl} alt="Profile" /> : <UserCircle size={88} />}
+          <div className="vpd-avatarImg">
+            {photoUrl ? <img src={photoUrl} alt="Profile" /> : <UserCircle size={56} />}
+          </div>
           {isSelf && (
             <label className="vpd-camera" title={form.avatar_url ? "Change photo" : "Upload photo"}>
-              <Camera size={16} />
+              <Camera size={14} />
               <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickAvatar} />
             </label>
           )}
@@ -391,10 +393,11 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
         .vpd-notice.success{background:#eaf8ef;color:#28794c}
         .vpd-notice.warn{background:#fff5d9;color:#9a7015;font-weight:700}
 
-        .vpd-hero{display:flex;align-items:center;gap:18px}
-        .vpd-avatar{width:96px;height:96px;border-radius:50%;background:#e6f6fc;color:#4DA8DA;display:grid;place-items:center;position:relative;flex-shrink:0}
-        .vpd-avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover}
-        .vpd-camera{position:absolute;right:0;bottom:2px;background:#4DA8DA;color:#fff;width:30px;height:30px;border-radius:50%;display:grid!important;place-items:center;cursor:pointer}
+        .vpd-hero{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+        .vpd-avatar{position:relative;width:88px;height:88px;flex-shrink:0}
+        .vpd-avatarImg{width:100%;height:100%;border-radius:50%;overflow:hidden;background:#e6f6fc;color:#4DA8DA;display:grid;place-items:center}
+        .vpd-avatarImg img{width:100%;height:100%;object-fit:cover;display:block}
+        .vpd-camera{position:absolute;right:-2px;bottom:-2px;background:#4DA8DA;color:#fff;width:28px;height:28px;border-radius:50%;display:grid!important;place-items:center;cursor:pointer;border:2px solid #fff;box-shadow:0 2px 6px rgba(20,73,94,.18)}
         .vpd-camera input{display:none}
         .vpd-hero-info h2{margin:0 0 4px;color:#20313b}
         .vpd-hero-tags{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px}
@@ -436,7 +439,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
         .vpd-passwordBox input{border:0}
         .vpd-passwordBox button{border:0;background:#fff;color:#54707d;padding:0 12px;cursor:pointer}
 
-        @media(max-width:900px){.vpd-pair{grid-template-columns:1fr}.vpd-hero{align-items:flex-start}}
+        @media(max-width:900px){.vpd-pair{grid-template-columns:1fr}.vpd-hero{flex-direction:column;text-align:center;gap:12px}.vpd-hero-tags{justify-content:center}}
       `}</style>
     </div>
   );

@@ -34,6 +34,21 @@ const iconByType = {
   payment: paymentIcon
 };
 
+function firstNameOf(fullName) {
+  return String(fullName || "").trim().split(/\s+/)[0] || "";
+}
+
+const ROLE_LABELS = {
+  admin: "Administrator",
+  staff: "Staff",
+  veterinarian: "Veterinarian",
+  pet_owner: "Pet Owner",
+};
+
+function roleLabelOf(role) {
+  return ROLE_LABELS[String(role || "").trim().toLowerCase()] || "PawCruz User";
+}
+
 export default function AppShell({ profile, title, children }) {
   const [open, setOpen] = useState(false);
   const [logoutConfirmationOpen, setLogoutConfirmationOpen] =
@@ -41,6 +56,8 @@ export default function AppShell({ profile, title, children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const rolePath = profile?.role === "pet_owner" ? "pet-owner" : profile?.role;
+  const firstName = firstNameOf(profile?.full_name) || profile?.username || "there";
+  const roleText = roleLabelOf(profile?.role);
 
   // Inventory statuses (Low Stock / Out of Stock / Near Expiry / Expired)
   // already update automatically on every write (POS sale, stock
@@ -149,7 +166,10 @@ export default function AppShell({ profile, title, children }) {
             <NotificationBell profile={profile} />
             <Link className="user profileLink" to={`/${rolePath}/profile`}>
               <UserCircle />
-              <span>{profile?.full_name || "User"}</span>
+              <span className="userText">
+                <span className="userGreeting">Hi, {firstName}!</span>
+                <span className="userRole">{roleText}</span>
+              </span>
             </Link>
           </div>
         </header>
@@ -329,9 +349,9 @@ export default function AppShell({ profile, title, children }) {
         .sidebarBrand{padding:34px 28px 8px;display:flex;align-items:center;gap:12px;flex-shrink:0}.sidebarBrand>img{width:42px;height:42px;object-fit:contain;filter:brightness(0) invert(1)}.sidebarBrand>span{font-size:30px;font-weight:700;font-family:"Quicksand",sans-serif}.clinic{font-size:12px;color:rgba(255,255,255,.78);padding:0 30px 22px;flex-shrink:0}.sidebarClose{display:none;margin-left:auto;border:0;background:rgba(255,255,255,.15);color:#fff;border-radius:9px;padding:7px}
         .sidebarNav{display:flex;flex-direction:column;gap:3px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;padding:0 15px 10px;overscroll-behavior:contain}.sidebarNav::-webkit-scrollbar{width:6px}.sidebarNav::-webkit-scrollbar-track{background:transparent}.sidebarNav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.34);border-radius:999px}.sidebarNav a{display:flex;align-items:center;gap:15px;padding:12px 18px;border-radius:8px;text-decoration:none;color:#fff;font-size:14px;font-weight:500;flex-shrink:0}.sidebarNav a img{width:22px;height:22px;object-fit:contain;filter:brightness(0) invert(1)}.sidebarNav a:hover,.sidebarNav a.active{background:rgba(255,255,255,.27);color:#fff}.sidebarNav a.active{font-weight:600}
         .logout{flex-shrink:0;margin:12px 15px 20px;border:1px solid rgba(255,255,255,.26);background:rgba(255,255,255,.12);color:#fff;padding:12px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;font-weight:600}.logout:hover{background:rgba(255,255,255,.22)}
-        .shell main{margin-left:280px;flex:1;min-width:0}.topBar{height:96px;background:linear-gradient(110deg,#4aa3c7 0%,#66bcc8 48%,#78c4ca 100%);display:flex;align-items:center;padding:0 38px;justify-content:space-between;color:#fff;position:fixed;left:280px;right:0;top:0;z-index:80;border-bottom:1px solid rgba(255,255,255,.32);box-shadow:0 8px 26px rgba(35,91,116,.16);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.pageHeading{display:flex;flex-direction:column;justify-content:center;min-width:0}.topBar h1{margin:0;font-size:26px;line-height:1.12;color:#fff;font-weight:800;letter-spacing:-.02em;text-shadow:0 1px 2px rgba(20,73,94,.08)}.topBar p{margin:7px 0 0;color:rgba(255,255,255,.92);font-size:13px;font-weight:600;letter-spacing:.01em}.menu{display:none;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.16);color:#fff;padding:10px;border-radius:14px;box-shadow:0 4px 12px rgba(28,84,106,.08)}.headerActions{display:flex;align-items:center;gap:14px}.headerActions>.nb .bell{width:52px;height:52px;border-radius:17px!important;border:1px solid rgba(255,255,255,.6)!important;background:rgba(255,255,255,.92)!important;box-shadow:0 8px 18px rgba(31,91,115,.14)!important}.user{display:flex;align-items:center;gap:10px;color:#fff}.profileLink{text-decoration:none;padding:10px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.10);font-weight:700;transition:background .18s ease,transform .18s ease}.profileLink svg{width:25px;height:25px}.profileLink:hover{background:rgba(255,255,255,.2);color:#fff;transform:translateY(-1px)}.content{padding:126px 30px 30px}.card{background:#fff;border-radius:15px;padding:22px;box-shadow:0 4px 10px rgba(0,0,0,.04)}.sidebarOverlay{display:none}
+        .shell main{margin-left:280px;flex:1;min-width:0}.topBar{height:96px;background:linear-gradient(110deg,#4aa3c7 0%,#66bcc8 48%,#78c4ca 100%);display:flex;align-items:center;padding:0 38px;justify-content:space-between;color:#fff;position:fixed;left:280px;right:0;top:0;z-index:80;border-bottom:1px solid rgba(255,255,255,.32);box-shadow:0 8px 26px rgba(35,91,116,.16);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.pageHeading{display:flex;flex-direction:column;justify-content:center;min-width:0}.topBar h1{margin:0;font-size:26px;line-height:1.12;color:#fff;font-weight:800;letter-spacing:-.02em;text-shadow:0 1px 2px rgba(20,73,94,.08)}.topBar p{margin:7px 0 0;color:rgba(255,255,255,.92);font-size:13px;font-weight:600;letter-spacing:.01em}.menu{display:none;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.16);color:#fff;padding:10px;border-radius:14px;box-shadow:0 4px 12px rgba(28,84,106,.08)}.headerActions{display:flex;align-items:center;gap:14px}.headerActions>.nb .bell{width:52px;height:52px;border-radius:17px!important;border:1px solid rgba(255,255,255,.6)!important;background:rgba(255,255,255,.92)!important;box-shadow:0 8px 18px rgba(31,91,115,.14)!important}.user{display:flex;align-items:center;gap:10px;color:#fff}.userText{display:flex;flex-direction:column;gap:1px;min-width:0}.userGreeting{font-size:14px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.userRole{font-size:11px;font-weight:600;line-height:1.2;color:rgba(255,255,255,.82);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.profileLink{text-decoration:none;padding:9px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.10);transition:background .18s ease,transform .18s ease}.profileLink svg{width:25px;height:25px;flex-shrink:0}.profileLink:hover{background:rgba(255,255,255,.2);color:#fff;transform:translateY(-1px)}.content{padding:126px 30px 30px}.card{background:#fff;border-radius:15px;padding:22px;box-shadow:0 4px 10px rgba(0,0,0,.04)}.sidebarOverlay{display:none}
         .chatbotLauncher{position:fixed;right:28px;bottom:28px;z-index:80;width:72px;height:72px;display:grid;place-items:center;overflow:hidden;border:3px solid #fff;border-radius:50%;background:#fff;box-shadow:0 8px 24px rgba(37,80,101,.3);transition:transform .2s ease,box-shadow .2s ease}.chatbotLauncher img{display:block;width:100%;height:100%;object-fit:contain;border-radius:50%}.chatbotLauncher:hover{transform:translateY(-3px) scale(1.04);box-shadow:0 12px 28px rgba(37,80,101,.38)}.chatbotLauncher:focus-visible{outline:4px solid #173e52;outline-offset:4px}
-        @media(max-width:800px){.sidebar{transform:translateX(-105%);transition:transform .25s ease}.sidebar.open{transform:translateX(0)}.sidebarClose{display:grid}.sidebarOverlay{display:block;position:fixed;inset:0;background:rgba(16,41,54,.45);opacity:0;visibility:hidden;transition:.2s;z-index:90}.sidebarOverlay.visible{opacity:1;visibility:visible}.shell main{margin-left:0}.menu{display:grid}.topBar{left:0;height:86px;padding:0 14px;gap:10px}.pageHeading{min-width:0;flex:1}.topBar h1{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.topBar p{font-size:11px;margin-top:4px}.headerActions{gap:8px}.headerActions>.nb .bell{width:46px;height:46px;border-radius:15px!important}.profileLink{padding:8px 9px;border-radius:13px}.user span{display:none}.content{padding:108px 16px 16px}.chatbotLauncher{width:62px;height:62px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom, 0px))}}
+        @media(max-width:800px){.sidebar{transform:translateX(-105%);transition:transform .25s ease}.sidebar.open{transform:translateX(0)}.sidebarClose{display:grid}.sidebarOverlay{display:block;position:fixed;inset:0;background:rgba(16,41,54,.45);opacity:0;visibility:hidden;transition:.2s;z-index:90}.sidebarOverlay.visible{opacity:1;visibility:visible}.shell main{margin-left:0}.menu{display:grid}.topBar{left:0;height:86px;padding:0 14px;gap:10px}.pageHeading{min-width:0;flex:1}.topBar h1{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.topBar p{font-size:11px;margin-top:4px}.headerActions{gap:8px}.headerActions>.nb .bell{width:46px;height:46px;border-radius:15px!important}.profileLink{padding:8px 9px;border-radius:13px}.userText{display:none}.content{padding:108px 16px 16px}.chatbotLauncher{width:62px;height:62px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom, 0px))}}
       `}</style>
     </div>
   );

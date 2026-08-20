@@ -54,7 +54,7 @@ export async function getMessageContacts(profile) {
 
   let query = supabase
     .from("profiles")
-    .select("id,full_name,username,email,role,account_status")
+    .select("id,full_name,username,email,role,account_status,avatar_url")
     .neq("id", profile.id)
     .order("full_name");
 
@@ -184,7 +184,7 @@ async function getConversationsNormally(profile) {
   if (profileIds.length) {
     const profileResult = await supabase
       .from("profiles")
-      .select("id,full_name,username,email,role")
+      .select("id,full_name,username,email,role,avatar_url")
       .in("id", profileIds);
     if (profileResult.error) return { data: null, error: profileResult.error };
     profiles = profileResult.data || [];
@@ -266,7 +266,7 @@ export async function getMessages(conversationId) {
     if (senderIds.length) {
       const profileResult = await supabase
         .from("profiles")
-        .select("id,full_name,role")
+        .select("id,full_name,role,avatar_url")
         .in("id", senderIds);
       if (profileResult.error) {
         console.warn("Unable to attach message senders:", profileResult.error);

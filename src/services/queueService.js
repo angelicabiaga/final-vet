@@ -76,10 +76,10 @@ async function enrich(rows){
   if(!rows.length)return [];
   const entryIds=uniq(rows.map(r=>r.id));
   const [pets,profiles,appointments,entryPets]=await Promise.all([
-    supabase.from("pets").select("id,pet_name,species,breed").in("id",uniq(rows.map(r=>r.pet_id))),
-    supabase.from("profiles").select("id,full_name,username,email,role").in("id",uniq(rows.flatMap(r=>[r.owner_id,r.veterinarian_id]))),
+    supabase.from("pets").select("id,pet_name,species,breed,photo_url").in("id",uniq(rows.map(r=>r.pet_id))),
+    supabase.from("profiles").select("id,full_name,username,email,role,avatar_url").in("id",uniq(rows.flatMap(r=>[r.owner_id,r.veterinarian_id]))),
     supabase.from("appointments").select("id,appointment_date,start_time,visit_reason,status").in("id",uniq(rows.map(r=>r.appointment_id))),
-    entryIds.length?supabase.from("queue_entry_pets").select("queue_entry_id,appointment_id,pet:pets(id,pet_name,species,breed)").in("queue_entry_id",entryIds):Promise.resolve({data:[]})
+    entryIds.length?supabase.from("queue_entry_pets").select("queue_entry_id,appointment_id,pet:pets(id,pet_name,species,breed,photo_url)").in("queue_entry_id",entryIds):Promise.resolve({data:[]})
   ]);
   const pm=new Map((pets.data||[]).map(x=>[x.id,x]));
   const pr=new Map((profiles.data||[]).map(x=>[x.id,x]));
@@ -112,8 +112,8 @@ async function enrich(rows){
 async function enrichCheckinGroups(cards){
   if(!cards.length)return [];
   const [pets,profiles]=await Promise.all([
-    supabase.from("pets").select("id,pet_name,species,breed").in("id",uniq(cards.flatMap(c=>c.petIds))),
-    supabase.from("profiles").select("id,full_name,username,email,role").in("id",uniq(cards.flatMap(c=>[c.owner_id,c.veterinarian_id])))
+    supabase.from("pets").select("id,pet_name,species,breed,photo_url").in("id",uniq(cards.flatMap(c=>c.petIds))),
+    supabase.from("profiles").select("id,full_name,username,email,role,avatar_url").in("id",uniq(cards.flatMap(c=>[c.owner_id,c.veterinarian_id])))
   ]);
   const pm=new Map((pets.data||[]).map(x=>[x.id,x]));
   const pr=new Map((profiles.data||[]).map(x=>[x.id,x]));
