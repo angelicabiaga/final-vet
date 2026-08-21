@@ -135,7 +135,7 @@ export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(11);
   pdf.setTextColor(97, 118, 129);
-  pdf.text("Prescription / Purchase Notice", centerX, y, { align: "center" });
+  pdf.text("Veterinarian Prescription / Purchase Notice", centerX, y, { align: "center" });
 
   y += 8;
   pdf.setFont("helvetica", "bold");
@@ -192,5 +192,5 @@ export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
   const wrapped = pdf.splitTextToSize(note, 170);
   pdf.text(wrapped, 20, y);
 
-  pdf.save(`Prescription-Notice-${(prescription.item_name || "medicine").replace(/[^a-z0-9]+/gi, "-")}-${String(prescription.id || "").slice(0, 8)}.pdf`);
+  pdf.save(`Veterinarian-Prescription-Notice-${(prescription.item_name || "medicine").replace(/[^a-z0-9]+/gi, "-")}-${String(prescription.id || "").slice(0, 8)}.pdf`);
 }

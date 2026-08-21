@@ -96,7 +96,7 @@ export default function AppShell({ profile, title, children }) {
       { label: "My Appointments", to: "/veterinarian/appointments", type: "appointment" },
       { label: "My Queue", to: "/veterinarian/queue", type: "queue" },
       { label: "Animal Patients", to: "/veterinarian/patients", type: "pet" },
-      { label: "Prescriptions", to: "/veterinarian/prescriptions", type: "medical" },
+      { label: "Veterinarian Prescriptions", to: "/veterinarian/prescriptions", type: "medical" },
 
       { label: "Messages", to: "/veterinarian/messages", type: "message" },
 

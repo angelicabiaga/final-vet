@@ -112,6 +112,14 @@ export default function RoleDashboard({ profile }) {
     return () => window.removeEventListener("focus", handleFocus);
   }, [load]);
 
+  // Same 60s poll fallback Queue Management uses: an appointment becoming
+  // due for check-in is purely a clock passing a time, with no database
+  // write to trigger the realtime subscription above, so this catches that.
+  useEffect(() => {
+    const timer = setInterval(() => load(true), 60000);
+    return () => clearInterval(timer);
+  }, [load]);
+
   const summary = useMemo(() => {
     const empty = { cards: [], appointments: [], queues: [], chart: [], recent: [], inventoryAlerts: [], unread: 0 };
     if (!data) return empty;

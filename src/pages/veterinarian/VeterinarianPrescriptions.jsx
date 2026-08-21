@@ -71,12 +71,12 @@ export default function VeterinarianPrescriptions({ profile }) {
   }, [load]);
 
   return (
-    <AppShell profile={profile} title="Prescriptions">
+    <AppShell profile={profile} title="Veterinarian Prescriptions">
       <div className="rx-module">
         <section className="rx-card">
           <div className="rx-heading">
             <div>
-              <h2><Pill size={22} /> Prescription Fulfillment</h2>
+              <h2><Pill size={22} /> Veterinarian Prescription Fulfillment</h2>
               <p>Read-only view of whether the medicines you prescribed have been purchased. Staff manage the purchase itself from the Transactions page.</p>
             </div>
             <button type="button" className="rx-refresh" onClick={load} disabled={loading}>

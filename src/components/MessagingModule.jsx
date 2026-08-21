@@ -49,6 +49,7 @@ export default function MessagingModule({ profile }) {
   const messagesContainerRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
   const previousConversationIdRef = useRef(null);
+  const isProgrammaticScrollRef = useRef(false);
 
   async function loadConversations() {
     if (!profile?.id) return;
@@ -202,11 +203,22 @@ export default function MessagingModule({ profile }) {
     if (isNewConversation) shouldAutoScrollRef.current = true;
 
     if (shouldAutoScrollRef.current && endRef.current) {
+      // scrollIntoView (especially "smooth") fires its own scroll events
+      // while it animates -- without this guard, handleMessagesScroll reads
+      // those as the reader manually scrolling and can flip
+      // shouldAutoScrollRef off mid-animation, which is what made scrolling
+      // up feel like it kept getting fought/reset on a busy conversation.
+      isProgrammaticScrollRef.current = true;
       endRef.current.scrollIntoView({ behavior: isNewConversation ? "auto" : "smooth" });
+      const clearGuard = setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, isNewConversation ? 50 : 500);
+      return () => clearTimeout(clearGuard);
     }
   }, [messages, activeConversation?.id]);
 
   function handleMessagesScroll() {
+    if (isProgrammaticScrollRef.current) return;
     const el = messagesContainerRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;

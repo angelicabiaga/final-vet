@@ -29,8 +29,10 @@ import jsPDF from "jspdf";
 
 import {
   downloadInventoryImportTemplate,
+  attachInventoryUnitCodes,
   exportInventoryCsv,
   getInventoryBatches,
+  getInventoryBatchCounts,
   getInventoryCategories,
   getInventoryItems,
   getInventorySummary,
@@ -76,6 +78,7 @@ const EMPTY_TX = {
   batchNumber: "",
   dateReceived: "",
   expiryDate: "",
+  isBatchEntry: true,
 };
 
 const BATCH_CREATING_TX_TYPES = [
@@ -89,12 +92,6 @@ const UNIT_PAGE_SIZE = 12;
 function formatUnitId(unitNo) {
   return `UNIT-${String(unitNo).padStart(6, "0")}`;
 }
-
-const DETAILS_TABS = [
-  { key: "summary", label: "Item Summary" },
-  { key: "batches", label: "Batch Records" },
-  { key: "history", label: "Stock Movement History" },
-];
 
 const statuses = [
   "",
@@ -126,6 +123,28 @@ function daysUntil(date) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return Math.round((target - today) / 86400000);
+}
+
+// Which of an item's batches actually back its current status -- e.g. an
+// item can show "Expired" overall while only 1 of its 3 batches is the one
+// that's actually expired; this is what turns that into "(1 expired)"
+// instead of implying the whole 3 are.
+function batchCountHint(itemStatus, counts) {
+  if (!counts) return null;
+
+  if (itemStatus === "Expired" && counts.expired > 0) {
+    return `${counts.expired} expired`;
+  }
+  if (itemStatus === "Near Expiry" && counts.nearExpiry > 0) {
+    return `${counts.nearExpiry} near expiry`;
+  }
+  if (itemStatus === "Out of Stock" && counts.outOfStock > 0) {
+    return `${counts.outOfStock} out of stock`;
+  }
+  if (counts.inStock > 0) {
+    return `${counts.inStock} in stock`;
+  }
+  return null;
 }
 
 // Display-only classification for a single batch (Active / Low Stock /
@@ -234,6 +253,7 @@ export default function InventoryManagementModule({
 
   const [items, setItems] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  const [batchCounts, setBatchCounts] = useState({});
 
   const [summary, setSummary] = useState({
     totalItems: 0,
@@ -297,8 +317,8 @@ export default function InventoryManagementModule({
   });
   const [mergingId, setMergingId] = useState("");
   const [togglingBatchId, setTogglingBatchId] = useState("");
-  const [detailsTab, setDetailsTab] = useState("summary");
   const [batchPage, setBatchPage] = useState(1);
+  const [showArchivedBatches, setShowArchivedBatches] = useState(false);
 
   const [viewingUnitsBatch, setViewingUnitsBatch] = useState(null);
   const [unitRows, setUnitRows] = useState([]);
@@ -329,6 +349,18 @@ export default function InventoryManagementModule({
   const [pendingArchive, setPendingArchive] =
     useState(null);
 
+  const [stockChoiceItem, setStockChoiceItem] =
+    useState(null);
+
+  const [unitEntries, setUnitEntries] =
+    useState([]);
+
+  const [unitModalOpen, setUnitModalOpen] =
+    useState(false);
+
+  const [unitCopyFromTop, setUnitCopyFromTop] =
+    useState(true);
+
   const [archiving, setArchiving] =
     useState(false);
 
@@ -346,17 +378,20 @@ export default function InventoryManagementModule({
         txRows,
         totals,
         categoryRows,
+        batchCountRows,
       ] = await Promise.all([
         getInventoryItems(filters),
         getInventoryTransactions("", 80),
         getInventorySummary(),
         getInventoryCategories(),
+        getInventoryBatchCounts(),
       ]);
 
       setItems(itemRows);
       setTransactions(txRows);
       setSummary(totals);
       setCategories(categoryRows);
+      setBatchCounts(batchCountRows);
     } catch (error) {
       setNotice({
         type: "error",
@@ -429,15 +464,29 @@ export default function InventoryManagementModule({
     );
   }, [items, selectedItem]);
 
+  const visibleBatchRows = useMemo(
+    () =>
+      showArchivedBatches
+        ? batchRows.filter((batch) => batch.is_active === false)
+        : batchRows.filter((batch) => batch.is_active !== false),
+    [batchRows, showArchivedBatches]
+  );
+
   const sortedBatchRows = useMemo(
-    () => sortBatchesFefo(batchRows),
-    [batchRows]
+    () => sortBatchesFefo(visibleBatchRows),
+    [visibleBatchRows]
   );
 
   const rankedBatchRows = useMemo(
     () => rankBatches(sortedBatchRows),
     [sortedBatchRows]
   );
+
+  // Each unit needs its own Unique Unit ID, so quantity can't be
+  // fractional here -- "2.5 units" has no unit ID to give the ".5" of.
+  const requiresWholeUnits =
+    BATCH_CREATING_TX_TYPES.includes(txForm.transactionType) &&
+    txForm.isBatchEntry;
 
   // Always-visible mini summary above Batch Records -- same three buckets
   // as the page-level stat cards, scoped to just this item's batches, shown
@@ -589,7 +638,8 @@ export default function InventoryManagementModule({
 
   function openTransaction(
     item,
-    type = "Stock In"
+    type = "Stock In",
+    isBatchEntry = true
   ) {
     setSelectedItem(item);
 
@@ -597,9 +647,78 @@ export default function InventoryManagementModule({
       ...EMPTY_TX,
       itemId: item.id,
       transactionType: type,
+      isBatchEntry,
+      quantity: isBatchEntry ? "" : "1",
     });
 
+    setUnitEntries(
+      isBatchEntry
+        ? []
+        : [{ unitCode: "", expiryDate: "", dateReceived: "" }]
+    );
+    setUnitModalOpen(false);
+    setUnitCopyFromTop(true);
+
     setModal("transaction");
+  }
+
+  function openStockChoice(item) {
+    setStockChoiceItem(item);
+  }
+
+  function chooseStockEntry(isBatchEntry) {
+    const item = stockChoiceItem;
+    setStockChoiceItem(null);
+    openTransaction(item, "Stock In", isBatchEntry);
+  }
+
+  function openUnitEntryModal() {
+    const count = Math.max(
+      1,
+      Math.floor(Number(txForm.quantity) || 0)
+    );
+
+    if (!count) {
+      setNotice({
+        type: "error",
+        text: "Enter a valid quantity before setting unit IDs.",
+      });
+      return;
+    }
+
+    setUnitEntries((current) =>
+      Array.from({ length: count }, (_, index) =>
+        current[index] || {
+          unitCode: "",
+          expiryDate: unitCopyFromTop ? txForm.expiryDate : "",
+          dateReceived: unitCopyFromTop ? txForm.dateReceived : "",
+        }
+      )
+    );
+
+    setUnitModalOpen(true);
+  }
+
+  function updateUnitEntry(index, patch) {
+    setUnitEntries((current) =>
+      current.map((entry, i) =>
+        i === index ? { ...entry, ...patch } : entry
+      )
+    );
+  }
+
+  function toggleUnitCopyFromTop(checked) {
+    setUnitCopyFromTop(checked);
+
+    if (checked) {
+      setUnitEntries((current) =>
+        current.map((entry) => ({
+          ...entry,
+          expiryDate: txForm.expiryDate,
+          dateReceived: txForm.dateReceived,
+        }))
+      );
+    }
   }
 
   function openHistory(item = null) {
@@ -612,8 +731,8 @@ export default function InventoryManagementModule({
     setModal("batches");
     setBatchesError("");
     setEditingBatchId("");
-    setDetailsTab("summary");
     setBatchPage(1);
+    setShowArchivedBatches(false);
     setBatchesLoading(true);
 
     try {
@@ -1416,13 +1535,65 @@ export default function InventoryManagementModule({
   ) {
     event.preventDefault();
 
+    const createsBatch = BATCH_CREATING_TX_TYPES.includes(
+      txForm.transactionType
+    );
+
+    if (createsBatch) {
+      const expectedCount = txForm.isBatchEntry
+        ? Math.max(1, Math.floor(Number(txForm.quantity) || 0))
+        : 1;
+
+      // Single-item entry, and any batch row while "copy from above" is
+      // on, use the form's top-level Expiry Date (already required there)
+      // rather than a per-row value, so only the unit code needs checking
+      // in those cases.
+      const perRowExpiryRequired =
+        txForm.isBatchEntry && !unitCopyFromTop;
+
+      const incomplete =
+        unitEntries.length !== expectedCount ||
+        unitEntries.some(
+          (entry) =>
+            !entry.unitCode?.trim() ||
+            (perRowExpiryRequired && !entry.expiryDate)
+        );
+
+      if (incomplete) {
+        setNotice({
+          type: "error",
+          text: txForm.isBatchEntry
+            ? "Set a unique unit ID and expiry date for every unit before saving."
+            : "Enter a unique unit ID for this item.",
+        });
+        return;
+      }
+    }
+
     setSaving(true);
 
     try {
-      await recordInventoryTransaction(
+      const transactionId = await recordInventoryTransaction(
         txForm,
         profile
       );
+
+      if (createsBatch) {
+        const useTopDates = !txForm.isBatchEntry || unitCopyFromTop;
+
+        await attachInventoryUnitCodes(
+          transactionId,
+          unitEntries.map((entry) => ({
+            unitCode: entry.unitCode,
+            expiryDate: useTopDates
+              ? txForm.expiryDate
+              : entry.expiryDate,
+            dateReceived: useTopDates
+              ? txForm.dateReceived
+              : entry.dateReceived,
+          }))
+        );
+      }
 
       setModal("");
 
@@ -1466,7 +1637,7 @@ export default function InventoryManagementModule({
         type: "success",
         text: item.is_archived
           ? "Item restored."
-          : "Item archived.",
+          : "Item deactivated.",
       });
 
       setPendingArchive(null);
@@ -1639,7 +1810,7 @@ export default function InventoryManagementModule({
               }
             />
 
-            Archived
+            Deactivated
           </label>
         )}
 
@@ -1736,7 +1907,6 @@ export default function InventoryManagementModule({
                   <th>Category</th>
                   <th>Stock</th>
                   <th>Price</th>
-                  <th>Expiry</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -1808,12 +1978,6 @@ export default function InventoryManagementModule({
                       </td>
 
                       <td>
-                        {formatDate(
-                          item.expiry_date
-                        )}
-                      </td>
-
-                      <td>
                         <span
                           className={`badge ${String(
                             item.status ||
@@ -1827,6 +1991,19 @@ export default function InventoryManagementModule({
                         >
                           {item.status}
                         </span>
+                        {(() => {
+                          const hint = batchCountHint(
+                            item.status,
+                            batchCounts[item.id]
+                          );
+                          return (
+                            hint && (
+                              <span className="batch-count-hint">
+                                ({hint})
+                              </span>
+                            )
+                          );
+                        })()}
                       </td>
 
                       <td>
@@ -1854,13 +2031,15 @@ export default function InventoryManagementModule({
                               <button
                                 type="button"
                                 onClick={() =>
-                                  openTransaction(
-                                    item,
-                                    profile?.role ===
-                                      "veterinarian"
-                                      ? "Medicine Usage"
-                                      : "Stock In"
-                                  )
+                                  profile?.role ===
+                                  "veterinarian"
+                                    ? openTransaction(
+                                        item,
+                                        "Medicine Usage"
+                                      )
+                                    : openStockChoice(
+                                        item
+                                      )
                                 }
                               >
                                 {profile?.role ===
@@ -1908,7 +2087,7 @@ export default function InventoryManagementModule({
                               title={
                                 item.is_archived
                                   ? "Restore"
-                                  : "Archive"
+                                  : "Deactivate"
                               }
                               onClick={() =>
                                 toggleArchive(
@@ -1976,6 +2155,15 @@ export default function InventoryManagementModule({
               />
             </Field>
 
+            {itemForm.id && (
+              <div className="wide field-lock-note">
+                Only the item name can be edited here. The other details are
+                locked to keep stock and batch records accurate — use Stock
+                to record incoming/outgoing quantity or Batch Records to
+                update pricing, expiry, or batch details.
+              </div>
+            )}
+
             {duplicateMatch && (
               <div className="wide duplicate-item-warning">
                 <span>
@@ -2001,6 +2189,7 @@ export default function InventoryManagementModule({
                   itemForm.sku
                 }
                 required
+                disabled={!!itemForm.id}
                 placeholder="Example: VAC-001"
                 onChange={(e) =>
                   setItemForm({
@@ -2017,6 +2206,7 @@ export default function InventoryManagementModule({
               <select
                 value={itemForm.category}
                 required
+                disabled={!!itemForm.id}
                 onChange={(e) =>
                   setItemForm({
                     ...itemForm,
@@ -2046,6 +2236,7 @@ export default function InventoryManagementModule({
                   value={itemForm.custom_category || ""}
                   placeholder="Type category"
                   required
+                  disabled={!!itemForm.id}
                   onChange={(e) =>
                     setItemForm({
                       ...itemForm,
@@ -2063,6 +2254,7 @@ export default function InventoryManagementModule({
                 }
                 placeholder="Example: pcs, vial, bottle, box, tablet, kg"
                 required
+                disabled={!!itemForm.id}
                 onChange={(e) =>
                   setItemForm({
                     ...itemForm,
@@ -2103,6 +2295,7 @@ export default function InventoryManagementModule({
                 value={
                   itemForm.unit_price
                 }
+                disabled={!!itemForm.id}
                 onChange={(e) =>
                   setItemForm({
                     ...itemForm,
@@ -2122,28 +2315,11 @@ export default function InventoryManagementModule({
                 value={
                   itemForm.reorder_level
                 }
+                disabled={!!itemForm.id}
                 onChange={(e) =>
                   setItemForm({
                     ...itemForm,
                     reorder_level:
-                      e.target
-                        .value,
-                  })
-                }
-              />
-            </Field>
-
-            <Field label="Expiry Date">
-              <input
-                type="date"
-                value={
-                  itemForm.expiry_date
-                }
-                required
-                onChange={(e) =>
-                  setItemForm({
-                    ...itemForm,
-                    expiry_date:
                       e.target
                         .value,
                   })
@@ -2157,27 +2333,11 @@ export default function InventoryManagementModule({
                   itemForm.supplier_name
                 }
                 placeholder="Example: ABC Veterinary Supply"
+                disabled={!!itemForm.id}
                 onChange={(e) =>
                   setItemForm({
                     ...itemForm,
                     supplier_name:
-                      e.target
-                        .value,
-                  })
-                }
-              />
-            </Field>
-
-            <Field label="Batch / Lot Number">
-              <input
-                value={
-                  itemForm.batch_number
-                }
-                placeholder="Example: LOT-2026-0810"
-                onChange={(e) =>
-                  setItemForm({
-                    ...itemForm,
-                    batch_number:
                       e.target
                         .value,
                   })
@@ -2194,6 +2354,7 @@ export default function InventoryManagementModule({
                   itemForm.description
                 }
                 placeholder="Example: 100 mg tablet, store below 25°C, special pricing notes..."
+                disabled={!!itemForm.id}
                 onChange={(e) =>
                   setItemForm({
                     ...itemForm,
@@ -2432,6 +2593,123 @@ export default function InventoryManagementModule({
         </Modal>
       )}
 
+      {stockChoiceItem && (
+        <Modal
+          title={`Add Stock: ${stockChoiceItem.item_name}`}
+          close={() => setStockChoiceItem(null)}
+        >
+          <div className="stock-choice-grid">
+            <button
+              type="button"
+              className="stock-choice-option"
+              onClick={() => chooseStockEntry(false)}
+            >
+              <strong>Add Single Item</strong>
+              <span>
+                Quick stock-in without batch tracking. Expiry date is
+                still required.
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="stock-choice-option"
+              onClick={() => chooseStockEntry(true)}
+            >
+              <strong>Add Batch</strong>
+              <span>
+                Track this stock-in as its own batch, with a batch
+                number and date received.
+              </span>
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {unitModalOpen && (
+        <Modal
+          title={`Unique Unit IDs (${unitEntries.length})`}
+          close={() => setUnitModalOpen(false)}
+          large
+          elevated
+        >
+          <label className="check unit-copy-toggle">
+            <input
+              type="checkbox"
+              checked={unitCopyFromTop}
+              onChange={(e) => toggleUnitCopyFromTop(e.target.checked)}
+            />
+            Use the expiry date and date received entered above for every unit
+          </label>
+
+          <div className="table-wrap">
+            <table className="batch-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Unique Unit ID</th>
+                  <th>Expiry Date</th>
+                  <th>Date Received</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unitEntries.map((entry, index) => (
+                  <tr key={index}>
+                    <td>{index + 1}</td>
+                    <td>
+                      <input
+                        required
+                        value={entry.unitCode}
+                        placeholder="Scan or type unit ID"
+                        onChange={(e) =>
+                          updateUnitEntry(index, { unitCode: e.target.value })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="date"
+                        required
+                        disabled={unitCopyFromTop}
+                        value={entry.expiryDate}
+                        onChange={(e) =>
+                          updateUnitEntry(index, { expiryDate: e.target.value })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="date"
+                        disabled={unitCopyFromTop}
+                        value={entry.dateReceived}
+                        onChange={(e) =>
+                          updateUnitEntry(index, { dateReceived: e.target.value })
+                        }
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="form-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={unitEntries.some(
+                (entry) =>
+                  !entry.unitCode?.trim() ||
+                  (!unitCopyFromTop && !entry.expiryDate)
+              )}
+              onClick={() => setUnitModalOpen(false)}
+            >
+              Done
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {modal ===
         "transaction" && (
         <Modal
@@ -2500,51 +2778,59 @@ export default function InventoryManagementModule({
               </select>
             </Field>
 
-            <Field
-              label={`Quantity (${
-                selectedItem?.unit ||
-                "unit"
-              })`}
-            >
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                required
-                value={
-                  txForm.quantity
-                }
-                onChange={(e) =>
-                  setTxForm({
-                    ...txForm,
-                    quantity:
-                      e.target
-                        .value,
-                  })
-                }
-              />
-            </Field>
+            {!(
+              BATCH_CREATING_TX_TYPES.includes(txForm.transactionType) &&
+              !txForm.isBatchEntry
+            ) && (
+              <Field
+                label={`Quantity (${
+                  selectedItem?.unit ||
+                  "unit"
+                })`}
+              >
+                <input
+                  type="number"
+                  min={requiresWholeUnits ? "1" : "0.01"}
+                  step={requiresWholeUnits ? "1" : "0.01"}
+                  required
+                  value={
+                    txForm.quantity
+                  }
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setTxForm({
+                      ...txForm,
+                      quantity: requiresWholeUnits
+                        ? raw.replace(/[^\d]/g, "")
+                        : raw,
+                    });
+                  }}
+                />
+              </Field>
+            )}
 
             {BATCH_CREATING_TX_TYPES.includes(
               txForm.transactionType
             ) && (
               <>
-                <Field label="Batch/Lot Number">
-                  <input
-                    value={
-                      txForm.batchNumber
-                    }
-                    placeholder="e.g. B-2026-01"
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        batchNumber:
-                          e.target
-                            .value,
-                      })
-                    }
-                  />
-                </Field>
+                {txForm.isBatchEntry && (
+                  <Field label="Batch/Lot Number">
+                    <input
+                      value={
+                        txForm.batchNumber
+                      }
+                      placeholder="e.g. B-2026-01"
+                      onChange={(e) =>
+                        setTxForm({
+                          ...txForm,
+                          batchNumber:
+                            e.target
+                              .value,
+                        })
+                      }
+                    />
+                  </Field>
+                )}
 
                 <Field label="Date Received">
                   <input
@@ -2580,29 +2866,41 @@ export default function InventoryManagementModule({
                     }
                   />
                 </Field>
+
+                {txForm.isBatchEntry ? (
+                  <div className="wide unit-entry-row">
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={openUnitEntryModal}
+                    >
+                      {unitEntries.length ? "Edit Unit IDs" : "Set Unique Unit IDs"}
+                    </button>
+                    {unitEntries.length > 0 && (
+                      <span className="unit-entry-status">
+                        {
+                          unitEntries.filter(
+                            (entry) => entry.unitCode?.trim() && entry.expiryDate
+                          ).length
+                        }{" "}
+                        of {unitEntries.length} unit ID(s) set
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <Field label="Unique Unit ID" wide>
+                    <input
+                      required
+                      value={unitEntries[0]?.unitCode || ""}
+                      placeholder="Scan or type this item's unique ID"
+                      onChange={(e) =>
+                        updateUnitEntry(0, { unitCode: e.target.value })
+                      }
+                    />
+                  </Field>
+                )}
               </>
             )}
-
-            <Field
-              label="Reason"
-              wide
-            >
-              <input
-                required
-                value={
-                  txForm.reason
-                }
-                placeholder="Delivery, consultation usage, expired stock…"
-                onChange={(e) =>
-                  setTxForm({
-                    ...txForm,
-                    reason:
-                      e.target
-                        .value,
-                  })
-                }
-              />
-            </Field>
 
             <Field
               label="Notes"
@@ -2739,7 +3037,7 @@ export default function InventoryManagementModule({
 
       {modal === "batches" && selectedItem && (
         <Modal
-          title={`Item Details: ${selectedItem.item_name}`}
+          title={`Batch Records: ${selectedItem.item_name}`}
           close={() => setModal("")}
           large
         >
@@ -2747,124 +3045,48 @@ export default function InventoryManagementModule({
             <div className="notice error">{batchesError}</div>
           )}
 
-          <div className="details-tabs" role="tablist" aria-label="Item details">
-            <div
-              className="details-tabs-slider"
-              style={{
-                width: `${100 / DETAILS_TABS.length}%`,
-                left: `${(DETAILS_TABS.findIndex((tab) => tab.key === detailsTab) * 100) / DETAILS_TABS.length}%`,
-              }}
-            />
-            {DETAILS_TABS.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                role="tab"
-                aria-selected={detailsTab === tab.key}
-                className={`details-tab${detailsTab === tab.key ? " active" : ""}`}
-                onClick={() => setDetailsTab(tab.key)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {detailsTab === "summary" && (
-            <>
-              <div className="item-summary-grid">
-                <div>
-                  <span>Item Name</span>
-                  <strong>{selectedItem.item_name}</strong>
-                </div>
-                <div>
-                  <span>Category</span>
-                  <strong>{selectedItem.category}</strong>
-                </div>
-                <div>
-                  <span>Unit</span>
-                  <strong>{selectedItem.unit}</strong>
-                </div>
-                <div>
-                  <span>Selling Price</span>
-                  <strong>{money(selectedItem.unit_price)}</strong>
-                </div>
-                <div>
-                  <span>Total Remaining Quantity</span>
-                  <strong>
-                    {batchRows.reduce(
-                      (sum, batch) => sum + Number(batch.quantity_remaining || 0),
-                      0
-                    )}{" "}
-                    {selectedItem.unit}
-                  </strong>
-                </div>
-                <div>
-                  <span>Active Batches</span>
-                  <strong>
-                    {batchRows.filter((batch) => Number(batch.quantity_remaining) > 0).length}
-                  </strong>
-                </div>
-                <div>
-                  <span>Stock Status</span>
-                  <span
-                    className={`badge ${String(selectedItem.status || "")
-                      .toLowerCase()
-                      .replaceAll(" ", "-")}`}
-                  >
-                    {selectedItem.status}
-                  </span>
-                </div>
-              </div>
-
-              {duplicatesOfSelected.length > 0 && (
-                <div className="duplicate-item-warning wide">
-                  <span>
-                    {duplicatesOfSelected.length} other item(s) share this
-                    exact name — merge them into this one so stock isn't
-                    split across rows.
-                  </span>
-                </div>
-              )}
-
-              {duplicatesOfSelected.map((duplicate) => (
-                <div className="duplicate-merge-row" key={duplicate.id}>
-                  <span>
-                    {duplicate.sku} · {duplicate.category} ·{" "}
-                    {duplicate.quantity} {duplicate.unit} in stock
-                  </span>
-                  <button
-                    type="button"
-                    disabled={mergingId === duplicate.id}
-                    onClick={() => handleMergeDuplicate(duplicate)}
-                  >
-                    {mergingId === duplicate.id
-                      ? "Merging…"
-                      : "Merge into this item"}
-                  </button>
-                </div>
-              ))}
-            </>
+          {duplicatesOfSelected.length > 0 && (
+            <div className="duplicate-item-warning wide">
+              <span>
+                {duplicatesOfSelected.length} other item(s) share this
+                exact name — merge them into this one so stock isn't
+                split across rows.
+              </span>
+            </div>
           )}
 
-          {detailsTab === "batches" && (
-            <>
-              <div className="modal-section-head">
-                <h3 className="modal-section-title">Batch Records</h3>
-                {canRecordUsage && (
-                  <button
-                    type="button"
-                    className="add-batch-btn"
-                    onClick={() => {
-                      setModal("");
-                      openTransaction(selectedItem, "Stock In");
-                    }}
-                  >
-                    <PackagePlus size={15} /> Add New Batch
-                  </button>
-                )}
-              </div>
+          {duplicatesOfSelected.map((duplicate) => (
+            <div className="duplicate-merge-row" key={duplicate.id}>
+              <span>
+                {duplicate.sku} · {duplicate.category} ·{" "}
+                {duplicate.quantity} {duplicate.unit} in stock
+              </span>
+              <button
+                type="button"
+                disabled={mergingId === duplicate.id}
+                onClick={() => handleMergeDuplicate(duplicate)}
+              >
+                {mergingId === duplicate.id
+                  ? "Merging…"
+                  : "Merge into this item"}
+              </button>
+            </div>
+          ))}
 
-              <div className="batch-mini-stats">
+          <label className="check batch-archived-toggle">
+            <input
+              type="checkbox"
+              checked={showArchivedBatches}
+              onChange={(e) => {
+                setShowArchivedBatches(e.target.checked);
+                setBatchPage(1);
+              }}
+            />
+            Archived (
+            {batchRows.filter((batch) => batch.is_active === false).length})
+          </label>
+
+          <div className="batch-mini-stats">
                 <div className="batch-mini-stat">
                   <TriangleAlert size={16} />
                   <div>
@@ -2892,8 +3114,8 @@ export default function InventoryManagementModule({
                 <div className="empty">Loading batch records…</div>
               ) : rankedBatchRows.length === 0 ? (
                 <div className="empty">
-                  No batches recorded for this item yet. Use "Add New Batch"
-                  to add the first one.
+                  No batches recorded for this item yet. Use the Stock
+                  button on this item to add the first one.
                 </div>
               ) : (
                 <div className="table-wrap">
@@ -3038,8 +3260,8 @@ export default function InventoryManagementModule({
                                     {togglingBatchId === batch.id
                                       ? "Saving…"
                                       : batch.is_active === false
-                                      ? "Activate"
-                                      : "Deactivate"}
+                                      ? "Restore"
+                                      : "Archive"}
                                   </button>
                                 )}
                               </div>
@@ -3090,53 +3312,6 @@ export default function InventoryManagementModule({
                   </button>
                 </div>
               )}
-            </>
-          )}
-
-          {detailsTab === "history" && (
-            <>
-              <h3 className="modal-section-title">Stock Movement History</h3>
-              {transactionRows.length === 0 ? (
-                <div className="empty">No stock movement recorded yet.</div>
-              ) : (
-                <div className="history-list">
-                  {transactionRows.map((tx) => (
-                    <div className="history-row" key={tx.id}>
-                      <div>
-                        <strong>{tx.transaction_type}</strong>
-                        <span>
-                          {formatDateTime12h(tx.created_at)}
-                          {tx.batch?.batch_number
-                            ? ` · Batch ${tx.batch.batch_number}`
-                            : ""}
-                        </span>
-                        <small>
-                          {tx.reason || "No reason"}
-                          {tx.notes ? ` — ${tx.notes}` : ""}
-                          {tx.reference_number ? ` · ${tx.reference_number}` : ""}
-                        </small>
-                      </div>
-
-                      <div
-                        className={
-                          Number(tx.quantity_after) >= Number(tx.quantity_before)
-                            ? "plus"
-                            : "minus"
-                        }
-                      >
-                        <strong>
-                          {tx.quantity_before} → {tx.quantity_after}
-                        </strong>
-                        <small>
-                          {tx.quantity} {selectedItem.unit}
-                        </small>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
 
           <div className="modal-footer-actions">
             <button
@@ -3711,6 +3886,10 @@ export default function InventoryManagementModule({
           padding: 18px;
         }
 
+        .modal-backdrop.elevated {
+          z-index: 200;
+        }
+
         .modal-card {
           background: #fff;
           border-radius: 18px;
@@ -3785,6 +3964,101 @@ export default function InventoryManagementModule({
           border: 1px solid #e4d3ba;
           color: #8a6414;
           font-size: 13px;
+        }
+
+        .batch-count-hint {
+          display: block;
+          margin-top: 4px;
+          font-size: 11px;
+          color: #7c8c94;
+        }
+
+        .unit-entry-row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        .unit-entry-status {
+          font-size: 13px;
+          color: #64798a;
+        }
+
+        .batch-archived-toggle {
+          display: flex !important;
+          grid-template-columns: auto 1fr !important;
+          align-items: center;
+          gap: 8px;
+          font-weight: 600 !important;
+          margin-bottom: 14px;
+        }
+
+        .batch-archived-toggle input {
+          width: auto;
+        }
+
+        .unit-copy-toggle {
+          display: flex !important;
+          grid-template-columns: auto 1fr !important;
+          align-items: center;
+          gap: 8px;
+          font-weight: 600 !important;
+          margin-bottom: 14px;
+        }
+
+        .unit-copy-toggle input {
+          width: auto;
+        }
+
+        .field-lock-note {
+          padding: 12px 14px;
+          border-radius: 12px;
+          background: #eef5f9;
+          border: 1px solid #cfe4ed;
+          color: #45606c;
+          font-size: 13px;
+          line-height: 1.5;
+        }
+
+        .stock-choice-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 14px;
+        }
+
+        .stock-choice-option {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          text-align: left;
+          border: 1px solid #cfe4ed;
+          border-radius: 14px;
+          padding: 16px;
+          background: #fbfeff;
+          cursor: pointer;
+        }
+
+        .stock-choice-option:hover {
+          border-color: #318fbe;
+          background: #f2fafd;
+        }
+
+        .stock-choice-option strong {
+          color: #20313b;
+          font-size: 15px;
+        }
+
+        .stock-choice-option span {
+          color: #64798a;
+          font-size: 13px;
+          line-height: 1.45;
+        }
+
+        @media (max-width: 560px) {
+          .stock-choice-grid {
+            grid-template-columns: 1fr;
+          }
         }
 
         .duplicate-item-warning button {
@@ -4494,21 +4768,21 @@ export default function InventoryManagementModule({
         title={
           pendingArchive?.is_archived
             ? "Restore Item?"
-            : "Archive Item?"
+            : "Deactivate Item?"
         }
         description={
           pendingArchive
-            ? `${
-                pendingArchive.is_archived
-                  ? "Restore"
-                  : "Archive"
-              } ${pendingArchive.item_name}?`
+            ? pendingArchive.is_archived
+              ? `Restore ${pendingArchive.item_name}?`
+              : Number(pendingArchive.quantity) > 0
+              ? `Deactivate ${pendingArchive.item_name}? It still has ${pendingArchive.quantity} ${pendingArchive.unit || "unit(s)"} in stock — deactivating hides it from staff/veterinarian views and stops it from being used in new transactions.`
+              : `Deactivate ${pendingArchive.item_name}?`
             : ""
         }
         confirmLabel={
           pendingArchive?.is_archived
             ? "Yes, Restore Item"
-            : "Yes, Archive Item"
+            : "Yes, Deactivate Item"
         }
         cancelLabel="Cancel"
         busy={archiving}
@@ -4564,6 +4838,7 @@ function Modal({
   close,
   children,
   large,
+  elevated,
 }) {
   useEffect(() => {
     const original = document.body.style.overflow;
@@ -4575,7 +4850,7 @@ function Modal({
 
   return (
     <div
-      className="modal-backdrop"
+      className={`modal-backdrop ${elevated ? "elevated" : ""}`}
       onMouseDown={(e) => {
         if (
           e.target ===

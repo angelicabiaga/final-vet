@@ -2641,7 +2641,7 @@ export default function PetManagementModule({
                               {canViewBilling && record.queue_entry_id && (
                                 <div className="pet-billing-card">
                                   <div className="pet-billing-head">
-                                    <h4><CreditCard size={15} /> Billing &amp; Prescriptions</h4>
+                                    <h4><CreditCard size={15} /> Billing &amp; Veterinarian Prescriptions</h4>
                                     <button type="button" className="pet-billing-refresh" onClick={() => refreshBillingForRecord(record)} disabled={billingByRecordId[record.id]?.loading}>
                                       <RefreshCw size={13} className={billingByRecordId[record.id]?.loading ? "spin" : ""} /> Refresh
                                     </button>

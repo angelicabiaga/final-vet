@@ -133,6 +133,37 @@ function calculateDaysBetween(
   );
 }
 
+/**
+ * Same priority order as the SQL function pawcruz_inventory_status --
+ * expiry outranks stock level. Computed here (not trusted from the DB
+ * `status` column) because that column is only ever as fresh as the last
+ * trigger fire, and this app has had stretches where that trigger wasn't
+ * actually installed -- filtering/display would otherwise silently miss
+ * items whose stored status never caught up with reality.
+ */
+export function computeLiveItemStatus(
+  quantity,
+  reorderLevel,
+  expiryDate
+) {
+  if (expiryDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expiry = new Date(`${expiryDate}T00:00:00`);
+    if (!Number.isNaN(expiry.getTime())) {
+      if (expiry < today) return "Expired";
+      const nearExpiry = new Date(today);
+      nearExpiry.setDate(nearExpiry.getDate() + 30);
+      if (expiry <= nearExpiry) return "Near Expiry";
+    }
+  }
+
+  const qty = Number(quantity || 0);
+  if (qty <= 0) return "Out of Stock";
+  if (qty <= Number(reorderLevel || 0)) return "Low Stock";
+  return "In Stock";
+}
+
 export async function getInventoryItems({
   search = "",
   category = "",
@@ -144,24 +175,15 @@ export async function getInventoryItems({
     .select(ITEM_FIELDS)
     .order("item_name");
 
-  if (!includeArchived) {
-    query = query.eq(
-      "is_archived",
-      false
-    );
-  }
+  query = query.eq(
+    "is_archived",
+    !!includeArchived
+  );
 
   if (category) {
     query = query.eq(
       "category",
       category
-    );
-  }
-
-  if (status) {
-    query = query.eq(
-      "status",
-      status
     );
   }
 
@@ -187,7 +209,18 @@ export async function getInventoryItems({
     );
   }
 
-  return data || [];
+  const rows = (data || []).map((row) => ({
+    ...row,
+    status: computeLiveItemStatus(
+      row.quantity,
+      row.reorder_level,
+      row.expiry_date
+    ),
+  }));
+
+  return status
+    ? rows.filter((row) => row.status === status)
+    : rows;
 }
 
 export async function getInventoryItemsByIds(ids = []) {
@@ -242,21 +275,6 @@ export async function getInventorySummary() {
     (row) => !row.is_archived
   );
 
-  const today = new Date();
-  today.setHours(
-    0,
-    0,
-    0,
-    0
-  );
-
-  const nearExpiry =
-    new Date(today);
-
-  nearExpiry.setDate(
-    nearExpiry.getDate() + 30
-  );
-
   const totalItems =
     rows.length;
 
@@ -272,49 +290,30 @@ export async function getInventorySummary() {
       ) * 100
     ) / 100;
 
+  // Same expiry-first priority as computeLiveItemStatus/the DB function,
+  // so these counts always match what clicking a card actually filters to.
+  const liveStatuses = rows.map((row) =>
+    computeLiveItemStatus(
+      row.quantity,
+      row.reorder_level,
+      row.expiry_date
+    )
+  );
+
   const lowStock =
-    rows.filter(
-      (row) =>
-        Number(
-          row.quantity || 0
-        ) > 0 &&
-        Number(
-          row.quantity || 0
-        ) <=
-          Number(
-            row.reorder_level ||
-              0
-          )
+    liveStatuses.filter(
+      (status) => status === "Low Stock"
     ).length;
 
   const outOfStock =
-    rows.filter(
-      (row) =>
-        Number(
-          row.quantity || 0
-        ) <= 0
+    liveStatuses.filter(
+      (status) => status === "Out of Stock"
     ).length;
 
   const expiringSoon =
-    rows.filter((row) => {
-      if (!row.expiry_date) {
-        return false;
-      }
-
-      const expiry =
-        normalizeDate(
-          row.expiry_date
-        );
-
-      if (!expiry) {
-        return false;
-      }
-
-      return (
-        expiry >= today &&
-        expiry <= nearExpiry
-      );
-    }).length;
+    liveStatuses.filter(
+      (status) => status === "Near Expiry"
+    ).length;
 
   return {
     totalItems,
@@ -325,10 +324,110 @@ export async function getInventorySummary() {
   };
 }
 
+/**
+ * How many of each item's batches are currently in stock (Active) vs
+ * depleted (Depleted), keyed by item_id -- shown next to the item's status
+ * badge in the list so "In Stock" isn't just one word for what might be
+ * several separate lots.
+ */
+export async function getInventoryBatchCounts() {
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("inventory_batches")
+    .select("item_id,status,expiry_date,is_active")
+    .neq("is_active", false);
+
+  if (error) {
+    throw friendly(
+      error,
+      "Unable to load batch counts."
+    );
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const nearExpiryCutoff = new Date(today);
+  nearExpiryCutoff.setDate(nearExpiryCutoff.getDate() + 30);
+
+  const counts = {};
+
+  for (const row of data || []) {
+    if (!counts[row.item_id]) {
+      counts[row.item_id] = {
+        inStock: 0,
+        outOfStock: 0,
+        expired: 0,
+        nearExpiry: 0,
+      };
+    }
+
+    const bucket = counts[row.item_id];
+
+    // Same priority as batchDisplayStatus: expired outranks everything,
+    // then depleted, then near-expiry.
+    if (row.status === "Expired") {
+      bucket.expired += 1;
+    } else if (row.status === "Depleted") {
+      bucket.outOfStock += 1;
+    } else if (
+      row.expiry_date &&
+      new Date(`${row.expiry_date}T00:00:00`) <= nearExpiryCutoff
+    ) {
+      bucket.nearExpiry += 1;
+    } else {
+      bucket.inStock += 1;
+    }
+  }
+
+  return counts;
+}
+
 export async function saveInventoryItem(
   values,
   profile
 ) {
+  // Editing an existing item is intentionally restricted to renaming it --
+  // category, unit, price, expiry, supplier, and batch number are either
+  // structural identifiers or values now tracked per-batch, so changing them
+  // through this form (instead of Stock / Batch Records) would silently
+  // desync inventory_items from the batches and transactions that reference
+  // it.
+  if (values.id) {
+    const itemName = values.item_name?.trim();
+
+    if (!itemName) {
+      throw new Error(
+        "Item name is required."
+      );
+    }
+
+    const {
+      data,
+      error,
+    } = await supabase
+      .from(
+        "inventory_items"
+      )
+      .update({
+        item_name: itemName,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", values.id)
+      .select(ITEM_FIELDS)
+      .single();
+
+    if (error) {
+      throw friendly(
+        error,
+        "Unable to update inventory item."
+      );
+    }
+
+    return data;
+  }
+
   const payload = {
     item_name:
       values.item_name?.trim(),
@@ -365,11 +464,10 @@ export async function saveInventoryItem(
     !payload.item_name ||
     !payload.category ||
     !payload.sku ||
-    !payload.unit ||
-    !payload.expiry_date
+    !payload.unit
   ) {
     throw new Error(
-      "Item name, category, item code, unit, and expiry date are required."
+      "Item name, category, item code, and unit are required."
     );
   }
 
@@ -393,29 +491,6 @@ export async function saveInventoryItem(
     throw new Error(
       "Reorder level must be zero or greater."
     );
-  }
-
-  if (values.id) {
-    const {
-      data,
-      error,
-    } = await supabase
-      .from(
-        "inventory_items"
-      )
-      .update(payload)
-      .eq("id", values.id)
-      .select(ITEM_FIELDS)
-      .single();
-
-    if (error) {
-      throw friendly(
-        error,
-        "Unable to update inventory item."
-      );
-    }
-
-    return data;
   }
 
   const initialQuantity =
@@ -574,6 +649,77 @@ export async function recordInventoryTransaction(
   }
 
   return data;
+}
+
+/**
+ * Writes staff-entered per-unit Unique Unit IDs (and, when they diverge
+ * from the batch, per-unit expiry/date-received) onto the unit rows that
+ * pawcruz_generate_units_for_batch already auto-created for the batch this
+ * transaction just made. There's no way to pass these in at insert time --
+ * the trigger fires as a side effect of the batch insert inside the RPC --
+ * so this is a required follow-up call, matched by unit creation order
+ * (unit_no) against the order unitEntries was filled in.
+ */
+export async function attachInventoryUnitCodes(transactionId, unitEntries) {
+  if (!transactionId || !unitEntries?.length) return;
+
+  const {
+    data: txRow,
+    error: txError,
+  } = await supabase
+    .from("inventory_transactions")
+    .select("batch_id")
+    .eq("id", transactionId)
+    .single();
+
+  if (txError || !txRow?.batch_id) {
+    throw friendly(
+      txError,
+      "Stock was recorded, but the batch could not be found to attach unit IDs."
+    );
+  }
+
+  const {
+    data: unitRows,
+    error: unitsError,
+  } = await supabase
+    .from("inventory_units")
+    .select("id")
+    .eq("batch_id", txRow.batch_id)
+    .order("unit_no", { ascending: true });
+
+  if (unitsError) {
+    throw friendly(
+      unitsError,
+      "Stock was recorded, but the unit records could not be loaded to attach unit IDs."
+    );
+  }
+
+  if ((unitRows || []).length !== unitEntries.length) {
+    throw new Error(
+      "Stock was recorded, but the number of unit records didn't match the number of unit IDs entered."
+    );
+  }
+
+  for (let i = 0; i < unitRows.length; i++) {
+    const entry = unitEntries[i];
+
+    const { error } = await supabase
+      .from("inventory_units")
+      .update({
+        unit_code: entry.unitCode?.trim() || null,
+        expiry_date: entry.expiryDate || null,
+        date_received: entry.dateReceived || null,
+      })
+      .eq("id", unitRows[i].id);
+
+    if (error) {
+      throw friendly(
+        error,
+        `Stock was recorded, but unit ID "${entry.unitCode}" could not be saved (it may already be in use).`
+      );
+    }
+  }
 }
 
 /**

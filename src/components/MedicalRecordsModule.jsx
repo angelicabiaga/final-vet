@@ -42,7 +42,7 @@ import {
   uploadMedicalAttachment,
 } from "../services/medicalRecordService";
 
-import { formatDateTime12h } from "../utils/timeFormat";
+import { formatDateTime12h, formatTime12h } from "../utils/timeFormat";
 
 import { getInventoryItems } from "../services/inventoryService";
 import PredictiveHealthReport from "./PredictiveHealthReport";
@@ -3094,7 +3094,7 @@ export default function MedicalRecordsModule({
                           appointment.appointment_date
                         }{" "}
                         {
-                          appointment.start_time
+                          formatTime12h(appointment.start_time)
                         }
                       </option>
                     )

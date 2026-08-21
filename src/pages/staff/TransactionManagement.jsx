@@ -300,7 +300,7 @@ function OutstandingPrescriptions({ profile, embedded }) {
     <section className={embedded ? "outstanding-rx-module embedded" : "card outstanding-rx-module"} id="outstanding-prescriptions">
       <div className="pending-billing-heading">
         <div>
-          <h2><Pill size={22} /> Outstanding Prescriptions</h2>
+          <h2><Pill size={22} /> Veterinarian Outstanding Prescriptions</h2>
           <p>Prescribed medicine that has not been fully purchased yet.</p>
         </div>
         <button type="button" className="history-refresh" onClick={load} disabled={loading}>
@@ -375,7 +375,7 @@ function OutstandingPrescriptions({ profile, embedded }) {
   );
 }
 
-const BILLING_QUEUE_TABS = ["Pending Billing Queue", "Outstanding Prescriptions"];
+const BILLING_QUEUE_TABS = ["Pending Billing Queue", "Veterinarian Outstanding Prescriptions"];
 
 function PendingBillingAndOutstanding({ profile }) {
   const [tab, setTab] = useState(BILLING_QUEUE_TABS[0]);
@@ -405,7 +405,7 @@ function PendingBillingAndOutstanding({ profile }) {
       <div style={{ display: tab === "Pending Billing Queue" ? "block" : "none" }}>
         <PendingBillingQueue profile={profile} embedded />
       </div>
-      <div style={{ display: tab === "Outstanding Prescriptions" ? "block" : "none" }}>
+      <div style={{ display: tab === "Veterinarian Outstanding Prescriptions" ? "block" : "none" }}>
         <OutstandingPrescriptions profile={profile} embedded />
       </div>
     </section>
@@ -1162,7 +1162,7 @@ export function NewTransaction({ profile }) {
 
       {invoiceKind === "Prescription Follow-up" && <div className="consult-notes"><div><span>Continue Purchase</span><p>This invoice covers only the remaining quantity of one previously prescribed medicine. No checkup fee is applied.</p></div></div>}
 
-      <label className="field-label">{invoiceKind === "Prescription Follow-up" ? "Prescription being purchased" : "Consultation being billed"}</label>
+      <label className="field-label">{invoiceKind === "Prescription Follow-up" ? "Veterinarian prescription being purchased" : "Consultation being billed"}</label>
       {loadingBilling ? <div className="results-empty">Loading…</div> :
        billingError ? <div className="error">{billingError}</div> :
        billing && <div className="consult-summary">
