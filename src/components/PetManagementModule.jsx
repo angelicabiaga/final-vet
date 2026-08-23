@@ -1306,7 +1306,7 @@ export default function PetManagementModule({
                   <label>
                     <span>
                       Pet Owner
-                      <span className="required-mark">*</span>
+                      <span className="required-mark"> *</span>
                     </span>
 
                     <div className="combo">
@@ -1384,7 +1384,7 @@ export default function PetManagementModule({
                   <label>
                     <span>
                       Pet Name
-                      <span className="required-mark">*</span>
+                      <span className="required-mark"> *</span>
                     </span>
 
                     <input
@@ -1403,7 +1403,7 @@ export default function PetManagementModule({
                   <label>
                     <span>
                       Species
-                      <span className="required-mark">*</span>
+                      <span className="required-mark"> *</span>
                     </span>
 
                     <div className="combo">
@@ -1499,7 +1499,7 @@ export default function PetManagementModule({
                     <label>
                       <span>
                         Specify Species
-                        <span className="required-mark">*</span>
+                        <span className="required-mark"> *</span>
                       </span>
 
                       <input
@@ -1520,7 +1520,7 @@ export default function PetManagementModule({
                   <label>
                     <span>
                       Breed
-                      <span className="required-mark">*</span>
+                      <span className="required-mark"> *</span>
                     </span>
 
                     {breedOptions ? (
@@ -1569,7 +1569,7 @@ export default function PetManagementModule({
                     <label>
                       <span>
                         Specify Breed
-                        <span className="required-mark">*</span>
+                        <span className="required-mark"> *</span>
                       </span>
 
                       <input
@@ -1590,7 +1590,7 @@ export default function PetManagementModule({
                   <label>
                     <span>
                       Sex
-                      <span className="required-mark">*</span>
+                      <span className="required-mark"> *</span>
                     </span>
 
                     <select
@@ -1617,7 +1617,7 @@ export default function PetManagementModule({
                   <label>
                     <span>
                       Date of Birth
-                      <span className="required-mark">*</span>
+                      <span className="required-mark"> *</span>
                     </span>
 
                     <input
@@ -1652,7 +1652,7 @@ export default function PetManagementModule({
                   <label>
                     <span>
                       Weight (kg)
-                      <span className="required-mark">*</span>
+                      <span className="required-mark"> *</span>
                     </span>
 
                     <input
@@ -1680,7 +1680,7 @@ export default function PetManagementModule({
 
                 <div className="grid">
                   <label>
-                    <span>Color</span>
+                    <span>Color<span className="optional-mark"> (Optional)</span></span>
 
                     <input
                       value={form.color}
@@ -1695,7 +1695,7 @@ export default function PetManagementModule({
                   </label>
 
                   <label>
-                    <span>Microchip Number</span>
+                    <span>Microchip Number<span className="optional-mark"> (Optional)</span></span>
 
                     <input
                       value={form.microchipNumber}
@@ -1717,7 +1717,7 @@ export default function PetManagementModule({
                 </h3>
 
                 <label>
-                  <span>Allergies</span>
+                  <span>Allergies<span className="optional-mark"> (Optional)</span></span>
 
                   <textarea
                     value={form.allergies}
@@ -1732,7 +1732,7 @@ export default function PetManagementModule({
                 </label>
 
                 <label>
-                  <span>Existing Conditions</span>
+                  <span>Existing Conditions<span className="optional-mark"> (Optional)</span></span>
 
                   <textarea
                     value={form.existingConditions}
@@ -1747,7 +1747,7 @@ export default function PetManagementModule({
                 </label>
 
                 <label>
-                  <span>Additional Notes</span>
+                  <span>Additional Notes<span className="optional-mark"> (Optional)</span></span>
 
                   <textarea
                     value={form.notes}

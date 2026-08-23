@@ -215,12 +215,12 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
         <p className="notes-context">{rebookModal.pet?.pet_name} · {rebookModal.owner?.full_name} · {rebookModal.veterinarian?.full_name}</p>
         <form onSubmit={confirmRebook} className="rebook-form">
           {rebookMessage&&<div className="rebook-error">{rebookMessage}</div>}
-          <label>New Date<input type="date" min={todayLocal()} value={rebookDate} onChange={e=>setRebookDate(e.target.value)} required/></label>
-          <label>Available Time<select value={rebookTime} onChange={e=>setRebookTime(e.target.value)} required disabled={rebookLoading||!rebookTimes.length}>
+          <label>New Date<span className="required-mark"> *</span><input type="date" min={todayLocal()} value={rebookDate} onChange={e=>setRebookDate(e.target.value)} required/></label>
+          <label>Available Time<span className="required-mark"> *</span><select value={rebookTime} onChange={e=>setRebookTime(e.target.value)} required disabled={rebookLoading||!rebookTimes.length}>
             <option value="">{rebookLoading?"Loading…":rebookTimes.length?"Select time":"No available slots"}</option>
             {rebookTimes.map(slot=><option key={slot} value={slot}>{formatTime(slot)}</option>)}
           </select></label>
-          <label>Veterinarian<select value={rebookVetId} onChange={e=>setRebookVetId(e.target.value)} required disabled={!rebookTime}>
+          <label>Veterinarian<span className="required-mark"> *</span><select value={rebookVetId} onChange={e=>setRebookVetId(e.target.value)} required disabled={!rebookTime}>
             <option value="">{!rebookTime?"Select a time first":rebookEligibleVets.length?"Select veterinarian":"No veterinarian available at this time"}</option>
             {rebookEligibleVets.map(vet=><option key={vet.id} value={vet.id}>{vet.full_name}</option>)}
           </select></label>

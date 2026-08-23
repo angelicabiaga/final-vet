@@ -416,14 +416,14 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         {isStaff && (guestOwner ? (
           <>
             <div className="two-cols">
-              <label>First Name<span className="required-mark">*</span><input required value={guestForm.firstName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, firstName: event.target.value }))} placeholder="Enter first name" /></label>
-              <label>Last Name<span className="required-mark">*</span><input required value={guestForm.lastName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, lastName: event.target.value }))} placeholder="Enter last name" /></label>
+              <label>First Name<span className="required-mark"> *</span><input required value={guestForm.firstName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, firstName: event.target.value }))} placeholder="Enter first name" /></label>
+              <label>Last Name<span className="required-mark"> *</span><input required value={guestForm.lastName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, lastName: event.target.value }))} placeholder="Enter last name" /></label>
             </div>
             <div className="two-cols">
-              <label>Phone Number<span className="required-mark">*</span><input required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, phone: event.target.value }))} placeholder="Enter phone number" /></label>
-              <label>Email<span className="required-mark">*</span><input required type="email" value={guestForm.email} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, email: event.target.value }))} placeholder="Enter email address" /></label>
+              <label>Phone Number<span className="required-mark"> *</span><input required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, phone: event.target.value }))} placeholder="Enter phone number" /></label>
+              <label>Email<span className="required-mark"> *</span><input required type="email" value={guestForm.email} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, email: event.target.value }))} placeholder="Enter email address" /></label>
             </div>
-            <label>Address<span className="required-mark">*</span><input required value={guestForm.address} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, address: event.target.value }))} placeholder="Enter home address" /></label>
+            <label>Address<span className="required-mark"> *</span><input required value={guestForm.address} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, address: event.target.value }))} placeholder="Enter home address" /></label>
             {ownerRecord && (
               <p className="help">
                 Registered as a new pet owner account for {ownerRecord.full_name}. <button type="button" className="appt-linklike" onClick={() => { guestOwnerPromiseRef.current = null; setOwnerRecord(null); updateForm({ ownerId: "" }); }}>Not them? Start over</button>
@@ -431,7 +431,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
             )}
           </>
         ) : (
-          <label>Pet Owner<span className="required-mark">*</span>
+          <label>Pet Owner<span className="required-mark"> *</span>
             <div className="appt-owner-select">
               <input
                 type="text"
@@ -459,7 +459,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
           </label>
         ))}
 
-        <label>Pet Selection<span className="required-mark">*</span>
+        <label>Pet Selection<span className="required-mark"> *</span>
           <div className="appt-pet-select" ref={petSelectRef}>
             <div className="appt-pet-controls">
               <button type="button" className="appt-pet-trigger" disabled={isStaff && !form.ownerId} onClick={() => setPetDropdownOpen(open => !open)}>
@@ -495,14 +495,14 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         </label>
 
         <div className="two-cols">
-          <label>Appointment Date<span className="required-mark">*</span><input type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required /></label>
-          <label>Available Time<span className="required-mark">*</span><select value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={availabilityLoading || !availableTimes.length}>
+          <label>Appointment Date<span className="required-mark"> *</span><input type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required /></label>
+          <label>Available Time<span className="required-mark"> *</span><select value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={availabilityLoading || !availableTimes.length}>
             <option value="">{availabilityLoading ? "Loading…" : availableTimes.length ? "Select time" : "No available slots"}</option>
             {availableTimes.map(slot => <option key={slot} value={slot}>{formatTime(slot)}</option>)}
           </select></label>
         </div>
 
-        <label>Veterinarian<span className="required-mark">*</span>
+        <label>Veterinarian<span className="required-mark"> *</span>
           <select value={form.veterinarianId} onChange={event => updateForm({ veterinarianId: event.target.value })} required disabled={!form.startTime}>
             <option value="">{!form.startTime ? "Select a time first" : eligibleVets.length ? "Select veterinarian" : "No veterinarian available at this time"}</option>
             {eligibleVets.map(vet => <option key={vet.id} value={vet.id}>{vet.full_name}</option>)}
@@ -511,7 +511,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
         {notEnoughSlots && <p className="notice error">Only {consecutiveSlots.length} consecutive slot(s) available from this time for {form.petIds.length} pets. Choose an earlier time or fewer pets.</p>}
 
-        <label>Notes <span>(optional)</span><textarea value={form.notes} onChange={event => updateForm({ notes: event.target.value })} maxLength="500" rows="4" placeholder="Additional information for the clinic" /></label>
+        <label>Notes<span className="optional-mark"> (Optional)</span><textarea value={form.notes} onChange={event => updateForm({ notes: event.target.value })} maxLength="500" rows="4" placeholder="Additional information for the clinic" /></label>
         <button className="book-button" disabled={submitting || notEnoughSlots}>{submitting ? "Saving…" : isStaff ? "Register Walk-In" : "Book Appointment"}</button>
       </form>
 
@@ -533,10 +533,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
             <h3><PawPrint size={18} /> Add Pet</h3>
             <form onSubmit={submitPetModal} className="appt-modal-form">
               {petModalMessage && <div className="notice error">{petModalMessage}</div>}
-              <label>Pet Name<span className="required-mark">*</span><input required value={petModalForm.petName} onChange={event => setPetModalForm(value => ({ ...value, petName: event.target.value }))} placeholder="Enter pet name" /></label>
+              <label>Pet Name<span className="required-mark"> *</span><input required value={petModalForm.petName} onChange={event => setPetModalForm(value => ({ ...value, petName: event.target.value }))} placeholder="Enter pet name" /></label>
               <div className="two-cols">
-                <label>Species<span className="required-mark">*</span><input required value={petModalForm.species} onChange={event => setPetModalForm(value => ({ ...value, species: event.target.value }))} placeholder="e.g. Dog, Cat" /></label>
-                <label>Breed <span>(optional)</span><input value={petModalForm.breed} onChange={event => setPetModalForm(value => ({ ...value, breed: event.target.value }))} placeholder="Enter breed" /></label>
+                <label>Species<span className="required-mark"> *</span><input required value={petModalForm.species} onChange={event => setPetModalForm(value => ({ ...value, species: event.target.value }))} placeholder="e.g. Dog, Cat" /></label>
+                <label>Breed<span className="optional-mark"> (Optional)</span><input value={petModalForm.breed} onChange={event => setPetModalForm(value => ({ ...value, breed: event.target.value }))} placeholder="Enter breed" /></label>
               </div>
               <div className="two-cols">
                 <label>Sex
@@ -546,9 +546,9 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
                     <option>Female</option>
                   </select>
                 </label>
-                <label>Weight (kg) <span>(optional)</span><input type="number" min="0" step="0.01" value={petModalForm.weight} onChange={event => setPetModalForm(value => ({ ...value, weight: event.target.value }))} placeholder="0.00" /></label>
+                <label>Weight (kg)<span className="optional-mark"> (Optional)</span><input type="number" min="0" step="0.01" value={petModalForm.weight} onChange={event => setPetModalForm(value => ({ ...value, weight: event.target.value }))} placeholder="0.00" /></label>
               </div>
-              <label>Date of Birth <span>(optional)</span><input type="date" max={todayLocal()} value={petModalForm.dateOfBirth} onChange={event => setPetModalForm(value => ({ ...value, dateOfBirth: event.target.value }))} /></label>
+              <label>Date of Birth<span className="optional-mark"> (Optional)</span><input type="date" max={todayLocal()} value={petModalForm.dateOfBirth} onChange={event => setPetModalForm(value => ({ ...value, dateOfBirth: event.target.value }))} /></label>
               <button className="book-button" disabled={petModalSaving}>{petModalSaving ? "Saving…" : "Register Pet"}</button>
             </form>
           </div>

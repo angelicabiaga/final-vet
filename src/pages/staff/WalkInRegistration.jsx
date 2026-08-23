@@ -52,11 +52,11 @@ function ModeSelect({ onSelect }) {
 
 const styles = `
 .walkin-select{max-width:900px}
-.walkin-select-intro{margin-bottom:22px}
+.walkin-select-intro{margin-bottom:16px}
 .walkin-select-intro h2{margin:0 0 6px;color:#20313B;font-size:22px}
 .walkin-select-intro p{margin:0;color:#6F7F88}
-.walkin-select-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
-.walkin-option-card{text-align:left;cursor:pointer;background:#fff;border:1px solid #e3eef3;border-radius:20px;padding:26px;box-shadow:0 10px 30px rgba(55,126,158,.08);display:grid;gap:10px;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
+.walkin-select-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.walkin-option-card{text-align:left;cursor:pointer;background:#fff;border:1px solid #e3eef3;border-radius:18px;padding:20px;box-shadow:0 10px 30px rgba(55,126,158,.08);display:grid;gap:8px;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
 .walkin-option-card:hover{transform:translateY(-3px);border-color:#a9dff0;box-shadow:0 16px 34px rgba(55,126,158,.16)}
 .walkin-option-card:focus-visible{outline:3px solid rgba(77,168,218,.35);outline-offset:2px}
 .walkin-option-icon{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;color:#fff}

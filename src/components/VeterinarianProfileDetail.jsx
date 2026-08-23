@@ -238,7 +238,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
   }
 
   const PasswordField = ({ name, label }) => (
-    <label>{label}<div className="vpd-passwordBox">
+    <label><span>{label}<span className="required-mark"> *</span></span><div className="vpd-passwordBox">
       <input type={show[name] ? "text" : "password"} value={passwords[name]} onChange={(e) => setPasswords((p) => ({ ...p, [name]: e.target.value }))} required />
       <button type="button" onClick={() => setShow((s) => ({ ...s, [name]: !s[name] }))}>{show[name] ? <EyeOff size={18} /> : <Eye size={18} />}</button>
     </div></label>
@@ -308,36 +308,36 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
         {isSelf ? (
           <form onSubmit={saveDetails} className="vpd-form">
             <div className="vpd-pair">
-              <label><span>First name<span className="vpd-required">*</span></span><input value={form.firstName} onChange={(e) => field("firstName", e.target.value)} required /></label>
-              <label><span>Last name<span className="vpd-required">*</span></span><input value={form.lastName} onChange={(e) => field("lastName", e.target.value)} required /></label>
+              <label><span>First name<span className="required-mark"> *</span></span><input value={form.firstName} onChange={(e) => field("firstName", e.target.value)} required /></label>
+              <label><span>Last name<span className="required-mark"> *</span></span><input value={form.lastName} onChange={(e) => field("lastName", e.target.value)} required /></label>
             </div>
-            <label><span>Middle name <small>(Optional)</small></span><input value={form.middleName} onChange={(e) => field("middleName", e.target.value)} /></label>
+            <label><span>Middle name<span className="optional-mark"> (Optional)</span></span><input value={form.middleName} onChange={(e) => field("middleName", e.target.value)} /></label>
             <div className="vpd-pair">
-              <label><span>Username<span className="vpd-required">*</span></span><input value={form.username} onChange={(e) => field("username", e.target.value)} required /></label>
-              <label><span>Email<span className="vpd-required">*</span></span><input type="email" value={form.email} onChange={(e) => field("email", e.target.value)} required /></label>
+              <label><span>Username<span className="required-mark"> *</span></span><input value={form.username} onChange={(e) => field("username", e.target.value)} required /></label>
+              <label><span>Email<span className="required-mark"> *</span></span><input type="email" value={form.email} onChange={(e) => field("email", e.target.value)} required /></label>
             </div>
             <div className="vpd-pair">
-              <label><span>Contact number<span className="vpd-required">*</span></span>
+              <label><span>Contact number<span className="required-mark"> *</span></span>
                 <input value={form.phone} onChange={(e) => field("phone", e.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" aria-invalid={!!errors.phone} required />
                 {errors.phone && <span className="vpd-fieldError">{errors.phone}</span>}
               </label>
-              <label><span>Specialization<span className="vpd-required">*</span></span>
+              <label><span>Specialization<span className="required-mark"> *</span></span>
                 <input value={form.specialization} onChange={(e) => field("specialization", e.target.value)} placeholder="e.g. Small Animal Medicine" aria-invalid={!!errors.specialization} required />
                 {errors.specialization && <span className="vpd-fieldError">{errors.specialization}</span>}
               </label>
             </div>
-            <label><span>Address<span className="vpd-required">*</span></span>
+            <label><span>Address<span className="required-mark"> *</span></span>
               <textarea value={form.address} onChange={(e) => field("address", e.target.value)} aria-invalid={!!errors.address} required />
               {errors.address && <span className="vpd-fieldError">{errors.address}</span>}
             </label>
 
             <h4 className="vpd-subheading"><GraduationCap size={16} /> Background in Veterinary Medicine</h4>
-            <label>Education<textarea value={form.education} onChange={(e) => field("education", e.target.value)} placeholder="Veterinary school, degree, year" /></label>
-            <label>Years of Veterinary Experience<input type="number" min="0" value={form.years_experience} onChange={(e) => field("years_experience", e.target.value)} /></label>
-            <label>Certifications and Professional Training<textarea value={form.certifications_training} onChange={(e) => field("certifications_training", e.target.value)} /></label>
-            <label>Previous Veterinary Practice<textarea value={form.previous_practice} onChange={(e) => field("previous_practice", e.target.value)} /></label>
-            <label>Professional Interests<textarea value={form.professional_interests} onChange={(e) => field("professional_interests", e.target.value)} /></label>
-            <label>Short Biography<textarea value={form.biography} onChange={(e) => field("biography", e.target.value)} /></label>
+            <label><span>Education<span className="optional-mark"> (Optional)</span></span><textarea value={form.education} onChange={(e) => field("education", e.target.value)} placeholder="Veterinary school, degree, year" /></label>
+            <label><span>Years of Veterinary Experience<span className="optional-mark"> (Optional)</span></span><input type="number" min="0" value={form.years_experience} onChange={(e) => field("years_experience", e.target.value)} /></label>
+            <label><span>Certifications and Professional Training<span className="optional-mark"> (Optional)</span></span><textarea value={form.certifications_training} onChange={(e) => field("certifications_training", e.target.value)} /></label>
+            <label><span>Previous Veterinary Practice<span className="optional-mark"> (Optional)</span></span><textarea value={form.previous_practice} onChange={(e) => field("previous_practice", e.target.value)} /></label>
+            <label><span>Professional Interests<span className="optional-mark"> (Optional)</span></span><textarea value={form.professional_interests} onChange={(e) => field("professional_interests", e.target.value)} /></label>
+            <label><span>Short Biography<span className="optional-mark"> (Optional)</span></span><textarea value={form.biography} onChange={(e) => field("biography", e.target.value)} /></label>
 
             <button className="vpd-save-btn" disabled={saving}><Save size={17} />{saving ? "Saving..." : "Save Profile"}</button>
           </form>
@@ -426,7 +426,6 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
 
         .vpd-form{display:grid;gap:13px}
         .vpd-form label{display:grid;gap:6px;font-size:13px;font-weight:700;color:#334e5a}
-        .vpd-required{color:#d14b4b;margin-left:3px;font-weight:800}
         .vpd-fieldError{color:#d14b4b;font-size:11.5px;font-weight:600}
         .vpd-form input,.vpd-form textarea{width:100%;border:1px solid #d8e8ef;border-radius:10px;padding:11px;font:inherit;box-sizing:border-box}
         .vpd-form input[aria-invalid="true"],.vpd-form textarea[aria-invalid="true"]{border-color:#e2a3a3}

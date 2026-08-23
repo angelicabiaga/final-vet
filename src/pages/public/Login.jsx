@@ -50,7 +50,7 @@ export default function Login() {
     >
       <form onSubmit={submit}>
         <label>
-          Email or Username
+          Email or Username<span className="required-mark"> *</span>
           <input
             value={form.identifier}
             onChange={(e) => setForm({ ...form, identifier: e.target.value })}
@@ -58,7 +58,7 @@ export default function Login() {
           />
         </label>
         <label>
-          Password
+          Password<span className="required-mark"> *</span>
           <PasswordInput
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}

@@ -45,6 +45,19 @@ button:not(:disabled):active{transform:translateY(0)}
 .shell .search-box:focus-within,.shell .history-search:focus-within,.shell .vets-search:focus-within,.shell .search:focus-within,.shell .passwordBox:focus-within,.shell .vpd-passwordBox:focus-within{
   border-color:var(--pc-blue)!important;box-shadow:0 0 0 3px rgba(67,143,181,.12)!important;
 }
+/* Required/optional field indicators: label text sits inside a
+   display:grid label (text row, then input row) across the app, so an
+   indicator span placed as its own sibling becomes its own grid row --
+   display:contents removes its own box so its text merges back into the
+   label-text row instead of dropping to a line of its own. */
+/* These render with display:contents (see above), which drops their own
+   box -- so spacing before the mark comes from a literal leading space in
+   its text content (" *", " (Optional)"), not margin/padding, which would
+   have no box left to apply to. */
+.required-mark,.optional-mark{display:contents!important}
+.required-mark{color:#d14b4b!important;font-weight:700!important}
+.optional-mark{color:var(--pc-muted)!important;font-weight:400!important;font-size:.85em!important}
+
 .shell table{background:#fff;border-radius:12px;overflow:hidden}
 .shell th{background:#eef8fb!important;color:var(--pc-navy)!important;font-size:12px;text-transform:uppercase;letter-spacing:.35px}
 .shell td{color:#334f5e}
@@ -52,7 +65,7 @@ button:not(:disabled):active{transform:translateY(0)}
 .shell .pill{font-weight:600}
 
 /* Dashboard styling inspired by reference project */
-.dash-head{background:linear-gradient(135deg,var(--pc-blue),var(--pc-navy))!important;color:#fff!important;border-radius:18px!important;padding:25px!important;box-shadow:0 8px 22px rgba(37,80,101,.18)!important}
+.dash-head{background:linear-gradient(135deg,var(--pc-blue),var(--pc-navy))!important;color:#fff!important;border-radius:16px!important;padding:18px 20px!important;box-shadow:0 8px 22px rgba(37,80,101,.18)!important}
 .dash-head h2,.dash-head p,.dash-head span{color:#fff!important}
 .dash-head button{background:#fff!important;color:var(--pc-navy)!important}
 .dash-cards article{background:#fff!important;border-left:5px solid var(--pc-blue)!important}
@@ -76,5 +89,5 @@ button:not(:disabled):active{transform:translateY(0)}
 
 @media(max-width:800px){
   .shell .content{min-height:calc(100vh - 70px)}
-  .dash-head{padding:19px!important}
+  .dash-head{padding:15px 16px!important}
 }

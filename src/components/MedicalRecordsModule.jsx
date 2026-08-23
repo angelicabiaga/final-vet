@@ -2946,7 +2946,7 @@ export default function MedicalRecordsModule({
             <div className="fields">
               <div className="wide context-fields">
               <label>
-                Pet Owner
+                Pet Owner<span className="required-mark"> *</span>
 
                 <select
                   required
@@ -2985,7 +2985,7 @@ export default function MedicalRecordsModule({
               </label>
 
               <label>
-                Pet
+                Pet<span className="required-mark"> *</span>
 
                 <select
                   required
@@ -3032,7 +3032,7 @@ export default function MedicalRecordsModule({
               </label>
 
               <label>
-                Veterinarian
+                Veterinarian<span className="required-mark"> *</span>
 
                 <select
                   required
@@ -3122,7 +3122,7 @@ export default function MedicalRecordsModule({
               </label>
 
               <label>
-                Consultation Date
+                Consultation Date<span className="required-mark"> *</span>
 
                 <input
                   type="date"

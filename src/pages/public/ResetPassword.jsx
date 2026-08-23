@@ -45,7 +45,7 @@ export default function ResetPassword() {
     >
       <form onSubmit={submit}>
         <label>
-          New Password
+          New Password<span className="required-mark"> *</span>
           <PasswordInput
             minLength='8'
             required
@@ -56,7 +56,7 @@ export default function ResetPassword() {
         </label>
 
         <label>
-          Confirm Password
+          Confirm Password<span className="required-mark"> *</span>
           <PasswordInput
             minLength='8'
             required

@@ -36,7 +36,7 @@ export default function ForgotPassword() {
     >
       <form onSubmit={submit}>
         <label>
-          Email or Username
+          Email or Username<span className="required-mark"> *</span>
           <input
             type='text'
             placeholder='Enter your email or username'

@@ -2138,7 +2138,7 @@ export default function InventoryManagementModule({
               submitItem
             }
           >
-            <Field label="Item Name">
+            <Field label="Item Name" required>
               <input
                 value={
                   itemForm.item_name
@@ -2183,7 +2183,7 @@ export default function InventoryManagementModule({
               </div>
             )}
 
-            <Field label="Item Code (SKU)">
+            <Field label="Item Code (SKU)" required>
               <input
                 value={
                   itemForm.sku
@@ -2202,7 +2202,7 @@ export default function InventoryManagementModule({
               />
             </Field>
 
-            <Field label="Product Category">
+            <Field label="Product Category" required>
               <select
                 value={itemForm.category}
                 required
@@ -2247,7 +2247,7 @@ export default function InventoryManagementModule({
               )}
             </Field>
 
-            <Field label="Unit of Measure">
+            <Field label="Unit of Measure" required>
               <input
                 value={
                   itemForm.unit
@@ -2267,7 +2267,7 @@ export default function InventoryManagementModule({
             </Field>
 
             {!itemForm.id && (
-              <Field label="Current Stock Quantity">
+              <Field label="Current Stock Quantity" optional>
                 <input
                   type="number"
                   min="0"
@@ -2287,7 +2287,7 @@ export default function InventoryManagementModule({
               </Field>
             )}
 
-            <Field label="Price per Unit (₱)">
+            <Field label="Price per Unit (₱)" optional>
               <input
                 type="number"
                 min="0"
@@ -2307,7 +2307,7 @@ export default function InventoryManagementModule({
               />
             </Field>
 
-            <Field label="Low-Stock Alert Level">
+            <Field label="Low-Stock Alert Level" optional>
               <input
                 type="number"
                 min="0"
@@ -2327,7 +2327,7 @@ export default function InventoryManagementModule({
               />
             </Field>
 
-            <Field label="Supplier Name">
+            <Field label="Supplier Name" optional>
               <input
                 value={
                   itemForm.supplier_name
@@ -2787,6 +2787,7 @@ export default function InventoryManagementModule({
                   selectedItem?.unit ||
                   "unit"
                 })`}
+                required
               >
                 <input
                   type="number"
@@ -2814,7 +2815,7 @@ export default function InventoryManagementModule({
             ) && (
               <>
                 {txForm.isBatchEntry && (
-                  <Field label="Batch/Lot Number">
+                  <Field label="Batch/Lot Number" optional>
                     <input
                       value={
                         txForm.batchNumber
@@ -2832,7 +2833,7 @@ export default function InventoryManagementModule({
                   </Field>
                 )}
 
-                <Field label="Date Received">
+                <Field label="Date Received" optional>
                   <input
                     type="date"
                     value={
@@ -2849,7 +2850,7 @@ export default function InventoryManagementModule({
                   />
                 </Field>
 
-                <Field label="Expiry Date">
+                <Field label="Expiry Date" required>
                   <input
                     type="date"
                     required
@@ -2888,7 +2889,7 @@ export default function InventoryManagementModule({
                     )}
                   </div>
                 ) : (
-                  <Field label="Unique Unit ID" wide>
+                  <Field label="Unique Unit ID" wide required>
                     <input
                       required
                       value={unitEntries[0]?.unitCode || ""}
@@ -3145,7 +3146,7 @@ export default function InventoryManagementModule({
                                   className="batch-edit-form"
                                   onSubmit={(event) => submitBatchEdit(event, batch.id)}
                                 >
-                                  <Field label="Batch Number">
+                                  <Field label="Batch Number" optional>
                                     <input
                                       value={batchEditForm.batchNumber}
                                       onChange={(event) =>
@@ -3156,7 +3157,7 @@ export default function InventoryManagementModule({
                                       }
                                     />
                                   </Field>
-                                  <Field label="Date Received">
+                                  <Field label="Date Received" required>
                                     <input
                                       type="date"
                                       required
@@ -3169,7 +3170,7 @@ export default function InventoryManagementModule({
                                       }
                                     />
                                   </Field>
-                                  <Field label="Expiration Date">
+                                  <Field label="Expiration Date" optional>
                                     <input
                                       type="date"
                                       value={batchEditForm.expiryDate}
@@ -4819,6 +4820,8 @@ function Stat({
 function Field({
   label,
   wide,
+  required,
+  optional,
   children,
 }) {
   return (
@@ -4827,7 +4830,11 @@ function Field({
         wide ? "wide" : ""
       }`}
     >
-      <label>{label}</label>
+      <label>
+        {label}
+        {required && <span className="required-mark"> *</span>}
+        {optional && <span className="optional-mark"> (Optional)</span>}
+      </label>
       {children}
     </div>
   );

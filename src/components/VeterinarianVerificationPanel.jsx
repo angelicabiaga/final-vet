@@ -300,19 +300,19 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
 
               <p className="vvp-ocr-correct-hint">You may correct the fields below if any were misread:</p>
               <div className="vvp-pair">
-                <label>Full Name
+                <label>Full Name<span className="required-mark"> *</span>
                   <input value={correctedFields.nameCandidate} onChange={(e) => correctField("nameCandidate", e.target.value)} placeholder="Unable to Detect" required />
                 </label>
-                <label>Profession
+                <label>Profession<span className="required-mark"> *</span>
                   <input value={correctedFields.profession} onChange={(e) => correctField("profession", e.target.value)} placeholder="Unable to Detect" required />
                 </label>
               </div>
               <div className="vvp-pair">
-                <label>Registration Date
+                <label>Registration Date<span className="required-mark"> *</span>
                   <input type="date" value={correctedFields.registrationDate} onChange={(e) => correctField("registrationDate", e.target.value)} required />
                   {!correctedFields.registrationDate && <span className="vvp-fieldError">Unable to Detect -- enter it manually</span>}
                 </label>
-                <label>Expiration Date
+                <label>Expiration Date<span className="required-mark"> *</span>
                   <input type="date" value={correctedFields.expirationDate} onChange={(e) => correctField("expirationDate", e.target.value)} required />
                   {!correctedFields.expirationDate && <span className="vvp-fieldError">Unable to Detect -- enter it manually</span>}
                 </label>

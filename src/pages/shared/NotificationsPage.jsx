@@ -467,7 +467,7 @@ export default function NotificationsPage({ profile }) {
 
             <div className="broadcast-grid">
               <label>
-                <span>Title</span>
+                <span>Title<span className="required-mark"> *</span></span>
 
                 <input
                   type="text"
@@ -502,7 +502,7 @@ export default function NotificationsPage({ profile }) {
             </div>
 
             <label>
-              <span>Message</span>
+              <span>Message<span className="required-mark"> *</span></span>
 
               <textarea
                 name="message"

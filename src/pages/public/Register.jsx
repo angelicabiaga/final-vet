@@ -1121,7 +1121,7 @@ export default function Register() {
 
             <form className="register-form" onSubmit={submit} noValidate>
               <label className="register-field">
-                <span>First Name</span>
+                <span>First Name<span className="required-mark"> *</span></span>
 
                 <input
                   type="text"
@@ -1137,7 +1137,7 @@ export default function Register() {
               </label>
 
               <label className="register-field">
-                <span>Last Name</span>
+                <span>Last Name<span className="required-mark"> *</span></span>
 
                 <input
                   type="text"
@@ -1154,7 +1154,7 @@ export default function Register() {
 
               <label className='register-field'>
                 <span>
-                  Middle Name <small>(Optional)</small>
+                  Middle Name<span className="optional-mark"> (Optional)</span>
                 </span>
 
                 <input
@@ -1170,7 +1170,7 @@ export default function Register() {
               </label>
 
               <label className="register-field">
-                <span>Username</span>
+                <span>Username<span className="required-mark"> *</span></span>
 
                 <input
                   type="text"
@@ -1186,7 +1186,7 @@ export default function Register() {
               </label>
 
               <label className="register-field">
-                <span>Email Address</span>
+                <span>Email Address<span className="required-mark"> *</span></span>
 
                 <input
                   type="email"
@@ -1202,7 +1202,7 @@ export default function Register() {
               </label>
 
               <label className="register-field register-field-password">
-                <span>Password</span>
+                <span>Password<span className="required-mark"> *</span></span>
 
                 <PasswordInput
                   name="password"
@@ -1226,7 +1226,7 @@ export default function Register() {
               </label>
 
               <label className="register-field">
-                <span>Confirm Password</span>
+                <span>Confirm Password<span className="required-mark"> *</span></span>
 
                 <PasswordInput
                   name="confirmPassword"
