@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { Download, Pill, RefreshCw } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Download, Pill, RefreshCw, Search } from "lucide-react";
 
 import AppShell from "../../components/AppShell";
 import {
@@ -16,6 +16,8 @@ function StatusPill({ status }) {
   return <span className={`rx-status status-${statusClass(status)}`}>{status || "Not Purchased"}</span>;
 }
 
+const PAGE_SIZE = 10;
+
 const styles = `
   .rx-module{width:100%;max-width:1180px;box-sizing:border-box;margin:0 auto}
   .rx-card{background:#fff;border-radius:18px;padding:28px;box-shadow:0 8px 24px rgba(47,117,150,.09)}
@@ -25,6 +27,17 @@ const styles = `
   .rx-refresh{display:inline-flex;align-items:center;gap:7px;border:1px solid #c7e4ef;background:#effaff;color:#247fa8;border-radius:10px;padding:11px 13px;font-size:15px;font-weight:700;cursor:pointer}
   .rx-refresh:disabled{opacity:.6;cursor:wait}
   .rx-error{margin-top:15px;padding:13px 15px;border-radius:10px;background:#fff0f0;color:#a33c3c;font-size:15px}
+  .rx-search{display:flex;align-items:center;gap:9px;border:1px solid #cfe4ed;background:#f7fbfd;border-radius:10px;padding:10px 14px;margin-top:18px;color:#7c8f99;max-width:360px}
+  .rx-search input{border:0;background:transparent;outline:none;font-size:14.5px;color:#233842;width:100%}
+  .rx-search svg{flex-shrink:0}
+  .rx-pagination{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:18px;padding-top:16px;border-top:1px solid #e5eef1}
+  .rx-page-nav{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;flex-shrink:0;border:1px solid #cfe4ed;border-radius:50%;background:#fff;color:#2b6f8f;cursor:pointer}
+  .rx-page-nav:hover:not(:disabled){background:#eaf6fb;border-color:#a9dff0}
+  .rx-page-nav:disabled{cursor:not-allowed;opacity:.4}
+  .rx-page-nums{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:center}
+  .rx-page-nums button{min-width:30px;min-height:30px;border:1px solid transparent;border-radius:8px;background:transparent;color:#536b78;font-weight:700;font-size:13px;cursor:pointer}
+  .rx-page-nums button:hover{background:#eaf6fb}
+  .rx-page-nums button.active{border-color:#318fbe;background:#318fbe;color:#fff}
   .rx-table-wrap{overflow-x:auto}
   .rx-table{width:100%;min-width:920px;border-collapse:collapse;margin-top:18px;font-size:15px}
   .rx-table th{padding:12px 13px;text-align:left;color:#536b78;font-size:12px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #dce9ed}
@@ -47,6 +60,8 @@ export default function VeterinarianPrescriptions({ profile }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
     if (!profile?.id) return;
@@ -70,6 +85,21 @@ export default function VeterinarianPrescriptions({ profile }) {
     return () => off();
   }, [load]);
 
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => [row.owner?.full_name, row.pet?.pet_name, row.item_name]
+      .some((field) => (field || "").toLowerCase().includes(q)));
+  }, [rows, search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, rows.length]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
   return (
     <AppShell profile={profile} title="Veterinarian Prescriptions">
       <div className="rx-module">
@@ -86,13 +116,23 @@ export default function VeterinarianPrescriptions({ profile }) {
 
           {error && <div className="rx-error">{error}</div>}
 
+          <div className="rx-search">
+            <Search size={16} />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search pet owner, pet, or medicine"
+            />
+          </div>
+
           <div className="rx-table-wrap">
             <table className="rx-table">
               <thead><tr><th>Pet Owner</th><th>Pet</th><th>Medicine</th><th>Prescribed</th><th>Purchased</th><th>Remaining</th><th>Status</th><th>Action</th></tr></thead>
               <tbody>
                 {loading && <tr><td className="rx-message" colSpan="8">Loading prescriptions…</td></tr>}
-                {!loading && rows.length === 0 && <tr><td className="rx-message" colSpan="8">No prescriptions recorded yet.</td></tr>}
-                {!loading && rows.map((row) => <tr key={row.id}>
+                {!loading && filteredRows.length === 0 && <tr><td className="rx-message" colSpan="8">{rows.length === 0 ? "No prescriptions recorded yet." : "No prescriptions match your search."}</td></tr>}
+                {!loading && pagedRows.map((row) => <tr key={row.id}>
                   <td>{row.owner?.full_name || "—"}</td>
                   <td>{row.pet?.pet_name || "—"}</td>
                   <td>{row.item_name}</td>
@@ -117,6 +157,43 @@ export default function VeterinarianPrescriptions({ profile }) {
               </tbody>
             </table>
           </div>
+
+          {!loading && totalPages > 1 && (
+            <div className="rx-pagination">
+              <button
+                type="button"
+                className="rx-page-nav"
+                aria-label="Previous page"
+                disabled={currentPage === 1}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                <ChevronLeft size={16} />
+              </button>
+
+              <div className="rx-page-nums">
+                {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
+                  <button
+                    key={pageNumber}
+                    type="button"
+                    className={pageNumber === currentPage ? "active" : ""}
+                    onClick={() => setPage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="rx-page-nav"
+                aria-label="Next page"
+                disabled={currentPage === totalPages}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
         </section>
         <style>{styles}</style>
       </div>

@@ -194,3 +194,126 @@ export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
 
   pdf.save(`Veterinarian-Prescription-Notice-${(prescription.item_name || "medicine").replace(/[^a-z0-9]+/gi, "-")}-${String(prescription.id || "").slice(0, 8)}.pdf`);
 }
+
+/**
+ * Client-generated prescription slip for a consultation -- the classic
+ * pharmacy "Rx pad" layout, filled in with just the medicines a
+ * veterinarian prescribed. Deliberately carries no price or purchase-status
+ * info (that lives on the invoice and the fulfillment notice); this one is
+ * meant to be kept or shown elsewhere as the prescription itself.
+ */
+function buildPrescriptionPadPdf(prescriptions, meta = {}) {
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const left = 22;
+  const right = 188;
+  const centerX = 105;
+  let y = 24;
+
+  pdf.setDrawColor(180, 205, 217);
+  pdf.setLineWidth(0.6);
+  pdf.rect(14, 14, 182, 260);
+
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(17);
+  pdf.setTextColor(37, 80, 101);
+  pdf.text("PawCruz Veterinary Clinic", centerX, y, { align: "center" });
+
+  y += 6.5;
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(10.5);
+  pdf.setTextColor(97, 118, 129);
+  pdf.text("Veterinarian Prescription", centerX, y, { align: "center" });
+
+  y += 9;
+  pdf.setDrawColor(37, 80, 101);
+  pdf.setLineWidth(0.5);
+  pdf.line(left, y, right, y);
+  y += 11;
+
+  pdf.setFontSize(10.5);
+  const fieldRow = (label, value, labelWidth = 40) => {
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(97, 118, 129);
+    pdf.text(label, left, y);
+    const valueX = left + labelWidth;
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(30, 49, 58);
+    pdf.text(String(value || "—"), valueX, y);
+    pdf.setDrawColor(214, 228, 235);
+    pdf.setLineWidth(0.3);
+    pdf.line(valueX, y + 1.8, right, y + 1.8);
+    y += 10;
+  };
+
+  fieldRow("Prescriber", meta.veterinarianName || "—");
+  fieldRow("Client / Pet Owner", meta.ownerName || "—");
+  if (meta.ownerAddress) fieldRow("Address", meta.ownerAddress);
+  fieldRow("Patient / Pet", [meta.petName, meta.petSpecies && meta.petBreed ? `(${meta.petSpecies} - ${meta.petBreed})` : meta.petSpecies].filter(Boolean).join(" "));
+  fieldRow("Age", meta.petAge || "—", 22);
+  fieldRow("Date", meta.date || formatDateTime(new Date().toISOString()), 22);
+
+  y += 4;
+  pdf.setDrawColor(214, 228, 235);
+  pdf.line(left, y, right, y);
+  y += 20;
+
+  pdf.setFont("times", "bolditalic");
+  pdf.setFontSize(34);
+  pdf.setTextColor(37, 80, 101);
+  pdf.text("Rx", left, y);
+
+  const listX = left + 28;
+  let listY = y - 8;
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(11.5);
+  if (!prescriptions.length) {
+    pdf.setTextColor(120, 135, 143);
+    pdf.text("No medicine prescribed for this consultation.", listX, listY);
+    listY += 9;
+  } else {
+    prescriptions.forEach((rx, index) => {
+      pdf.setTextColor(30, 49, 58);
+      const qty = rx.prescribed_quantity != null ? `  —  Qty: ${rx.prescribed_quantity}` : "";
+      pdf.text(`${index + 1}. ${rx.item_name}${qty}`, listX, listY);
+      listY += 9;
+    });
+  }
+
+  y = Math.max(listY + 30, y + 60);
+  const sigX = right - 75;
+  pdf.setDrawColor(97, 118, 129);
+  pdf.setLineWidth(0.4);
+  pdf.line(sigX, y, right, y);
+  y += 5;
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(10.5);
+  pdf.setTextColor(30, 49, 58);
+  pdf.text(meta.veterinarianName || "Attending Veterinarian", sigX, y);
+  y += 4.5;
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8.5);
+  pdf.setTextColor(97, 118, 129);
+  pdf.text("Attending Veterinarian", sigX, y);
+
+  pdf.setFont("helvetica", "bolditalic");
+  pdf.setFontSize(8.5);
+  pdf.setTextColor(97, 118, 129);
+  pdf.text("KEEP OUT OF REACH OF CHILDREN AND OTHER PETS  •  FOR VETERINARY USE ONLY", centerX, 268, { align: "center" });
+
+  return pdf;
+}
+
+function prescriptionPadFileName(meta) {
+  return `Veterinarian-Prescription-${(meta.petName || "patient").replace(/[^a-z0-9]+/gi, "-")}-${String(meta.date || Date.now()).replace(/[^a-z0-9]+/gi, "-")}.pdf`;
+}
+
+/** Saves the prescription slip to disk -- for staff and veterinarian use. */
+export function downloadPrescriptionPadPdf(prescriptions, meta = {}) {
+  buildPrescriptionPadPdf(prescriptions, meta).save(prescriptionPadFileName(meta));
+}
+
+/** Opens the prescription slip in a new tab for on-screen viewing, without forcing a download -- for pet owners. */
+export function viewPrescriptionPadPdf(prescriptions, meta = {}) {
+  const pdf = buildPrescriptionPadPdf(prescriptions, meta);
+  window.open(pdf.output("bloburl"), "_blank");
+}

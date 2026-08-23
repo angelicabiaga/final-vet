@@ -45,7 +45,7 @@ import {
 import { validateImageFile } from "../utils/validators";
 import { generateConsultationHealthInsight, generatePredictiveHealthAnalysis, getActiveVeterinarians, getMedicalRecords, getPreviousMedicalRecordsForAi } from "../services/medicalRecordService";
 import { computeRiskLevel, daysUntil, keywordSet, parseAiReport, parseConsultationInsight, sharesKeyword, toListItems } from "../utils/predictiveHealthParsing";
-import { downloadInvoicePdf } from "../utils/invoicePdf";
+import { downloadInvoicePdf, downloadPrescriptionPadPdf, viewPrescriptionPadPdf } from "../utils/invoicePdf";
 import {
   getPrescriptionPurchaseHistory,
   getPrescriptionsForConsultation,
@@ -2712,7 +2712,25 @@ export default function PetManagementModule({
 
                                       {billingByRecordId[record.id].prescriptions.length > 0 && (
                                         <div className="pet-billing-section">
-                                          <h4><Pill size={15} /> Prescribed Medicine</h4>
+                                          <div className="pet-billing-head">
+                                            <h4><Pill size={15} /> Prescribed Medicine</h4>
+                                            <button
+                                              type="button"
+                                              className="pet-download-btn"
+                                              onClick={() => (ownerOnly ? viewPrescriptionPadPdf : downloadPrescriptionPadPdf)(billingByRecordId[record.id].prescriptions, {
+                                                veterinarianName: vetNames[record.veterinarian_id] ? `Dr. ${vetNames[record.veterinarian_id]}` : "",
+                                                ownerName: selectedPet.owner?.full_name,
+                                                ownerAddress: selectedPet.owner?.address,
+                                                petName: selectedPet.pet_name,
+                                                petSpecies: selectedPet.species,
+                                                petBreed: selectedPet.breed,
+                                                petAge: formatPetAge(selectedPet.date_of_birth),
+                                                date: formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime }),
+                                              })}
+                                            >
+                                              {ownerOnly ? <><Eye size={13} /> View</> : <><Download size={13} /> Download</>}
+                                            </button>
+                                          </div>
                                           {billingByRecordId[record.id].prescriptions.map((rx) => {
                                             const remaining = Math.max(0, Number(rx.prescribed_quantity) - Number(rx.total_quantity_purchased));
                                             const history = billingByRecordId[record.id].purchaseHistoryByRxId?.[rx.id] || [];
@@ -4215,6 +4233,12 @@ export default function PetManagementModule({
           margin: 0 0 9px;
           color: #213944;
           font-size: 14px;
+        }
+        .pet-billing-section .pet-billing-head {
+          margin-bottom: 9px;
+        }
+        .pet-billing-section .pet-billing-head h4 {
+          margin: 0;
         }
         .pet-billing-row {
           display: flex;
