@@ -4,7 +4,7 @@ import React, {
   useState,
 } from "react";
 
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   DEFAULT_MEDICAL_RECORD_TEMPLATE,
@@ -34,10 +34,13 @@ import {
 } from "../services/petService";
 
 import {
+  generateConsultationHealthInsight,
   generatePredictiveHealthAnalysis,
   getActiveVeterinarians,
   getAppointmentsForPet,
   getMedicalRecords,
+  getPreviousMedicalRecordsForAi,
+  saveConsultationInsight,
   saveMedicalRecord,
   uploadMedicalAttachment,
 } from "../services/medicalRecordService";
@@ -86,6 +89,45 @@ const blank = {
   recordStatus: "Finalized",
   consultationFee: "500",
 };
+
+// Converts a saved medical_records row back into the form's shape. Shared
+// by the "edit an existing record" action and by the queue-launch flow
+// reopening an already-finalized consultation (so re-completing it updates
+// the same row instead of inserting a duplicate).
+function recordToFormValues(record) {
+  return {
+    id: record.id,
+    petId: record.pet_id,
+    ownerId: record.owner_id,
+    veterinarianId: record.veterinarian_id,
+    appointmentId: record.appointment_id || "",
+    consultationDate: record.consultation_date || "",
+    chiefComplaint: record.chief_complaint || "",
+    symptoms: record.symptoms || "",
+    vitalSigns: record.vital_signs || "",
+    weight: record.weight || "",
+    temperature: record.temperature || "",
+    diagnosis: record.diagnosis || "",
+    treatment: record.treatment || "",
+    treatmentPlan: record.treatment_plan || "",
+    medication: record.medication || "",
+    dosage: record.dosage || "",
+    frequency: record.frequency || "",
+    duration: record.duration || "",
+    laboratoryRequest: record.laboratory_request || "",
+    laboratoryResult: record.laboratory_result || "",
+    vaccination: record.vaccination || "",
+    parasiteTreatments: record.parasite_treatments || [],
+    heartwormTests: record.heartworm_tests || [],
+    vaccinationRecords: record.vaccination_records || [],
+    recordTemplate: record.record_template || DEFAULT_MEDICAL_RECORD_TEMPLATE,
+    templateData: record.template_data || {},
+    followUpDate: record.follow_up_date || "",
+    veterinarianNotes: record.veterinarian_notes || "",
+    attachmentUrl: record.attachment_url || "",
+    recordStatus: record.record_status || "Finalized",
+  };
+}
 
 const VACCINE_KEYS = [
   ["distemper", "Distemper"],
@@ -334,6 +376,7 @@ export default function MedicalRecordsModule({
   ] = useState(false);
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   const activeTemplate = getMedicalRecordTemplate(
     form.recordTemplate
@@ -555,6 +598,31 @@ export default function MedicalRecordsModule({
 
     setPendingQueueCompletion(null);
 
+    // Reopening this exact consultation (same queue visit + template) that
+    // was already finalized -- a refresh, a re-clicked queue link, a second
+    // tab, browser back-then-forward -- must load the saved record instead
+    // of a blank one, so clicking Complete again updates it in place.
+    // (saveMedicalRecord also guards this server-side regardless of what
+    // the form shows; this just keeps the form from lying about it.) Looked
+    // up directly instead of depending on `records` in this effect, so
+    // saving a second template for the same visit -- which reloads
+    // `records` -- can't re-fire this and stomp the next template's blank
+    // form with the one that was just finalized. `active` guards against a
+    // slow lookup from a superseded navigation landing after a newer one.
+    let active = true;
+    getMedicalRecords(profile, { petId: queueLaunch.petIds[0] })
+      .then((petRecords) => {
+        if (!active) return;
+        const alreadyFinalized = petRecords.find(
+          (record) =>
+            record.queue_entry_id === queueLaunch.queueEntryId &&
+            (record.record_template || DEFAULT_MEDICAL_RECORD_TEMPLATE) === queueLaunch.recordTemplate &&
+            record.record_status === "Finalized"
+        );
+        if (alreadyFinalized) setForm(recordToFormValues(alreadyFinalized));
+      })
+      .catch(() => {});
+
     setForm({
       ...blank,
       petId: queueLaunch.petIds[0],
@@ -574,7 +642,9 @@ export default function MedicalRecordsModule({
 
     setInventorySearch("");
     setShow(true);
-  }, [canEdit, queueLaunch]);
+
+    return () => { active = false; };
+  }, [canEdit, queueLaunch, profile]);
 
   const shown = useMemo(() => {
     const value =
@@ -665,92 +735,7 @@ export default function MedicalRecordsModule({
   }
 
   function edit(record) {
-    setForm({
-      id: record.id,
-      petId:
-        record.pet_id,
-      ownerId:
-        record.owner_id,
-      veterinarianId:
-        record.veterinarian_id,
-      appointmentId:
-        record.appointment_id ||
-        "",
-      consultationDate:
-        record.consultation_date ||
-        "",
-      chiefComplaint:
-        record.chief_complaint ||
-        "",
-      symptoms:
-        record.symptoms ||
-        "",
-      vitalSigns:
-        record.vital_signs ||
-        "",
-      weight:
-        record.weight || "",
-      temperature:
-        record.temperature ||
-        "",
-      diagnosis:
-        record.diagnosis ||
-        "",
-      treatment:
-        record.treatment ||
-        "",
-      treatmentPlan:
-        record.treatment_plan ||
-        "",
-      medication:
-        record.medication ||
-        "",
-      dosage:
-        record.dosage ||
-        "",
-      frequency:
-        record.frequency ||
-        "",
-      duration:
-        record.duration ||
-        "",
-      laboratoryRequest:
-        record.laboratory_request ||
-        "",
-      laboratoryResult:
-        record.laboratory_result ||
-        "",
-      vaccination:
-        record.vaccination ||
-        "",
-      parasiteTreatments:
-        record.parasite_treatments ||
-        [],
-      heartwormTests:
-        record.heartworm_tests ||
-        [],
-      vaccinationRecords:
-        record.vaccination_records ||
-        [],
-      recordTemplate:
-        record.record_template ||
-        DEFAULT_MEDICAL_RECORD_TEMPLATE,
-      templateData:
-        record.template_data ||
-        {},
-      followUpDate:
-        record.follow_up_date ||
-        "",
-      veterinarianNotes:
-        record.veterinarian_notes ||
-        "",
-      attachmentUrl:
-        record.attachment_url ||
-        "",
-      recordStatus:
-        record.record_status ||
-        "Finalized",
-    });
+    setForm(recordToFormValues(record));
 
     getAppointmentsForPet(
       record.pet_id
@@ -860,11 +845,41 @@ export default function MedicalRecordsModule({
     });
   }
 
-  function closeQueuedRecordModal() {
+  function closeQueuedRecordModal(petId = form.petId) {
     setPendingQueueCompletion(null);
     setQueueContext(null);
     setShow(false);
     setForm(blank);
+
+    // The finalized consultation is now viewed under Animal Patients, not
+    // this module -- land the veterinarian there, at the exact pet, instead
+    // of leaving them on this page.
+    if (petId) {
+      const basePath =
+        profile?.role === "admin" ? "/admin/pets" :
+        profile?.role === "staff" ? "/staff/patients" :
+        "/veterinarian/patients";
+      navigate(`${basePath}?pet=${petId}`);
+    }
+  }
+
+  // Best-effort: generates the per-consultation AI Health Insight for a
+  // just-finalized record and persists it (see saveConsultationInsight).
+  // Never awaited by a caller and never throws -- the consultation is
+  // already completed and billed regardless of whether this succeeds (e.g.
+  // no Groq API key configured). PetManagementModule falls back to
+  // generating it live if this didn't get to run.
+  function triggerInsightPersistence(record) {
+    if (!record?.id || !record?.pet_id) return;
+    const pet = pets.find((item) => item.id === record.pet_id);
+    if (!pet) return;
+
+    getPreviousMedicalRecordsForAi(record.pet_id, record.id)
+      .then((previousRecords) =>
+        generateConsultationHealthInsight({ ...record, pet }, previousRecords)
+      )
+      .then((insightText) => saveConsultationInsight(record.id, insightText))
+      .catch(() => {});
   }
 
   async function retryQueueCompletion() {
@@ -888,6 +903,9 @@ export default function MedicalRecordsModule({
 
       setSuccess(
         "Consultation completed. The record was finalized and sent to Staff POS for billing."
+      );
+      triggerInsightPersistence(
+        records.find((record) => record.id === pendingQueueCompletion.recordId)
       );
       closeQueuedRecordModal();
     } catch (queueError) {
@@ -958,7 +976,8 @@ export default function MedicalRecordsModule({
         setSuccess(
           "Consultation completed. The record was finalized and sent to Staff POS for billing."
         );
-        closeQueuedRecordModal();
+        triggerInsightPersistence(savedRecord);
+        closeQueuedRecordModal(savedRecord?.pet_id || form.petId);
       } catch (queueError) {
         setPendingQueueCompletion({
           recordId: savedRecord?.id || form.id || null,

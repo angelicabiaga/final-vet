@@ -627,6 +627,32 @@ export async function saveMedicalRecord(
     );
   }
 
+  const normalizedTemplate =
+    values.recordTemplate ||
+    "health-record";
+
+  // A "Complete" click that fires twice for the same consultation -- a
+  // refreshed tab, a re-opened queue link, a slow request retried by hand --
+  // must update the already-finalized record for this queue visit +
+  // template instead of inserting a duplicate one. queue_entry_id +
+  // record_template together identify one completed consultation.
+  let targetId = values.id || null;
+
+  if (!targetId && values.queueEntryId) {
+    const { data: existingRows } = await supabase
+      .from("medical_records")
+      .select("id")
+      .eq("queue_entry_id", values.queueEntryId)
+      .eq("record_template", normalizedTemplate)
+      .eq("record_status", "Finalized")
+      .order("created_at", { ascending: true })
+      .limit(1);
+
+    if (existingRows?.[0]?.id) {
+      targetId = existingRows[0].id;
+    }
+  }
+
   const record = {
     pet_id:
       values.petId,
@@ -742,8 +768,7 @@ export async function saveMedicalRecord(
       [],
 
     record_template:
-      values.recordTemplate ||
-      "health-record",
+      normalizedTemplate,
 
     template_data:
       values.templateData ||
@@ -770,11 +795,11 @@ export async function saveMedicalRecord(
   };
 
   async function directSave(payload) {
-    if (values.id) {
+    if (targetId) {
       return supabase
         .from("medical_records")
         .update(payload)
-        .eq("id", values.id)
+        .eq("id", targetId)
         .select("*")
         .single();
     }
@@ -828,10 +853,10 @@ export async function saveMedicalRecord(
 
     const payload = {
       id:
-        values.id || null,
+        targetId || null,
       ...record,
       created_by:
-        values.id
+        targetId
           ? undefined
           : profile.id,
     };
@@ -870,6 +895,45 @@ export async function saveMedicalRecord(
   }
 
   return result.data;
+}
+
+// Persists an AI-generated per-consultation insight onto the finalized
+// record it describes, inside the existing template_data JSON column (no
+// schema change). Makes the insight a retained fact of that consultation
+// instead of something silently regenerated -- and possibly failing, or
+// drifting -- on every later view. Best-effort: never throws, since it must
+// not be able to break consultation completion or billing hand-off.
+export async function saveConsultationInsight(recordId, insightText) {
+  if (!recordId || !insightText) return;
+
+  try {
+    const { data: current, error: fetchError } = await supabase
+      .from("medical_records")
+      .select("template_data")
+      .eq("id", recordId)
+      .single();
+
+    if (fetchError) {
+      console.warn("Unable to load the record to persist its AI health insight:", fetchError);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("medical_records")
+      .update({
+        template_data: {
+          ...(current?.template_data || {}),
+          aiHealthInsight: insightText,
+        },
+      })
+      .eq("id", recordId);
+
+    if (error) {
+      console.warn("Unable to persist the AI health insight:", error);
+    }
+  } catch (error) {
+    console.warn("Unable to persist the AI health insight:", error);
+  }
 }
 
 export async function uploadMedicalAttachment(

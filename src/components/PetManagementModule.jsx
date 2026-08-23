@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
   ArrowLeft,
@@ -392,6 +393,8 @@ export default function PetManagementModule({
   profile,
   ownerOnly = false,
 }) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [pets, setPets] = useState([]);
   const [owners, setOwners] = useState([]);
 
@@ -481,6 +484,28 @@ export default function PetManagementModule({
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canManageAll]);
+
+  // Deep link support: a link elsewhere in the app (e.g. a veterinarian
+  // finalizing a consultation) can open straight to one pet's profile via
+  // ?pet=<petId> on this module's route, instead of stranding the user on
+  // wherever they were. Resolved by pet id only, never by name -- owners or
+  // pets can share a name. Runs once the directory/pet list finish loading,
+  // then clears the param so a later refresh doesn't reopen it.
+  useEffect(() => {
+    if (!canManageAll) return;
+    const targetPetId = new URLSearchParams(location.search).get("pet");
+    if (!targetPetId || !pets.length || !ownerDirectory.length) return;
+
+    const pet = pets.find((item) => item.id === targetPetId);
+    if (!pet) return;
+
+    const owner = ownerDirectory.find((item) => item.id === pet.owner_id);
+    if (owner) openOwnerPets(owner);
+    handleOpenHistory(pet);
+
+    navigate(location.pathname, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageAll, location.search, pets, ownerDirectory]);
 
   // Prevents the page behind either modal from scrolling while it's open.
   useEffect(() => {
@@ -1083,6 +1108,19 @@ export default function PetManagementModule({
   const CONSULTATION_INSIGHT_EAGER_CAP = 8;
 
   async function generateInsightFor(pet, record, previousRecords) {
+    // Completing a consultation already generates and persists this insight
+    // (see triggerInsightPersistence in MedicalRecordsModule) -- reuse that
+    // fixed fact about the visit instead of silently re-querying the AI on
+    // every view, which can also fail for older records with no live cache.
+    const cachedInsight = record.template_data?.aiHealthInsight;
+    if (cachedInsight) {
+      setConsultationInsights((current) => ({
+        ...current,
+        [record.id]: { text: cachedInsight, loading: false, error: "", riskLevel: parseConsultationInsight(cachedInsight).riskLevel },
+      }));
+      return;
+    }
+
     setConsultationInsights((current) => ({
       ...current,
       [record.id]: { ...current[record.id], loading: true, error: "" },
