@@ -88,6 +88,7 @@ const BATCH_CREATING_TX_TYPES = [
 
 const BATCH_PAGE_SIZE = 10;
 const UNIT_PAGE_SIZE = 12;
+const ITEMS_PAGE_SIZE = 10;
 
 function formatUnitId(unitNo) {
   return `UNIT-${String(unitNo).padStart(6, "0")}`;
@@ -319,6 +320,7 @@ export default function InventoryManagementModule({
   const [togglingBatchId, setTogglingBatchId] = useState("");
   const [batchPage, setBatchPage] = useState(1);
   const [showArchivedBatches, setShowArchivedBatches] = useState(false);
+  const [itemsPage, setItemsPage] = useState(1);
 
   const [viewingUnitsBatch, setViewingUnitsBatch] = useState(null);
   const [unitRows, setUnitRows] = useState([]);
@@ -406,6 +408,17 @@ export default function InventoryManagementModule({
     load();
   }, [load]);
 
+  useEffect(() => {
+    setItemsPage(1);
+  }, [filters]);
+
+  const itemsTotalPages = Math.max(1, Math.ceil(items.length / ITEMS_PAGE_SIZE));
+  const itemsCurrentPage = Math.min(itemsPage, itemsTotalPages);
+  const pagedItems = items.slice(
+    (itemsCurrentPage - 1) * ITEMS_PAGE_SIZE,
+    itemsCurrentPage * ITEMS_PAGE_SIZE
+  );
+
   const transactionRows = useMemo(() => {
     if (!selectedItem) {
       return transactions;
@@ -450,17 +463,38 @@ export default function InventoryManagementModule({
     );
   }, [items, itemForm.id, itemForm.item_name]);
 
-  // Other active items sharing the currently-open item's exact name --
-  // surfaced inside the item details modal so staff can merge them away
-  // instead of leaving the product split across rows.
+  // Other items sharing the currently-open item's exact name -- including
+  // already-archived duplicates, so an old deactivated row can still be
+  // folded into the active one -- surfaced inside the item details modal so
+  // staff can merge them away instead of leaving the product split across
+  // rows. Only offered while viewing the active item: merging always
+  // archives the source and leaves the target's own archived flag alone, so
+  // merging into an already-archived target would just hide the combined
+  // stock instead of resolving the duplicate.
   const duplicatesOfSelected = useMemo(() => {
-    if (!selectedItem) return [];
+    if (!selectedItem || selectedItem.is_archived) return [];
     const name = selectedItem.item_name.trim().toLowerCase();
     return items.filter(
       (item) =>
         item.id !== selectedItem.id &&
-        !item.is_archived &&
         item.item_name.trim().toLowerCase() === name
+    );
+  }, [items, selectedItem]);
+
+  // When viewing an archived item that has an active twin, point staff at
+  // the active one instead of offering a merge here -- merging always
+  // archives the source and never un-archives the target, so merging into
+  // this (already-archived) item would just hide the combined stock again.
+  const activeTwinOfArchivedSelected = useMemo(() => {
+    if (!selectedItem || !selectedItem.is_archived) return null;
+    const name = selectedItem.item_name.trim().toLowerCase();
+    return (
+      items.find(
+        (item) =>
+          item.id !== selectedItem.id &&
+          !item.is_archived &&
+          item.item_name.trim().toLowerCase() === name
+      ) || null
     );
   }, [items, selectedItem]);
 
@@ -482,11 +516,6 @@ export default function InventoryManagementModule({
     [sortedBatchRows]
   );
 
-  // Each unit needs its own Unique Unit ID, so quantity can't be
-  // fractional here -- "2.5 units" has no unit ID to give the ".5" of.
-  const requiresWholeUnits =
-    BATCH_CREATING_TX_TYPES.includes(txForm.transactionType) &&
-    txForm.isBatchEntry;
 
   // Always-visible mini summary above Batch Records -- same three buckets
   // as the page-level stat cards, scoped to just this item's batches, shown
@@ -1913,7 +1942,7 @@ export default function InventoryManagementModule({
               </thead>
 
               <tbody>
-                {items.map(
+                {pagedItems.map(
                   (item) => (
                     <tr
                       key={item.id}
@@ -2110,6 +2139,7 @@ export default function InventoryManagementModule({
                               )}
                             </button>
                           )}
+
                         </div>
                       </td>
                     </tr>
@@ -2117,6 +2147,45 @@ export default function InventoryManagementModule({
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {!loading && items.length > 0 && itemsTotalPages > 1 && (
+          <div className="batch-pagination">
+            <button
+              type="button"
+              className="page-nav"
+              aria-label="Previous page"
+              disabled={itemsCurrentPage === 1}
+              onClick={() => setItemsPage(itemsCurrentPage - 1)}
+            >
+              <ChevronLeft size={16} />
+            </button>
+
+            <div className="batch-pagination-pages">
+              {Array.from({ length: itemsTotalPages }, (_, index) => index + 1).map(
+                (pageNumber) => (
+                  <button
+                    key={pageNumber}
+                    type="button"
+                    className={pageNumber === itemsCurrentPage ? "active" : ""}
+                    onClick={() => setItemsPage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </button>
+                )
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="page-nav"
+              aria-label="Next page"
+              disabled={itemsCurrentPage === itemsTotalPages}
+              onClick={() => setItemsPage(itemsCurrentPage + 1)}
+            >
+              <ChevronRight size={16} />
+            </button>
           </div>
         )}
       </div>
@@ -2271,16 +2340,14 @@ export default function InventoryManagementModule({
                 <input
                   type="number"
                   min="0"
-                  step="0.01"
+                  step="1"
                   value={
                     itemForm.quantity
                   }
                   onChange={(e) =>
                     setItemForm({
                       ...itemForm,
-                      quantity:
-                        e.target
-                          .value,
+                      quantity: e.target.value.replace(/[^\d]/g, ""),
                     })
                   }
                 />
@@ -2311,7 +2378,7 @@ export default function InventoryManagementModule({
               <input
                 type="number"
                 min="0"
-                step="0.01"
+                step="1"
                 value={
                   itemForm.reorder_level
                 }
@@ -2319,9 +2386,7 @@ export default function InventoryManagementModule({
                 onChange={(e) =>
                   setItemForm({
                     ...itemForm,
-                    reorder_level:
-                      e.target
-                        .value,
+                    reorder_level: e.target.value.replace(/[^\d]/g, ""),
                   })
                 }
               />
@@ -2660,7 +2725,7 @@ export default function InventoryManagementModule({
                       <input
                         required
                         value={entry.unitCode}
-                        placeholder="Scan or type unit ID"
+                        placeholder="Type unit ID"
                         onChange={(e) =>
                           updateUnitEntry(index, { unitCode: e.target.value })
                         }
@@ -2791,19 +2856,16 @@ export default function InventoryManagementModule({
               >
                 <input
                   type="number"
-                  min={requiresWholeUnits ? "1" : "0.01"}
-                  step={requiresWholeUnits ? "1" : "0.01"}
+                  min="1"
+                  step="1"
                   required
                   value={
                     txForm.quantity
                   }
                   onChange={(e) => {
-                    const raw = e.target.value;
                     setTxForm({
                       ...txForm,
-                      quantity: requiresWholeUnits
-                        ? raw.replace(/[^\d]/g, "")
-                        : raw,
+                      quantity: e.target.value.replace(/[^\d]/g, ""),
                     });
                   }}
                 />
@@ -2893,7 +2955,7 @@ export default function InventoryManagementModule({
                     <input
                       required
                       value={unitEntries[0]?.unitCode || ""}
-                      placeholder="Scan or type this item's unique ID"
+                      placeholder="Type this item's unique ID"
                       onChange={(e) =>
                         updateUnitEntry(0, { unitCode: e.target.value })
                       }
@@ -3044,6 +3106,16 @@ export default function InventoryManagementModule({
         >
           {batchesError && (
             <div className="notice error">{batchesError}</div>
+          )}
+
+          {activeTwinOfArchivedSelected && (
+            <div className="duplicate-item-warning wide">
+              <span>
+                This item is deactivated. Open the active "
+                {activeTwinOfArchivedSelected.item_name}" item's batch
+                records instead to merge this one into it.
+              </span>
+            </div>
           )}
 
           {duplicatesOfSelected.length > 0 && (

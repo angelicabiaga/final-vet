@@ -80,6 +80,15 @@ function friendly(error, fallback) {
     );
   }
 
+  // A `raise exception '...'` inside one of the pawcruz_* RPCs surfaces as
+  // code P0001 with the raised text as the message -- use it directly
+  // instead of the generic fallback, since it's already written to be
+  // shown to the user (e.g. "Only deactivated items can be permanently
+  // deleted.").
+  if (error?.code === "P0001" && error.message) {
+    return new Error(error.message);
+  }
+
   return new Error(fallback);
 }
 
@@ -444,8 +453,8 @@ export async function saveInventoryItem(
     unit_price: Number(
       values.unit_price || 0
     ),
-    reorder_level: Number(
-      values.reorder_level || 0
+    reorder_level: Math.floor(
+      Number(values.reorder_level || 0)
     ),
     expiry_date:
       values.expiry_date ||
@@ -494,9 +503,9 @@ export async function saveInventoryItem(
   }
 
   const initialQuantity =
-    Number(
+    Math.floor(Number(
       values.quantity || 0
-    );
+    ));
 
   if (
     !Number.isFinite(
@@ -575,7 +584,7 @@ export async function recordInventoryTransaction(
   profile
 ) {
   const quantity =
-    Number(values.quantity);
+    Math.floor(Number(values.quantity));
 
   if (
     !values.itemId ||
