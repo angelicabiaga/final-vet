@@ -7,14 +7,13 @@ export default function MedicalRecordsManagement({ profile }) {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
 
-  // Medical Records no longer has its own sidebar tab -- it now lives inside
-  // Animal Patients. A bare visit to this URL redirects there; the queue's
-  // "start this visit's record" deep link (queueEntryId) and Animal
-  // Patients' own "Add Medical Record" link (petId) still open straight
-  // into the record tool, unchanged.
-  if (!params.get("queueEntryId") && !params.get("petId")) {
+  // Medical Records has no sidebar tab and no standalone browsing view --
+  // it now lives entirely inside Animal Patients. This route only ever
+  // opens the queue's "start this visit's record" consultation form
+  // (queueEntryId); any other visit redirects to Animal Patients.
+  if (!params.get("queueEntryId")) {
     return <Navigate to="/veterinarian/patients" replace />;
   }
 
-  return <AppShell profile={profile} title="Animal Patient Profile"><MedicalRecordsModule profile={profile}/></AppShell>;
+  return <AppShell profile={profile} title="Create Health Record"><MedicalRecordsModule profile={profile}/></AppShell>;
 }
