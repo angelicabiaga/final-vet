@@ -5,9 +5,6 @@ import {
   ArrowLeft,
   BrainCircuit,
   Camera,
-  CalendarCheck,
-  CalendarClock,
-  CalendarX,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -23,6 +20,7 @@ import {
   Phone,
   Pill,
   Plus,
+  Printer,
   RefreshCw,
   RotateCcw,
   Search,
@@ -45,7 +43,7 @@ import {
 import { validateImageFile } from "../utils/validators";
 import { generateConsultationHealthInsight, generatePredictiveHealthAnalysis, getActiveVeterinarians, getMedicalRecords, getPreviousMedicalRecordsForAi } from "../services/medicalRecordService";
 import { computeRiskLevel, daysUntil, keywordSet, parseAiReport, parseConsultationInsight, sharesKeyword, toListItems } from "../utils/predictiveHealthParsing";
-import { downloadInvoicePdf, downloadPrescriptionPadPdf, viewPrescriptionPadPdf } from "../utils/invoicePdf";
+import { downloadInvoicePdf, downloadPrescriptionPadPdf, printMedicalRecordDocument, viewPrescriptionPadPdf } from "../utils/invoicePdf";
 import {
   getPrescriptionPurchaseHistory,
   getPrescriptionsForConsultation,
@@ -442,7 +440,7 @@ export default function PetManagementModule({
   const [aiError, setAiError] = useState("");
   const [aiPreviousRecords, setAiPreviousRecords] = useState([]);
   const [aiLatestRecord, setAiLatestRecord] = useState(null);
-  const [vetNames, setVetNames] = useState({});
+  const [vetsById, setVetsById] = useState({});
 
   const canManageAll =
     !ownerOnly &&
@@ -460,12 +458,14 @@ export default function PetManagementModule({
   const canViewBilling = ownerOnly || profile.role === "veterinarian";
 
   // Small, bounded list (a clinic's active veterinarians) reused from the
-  // existing exported function, just to resolve veterinarian_id -> name for
-  // display on consultation cards -- no new query shape, no schema change.
+  // existing exported function, just to resolve veterinarian_id -> profile
+  // (name, contact number) for display on consultation cards and the
+  // printed record -- looked up by id only, never by name, and never
+  // persisted onto the record itself; no schema change.
   useEffect(() => {
     if (!canViewMedicalHistory) return;
     getActiveVeterinarians()
-      .then((list) => setVetNames(Object.fromEntries(list.map((vet) => [vet.id, vet.full_name]))))
+      .then((list) => setVetsById(Object.fromEntries(list.map((vet) => [vet.id, vet]))))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -549,41 +549,23 @@ export default function PetManagementModule({
   // appointment consumed by a match is tracked so it never also renders as
   // a separate "upcoming" row -- the single source of duplicate-prevention
   // for this view.
+  // Medical History shows only consultations the veterinarian has actually
+  // completed and finalized -- upcoming/pending/cancelled appointments and
+  // draft (not-yet-finalized) records are excluded here, not deleted; they
+  // still exist untouched in their own tables and still show up in the
+  // Appointments module. Sorted by each consultation's real completion
+  // date/time, latest first.
   const timelineEntries = useMemo(() => {
-    const consumedAppointmentIds = new Set();
-    const entries = [];
-
-    medicalHistory.forEach((record) => {
-      const linkedAppointment = record.appointment_id
-        ? history.find((appt) => appt.id === record.appointment_id)
-        : null;
-      if (linkedAppointment) consumedAppointmentIds.add(linkedAppointment.id);
-
-      entries.push({
+    const entries = medicalHistory
+      .filter((record) => record.record_status === "Finalized")
+      .map((record) => ({
         key: `record-${record.id}`,
         kind: "consultation",
         record,
-        appointment: linkedAppointment || null,
-      });
-    });
-
-    history.forEach((appointment) => {
-      if (consumedAppointmentIds.has(appointment.id)) return;
-
-      const kind =
-        appointment.status === "Cancelled"
-          ? "cancelled"
-          : appointment.status === "Completed"
-          ? "completed-no-record"
-          : "upcoming";
-
-      entries.push({
-        key: `appointment-${appointment.id}`,
-        kind,
-        record: null,
-        appointment,
-      });
-    });
+        appointment: record.appointment_id
+          ? history.find((appt) => appt.id === record.appointment_id) || null
+          : null,
+      }));
 
     entries.forEach((entry) => {
       const visit = resolveVisitDateTime(entry);
@@ -2526,7 +2508,7 @@ export default function PetManagementModule({
                   <div>
                     <h3 className="history-heading">Medical History</h3>
                     <p className="history-subtext">
-                      {timelineEntries.length} visit{timelineEntries.length === 1 ? "" : "s"} on record
+                      {timelineEntries.length} completed consultation{timelineEntries.length === 1 ? "" : "s"} on record
                     </p>
                   </div>
                 </div>
@@ -2538,39 +2520,11 @@ export default function PetManagementModule({
                 ) : timelineEntries.length === 0 ? (
                   <div className="history-empty">
                     <FileHeart size={30} />
-                    <p>No visits recorded for this pet yet.</p>
+                    <p>No completed medical consultations yet.</p>
                   </div>
                 ) : (
                   <div className="consultation-list">
                     {timelineEntries.map((entry) => {
-                      if (entry.kind !== "consultation") {
-                        const { appointment, kind } = entry;
-                        const badgeText =
-                          kind === "upcoming" ? "Upcoming visit" : kind === "cancelled" ? "Cancelled" : "Completed · no record";
-                        const BadgeIcon = kind === "upcoming" ? CalendarClock : kind === "cancelled" ? CalendarX : CalendarCheck;
-                        return (
-                          <div className={`timeline-appt-card timeline-appt-${kind}`} key={entry.key}>
-                            <span className="consultation-date">
-                              {formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime })}
-                            </span>
-
-                            <span className="consultation-title">
-                              {appointment.visit_reason || "General Consultation"}
-                            </span>
-
-                            <span className="consultation-meta">
-                              {appointment.veterinarian?.full_name ? `Dr. ${appointment.veterinarian.full_name}` : "Veterinarian not assigned"}
-                              {" · "}{appointment.status}
-                              {kind === "completed-no-record" && " · No medical record was created for this visit."}
-                            </span>
-
-                            <span className={`timeline-appt-badge timeline-appt-badge-${kind}`}>
-                              <BadgeIcon size={12} /> {badgeText}
-                            </span>
-                          </div>
-                        );
-                      }
-
                       const { record, appointment } = entry;
                       const expanded = expandedRecordId === record.id;
                       return (
@@ -2593,7 +2547,7 @@ export default function PetManagementModule({
                             </span>
 
                             <span className="consultation-meta">
-                              {vetNames[record.veterinarian_id] ? `Dr. ${vetNames[record.veterinarian_id]}` : "Veterinarian not recorded"}
+                              {vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "Veterinarian not recorded"}
                               {record.weight ? ` · ${record.weight}kg` : ""}
                               {record.temperature ? ` · ${record.temperature}°C` : ""}
                               {" · "}{appointment?.status ? `${appointment.status} · ` : ""}{record.record_status || "Draft"}
@@ -2718,7 +2672,7 @@ export default function PetManagementModule({
                                               type="button"
                                               className="pet-download-btn"
                                               onClick={() => (ownerOnly ? viewPrescriptionPadPdf : downloadPrescriptionPadPdf)(billingByRecordId[record.id].prescriptions, {
-                                                veterinarianName: vetNames[record.veterinarian_id] ? `Dr. ${vetNames[record.veterinarian_id]}` : "",
+                                                veterinarianName: vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "",
                                                 ownerName: selectedPet.owner?.full_name,
                                                 ownerAddress: selectedPet.owner?.address,
                                                 petName: selectedPet.pet_name,
@@ -2767,6 +2721,34 @@ export default function PetManagementModule({
                                   )}
                                 </div>
                               )}
+
+                              <span
+                                className="consultation-print-wrap"
+                                title={record.record_status !== "Finalized" ? "Complete this consultation before printing." : undefined}
+                              >
+                                <button
+                                  type="button"
+                                  className="consultation-print-btn"
+                                  disabled={record.record_status !== "Finalized"}
+                                  onClick={async () => {
+                                    try {
+                                      await printMedicalRecordDocument(record, selectedPet, {
+                                        veterinarianName: vetsById[record.veterinarian_id]?.full_name || "",
+                                        veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
+                                        // Only pass a formatted string when there's a real date -- formatVisitDateTime's
+                                        // own "Date not recorded" fallback is for the on-screen card; the printout
+                                        // falls back to the record's single "N/A" convention instead.
+                                        visitDateTime: entry.visitDate ? formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime }) : "",
+                                        petAge: formatPetAge(selectedPet.date_of_birth),
+                                      });
+                                    } catch (printError) {
+                                      setMessage(printError.message || "Unable to print this medical record.");
+                                    }
+                                  }}
+                                >
+                                  <Printer size={14} /> Print Medical Record
+                                </button>
+                              </span>
 
                               <button
                                 type="button"
@@ -4034,50 +4016,6 @@ export default function PetManagementModule({
           transform: rotate(180deg);
         }
 
-        .timeline-appt-card {
-          display: grid;
-          grid-template-columns: 130px 1fr auto;
-          align-items: center;
-          gap: 14px;
-          border: 1px solid #e3edf2;
-          border-radius: 13px;
-          background: #fbfdfe;
-          padding: 13px 15px;
-        }
-
-        .timeline-appt-cancelled {
-          background: #fbfbfb;
-          border-style: dashed;
-          opacity: 0.85;
-        }
-
-        .timeline-appt-badge {
-          justify-self: end;
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-          padding: 4px 10px;
-          border-radius: 999px;
-          font-size: 10.5px;
-          font-weight: 800;
-          white-space: nowrap;
-        }
-
-        .timeline-appt-badge-upcoming {
-          background: #e7f6fc;
-          color: #267fa9;
-        }
-
-        .timeline-appt-badge-cancelled {
-          background: #eef1f2;
-          color: #7a8d96;
-        }
-
-        .timeline-appt-badge-completed-no-record {
-          background: #fdf1dc;
-          color: #a5680b;
-        }
-
         .consultation-details {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4353,6 +4291,34 @@ export default function PetManagementModule({
           cursor: not-allowed;
         }
 
+        .consultation-print-wrap {
+          display: block;
+          grid-column: 1 / -1;
+          margin-top: 10px;
+        }
+        .consultation-print-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          width: 100%;
+          border: 1px solid #cfe4ed;
+          border-radius: 10px;
+          padding: 10px 13px;
+          background: #fff;
+          color: #257fa9;
+          font-weight: 700;
+          font-size: 12.5px;
+          cursor: pointer;
+        }
+        .consultation-print-btn:hover:not(:disabled) {
+          background: #f2f9fc;
+        }
+        .consultation-print-btn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
         .consultation-insight-toggle {
           grid-column: 1 / -1;
           display: flex;
@@ -4552,8 +4518,6 @@ export default function PetManagementModule({
           .consultation-summary { grid-template-columns:1fr 20px; row-gap:4px; }
           .consultation-title, .consultation-meta, .consultation-risk-badge { grid-column:1; justify-self:start; }
           .consultation-details { grid-template-columns:1fr; }
-          .timeline-appt-card { grid-template-columns:1fr; row-gap:6px; }
-          .timeline-appt-badge { justify-self:start; }
         }
 
         @media (max-width: 560px) {

@@ -567,7 +567,7 @@ export async function getActiveVeterinarians() {
   } = await supabase
     .from("profiles")
     .select(
-      "id, full_name, username, email, role, account_status"
+      "id, full_name, username, email, phone, role, account_status"
     )
     .order("full_name", {
       ascending: true,
