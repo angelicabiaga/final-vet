@@ -2673,6 +2673,8 @@ export default function PetManagementModule({
                                               className="pet-download-btn"
                                               onClick={() => (ownerOnly ? viewPrescriptionPadPdf : downloadPrescriptionPadPdf)(billingByRecordId[record.id].prescriptions, {
                                                 veterinarianName: vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "",
+                                                veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
+                                                veterinarianLicense: vetsById[record.veterinarian_id]?.license_number || "",
                                                 ownerName: selectedPet.owner?.full_name,
                                                 ownerAddress: selectedPet.owner?.address,
                                                 petName: selectedPet.pet_name,

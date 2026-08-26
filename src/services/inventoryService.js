@@ -661,16 +661,15 @@ export async function recordInventoryTransaction(
 }
 
 /**
- * Writes staff-entered per-unit Unique Unit IDs (and, when they diverge
- * from the batch, per-unit expiry/date-received) onto the unit rows that
- * pawcruz_generate_units_for_batch already auto-created for the batch this
- * transaction just made. There's no way to pass these in at insert time --
- * the trigger fires as a side effect of the batch insert inside the RPC --
- * so this is a required follow-up call, matched by unit creation order
- * (unit_no) against the order unitEntries was filled in.
+ * Looks up the batch a Stock In / Adjustment Add transaction just created,
+ * so the UI can show its (backend-generated) Unique Unit IDs read-only
+ * right after saving. Unit codes are assigned automatically by
+ * pawcruz_generate_units_for_batch as a side effect of the batch insert
+ * inside pawcruz_record_inventory_transaction -- there is nothing left for
+ * the client to write.
  */
-export async function attachInventoryUnitCodes(transactionId, unitEntries) {
-  if (!transactionId || !unitEntries?.length) return;
+export async function getInventoryTransactionBatch(transactionId) {
+  if (!transactionId) return null;
 
   const {
     data: txRow,
@@ -681,54 +680,22 @@ export async function attachInventoryUnitCodes(transactionId, unitEntries) {
     .eq("id", transactionId)
     .single();
 
-  if (txError || !txRow?.batch_id) {
-    throw friendly(
-      txError,
-      "Stock was recorded, but the batch could not be found to attach unit IDs."
-    );
-  }
+  if (txError || !txRow?.batch_id) return null;
 
   const {
-    data: unitRows,
-    error: unitsError,
+    data: batch,
+    error: batchError,
   } = await supabase
-    .from("inventory_units")
-    .select("id")
-    .eq("batch_id", txRow.batch_id)
-    .order("unit_no", { ascending: true });
+    .from("inventory_batches")
+    .select(
+      "id,item_id,batch_number,quantity_received,quantity_remaining,date_received,expiry_date,status,is_active,created_at"
+    )
+    .eq("id", txRow.batch_id)
+    .single();
 
-  if (unitsError) {
-    throw friendly(
-      unitsError,
-      "Stock was recorded, but the unit records could not be loaded to attach unit IDs."
-    );
-  }
+  if (batchError) return null;
 
-  if ((unitRows || []).length !== unitEntries.length) {
-    throw new Error(
-      "Stock was recorded, but the number of unit records didn't match the number of unit IDs entered."
-    );
-  }
-
-  for (let i = 0; i < unitRows.length; i++) {
-    const entry = unitEntries[i];
-
-    const { error } = await supabase
-      .from("inventory_units")
-      .update({
-        unit_code: entry.unitCode?.trim() || null,
-        expiry_date: entry.expiryDate || null,
-        date_received: entry.dateReceived || null,
-      })
-      .eq("id", unitRows[i].id);
-
-    if (error) {
-      throw friendly(
-        error,
-        `Stock was recorded, but unit ID "${entry.unitCode}" could not be saved (it may already be in use).`
-      );
-    }
-  }
+  return batch;
 }
 
 /**
@@ -842,7 +809,7 @@ export async function getInventoryUnits(batchId) {
   } = await supabase
     .from("inventory_units")
     .select(
-      "id,unit_no,item_id,batch_id,status,transaction_id,used_at,created_at"
+      "id,unit_no,unit_code,item_id,batch_id,status,transaction_id,used_at,created_at"
     )
     .eq("batch_id", batchId)
     .order("created_at", { ascending: true })
@@ -2122,6 +2089,215 @@ export function parseInventoryImportCsv(text) {
   }));
 
   return { items, errors: [] };
+}
+
+/**
+ * Same normalization the server-side import RPC applies before comparing
+ * SKU / Item Name / Batch Number: trim, collapse repeated whitespace to a
+ * single space, lowercase. Keeping this identical on both sides is what
+ * lets the client-side preview below agree with what actually happens when
+ * the import is committed.
+ */
+export function normalizeInventoryText(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+/**
+ * Mirrors the base (un-suffixed) batch reference
+ * pawcruz_record_inventory_transaction auto-assigns when a Stock In row has
+ * no batch number: "B" + current year + the SKU with every non-alphanumeric
+ * character stripped. Used only to keep this preview's own within-file
+ * duplicate-batch detection consistent with what the server will actually
+ * store -- the server is authoritative and may append a "-N" suffix on a
+ * genuine same-day collision that this preview can't predict.
+ */
+function previewAutoBatchNumber(sku) {
+  const skuPart = (sku || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return `B${new Date().getFullYear()}${skuPart}`;
+}
+
+/**
+ * Read-only dry run over parsed CSV rows: labels each with one of the six
+ * required preview statuses (New Item / Existing Item – Add Stock /
+ * Duplicate Item – Skipped / Duplicate SKU – Conflict / Duplicate Batch –
+ * Skipped / Invalid Row) by comparing against current inventory, without
+ * writing anything. Rows are walked in file order and matched-or-created
+ * items/batches are tracked in local maps as we go, so two rows in the same
+ * file describing the same new item (or the same batch) are cross-checked
+ * against each other the same way the transactional import RPC does when it
+ * actually commits them.
+ */
+export async function previewInventoryImport(rows) {
+  const [activeItems, archivedItems] = await Promise.all([
+    getInventoryItems({ includeArchived: false }),
+    getInventoryItems({ includeArchived: true }),
+  ]);
+
+  const byNormName = new Map();
+  const byNormSku = new Map();
+  [...activeItems, ...archivedItems].forEach((item) => {
+    byNormName.set(normalizeInventoryText(item.item_name), item);
+    byNormSku.set(normalizeInventoryText(item.sku), item);
+  });
+
+  const batchCache = new Map();
+  async function batchesFor(itemId) {
+    if (!batchCache.has(itemId)) {
+      batchCache.set(itemId, await getInventoryBatches(itemId));
+    }
+    return batchCache.get(itemId);
+  }
+
+  const preview = [];
+
+  for (const row of rows) {
+    const itemName = (row.item_name || "").trim();
+    const sku = (row.sku || "").trim();
+    const category = (row.category || "").trim();
+    const unit = (row.unit || "").trim();
+    const expiryDate = row.expiry_date || "";
+    const quantity = Number(row.quantity || 0);
+    const unitPrice = Number(row.unit_price || 0);
+    const reorderLevel = Number(row.reorder_level || 0);
+    const batchNumber = (row.batch_number || "").trim();
+
+    if (
+      !itemName || !sku || !category || !unit || !expiryDate ||
+      !Number.isFinite(quantity) || quantity < 0 ||
+      !Number.isFinite(unitPrice) || unitPrice < 0 ||
+      !Number.isFinite(reorderLevel) || reorderLevel < 0
+    ) {
+      preview.push({ ...row, status: "Invalid Row", statusMessage: "Missing or invalid required field (item name, SKU, category, unit, or expiry date)." });
+      continue;
+    }
+
+    const normName = normalizeInventoryText(itemName);
+    const normSku = normalizeInventoryText(sku);
+    const nameMatch = byNormName.get(normName);
+    const skuMatch = byNormSku.get(normSku);
+
+    if (nameMatch && skuMatch && nameMatch.id !== skuMatch.id) {
+      preview.push({
+        ...row,
+        status: "Duplicate SKU – Conflict",
+        statusMessage: `SKU "${sku}" belongs to a different existing item than the one already named "${itemName}".`,
+      });
+      continue;
+    }
+
+    const target = skuMatch || nameMatch;
+
+    if (target) {
+      if (target.is_archived) {
+        preview.push({ ...row, status: "Invalid Row", statusMessage: "A matching item already exists but is archived/deactivated." });
+        continue;
+      }
+
+      const batches = await batchesFor(target.id);
+      const normBatch = batchNumber ? normalizeInventoryText(batchNumber) : "";
+      // pawcruz_record_inventory_transaction never leaves batch_number blank
+      // any more -- a blank row gets a "B" + year + SKU reference assigned
+      // automatically (optionally with a "-N" collision suffix). So a blank
+      // row here can't be matched against a null batch_number (there won't
+      // be one); instead it's a duplicate only when an existing batch
+      // already has that auto-generated shape for this SKU (any year, any
+      // suffix) with the same quantity and expiry date.
+      const autoBatchSkuPart = (target.sku || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const autoBatchPattern = new RegExp(`^B[0-9]{4}${autoBatchSkuPart}(-[0-9]+)?$`);
+      const isDuplicateBatch = batchNumber
+        ? batches.some((batch) => normalizeInventoryText(batch.batch_number || "") === normBatch)
+        : batches.some(
+            (batch) =>
+              batch.batch_number &&
+              autoBatchPattern.test(String(batch.batch_number).toUpperCase()) &&
+              Number(batch.quantity_received) === quantity &&
+              batch.expiry_date === expiryDate
+          );
+
+      if (isDuplicateBatch) {
+        preview.push({
+          ...row,
+          status: "Duplicate Batch – Skipped",
+          statusMessage: batchNumber
+            ? `Duplicate item detected. No new item was created. Batch "${batchNumber}" already exists for this item.`
+            : "Duplicate item detected. No new item was created. A batch with this exact quantity and expiry date already exists for this item.",
+        });
+        continue;
+      }
+
+      if (quantity > 0) {
+        preview.push({
+          ...row,
+          status: "Existing Item – Add Stock",
+          statusMessage: `Duplicate item detected. No new item was created. Will add a new batch of ${quantity} unit(s) to the existing item.`,
+        });
+        batches.push({
+          batch_number: batchNumber || previewAutoBatchNumber(target.sku),
+          quantity_received: quantity,
+          expiry_date: expiryDate,
+        });
+      } else {
+        preview.push({
+          ...row,
+          status: "Duplicate Item – Skipped",
+          statusMessage: "Duplicate item detected. No new item was created.",
+        });
+      }
+      continue;
+    }
+
+    preview.push({ ...row, status: "New Item", statusMessage: "Will be created as a new inventory item." });
+
+    const virtualItem = { id: `pending:${normSku}`, item_name: itemName, sku, is_archived: false };
+    byNormName.set(normName, virtualItem);
+    byNormSku.set(normSku, virtualItem);
+    batchCache.set(
+      virtualItem.id,
+      quantity > 0
+        ? [{ batch_number: batchNumber || previewAutoBatchNumber(sku), quantity_received: quantity, expiry_date: expiryDate }]
+        : []
+    );
+  }
+
+  return preview;
+}
+
+/**
+ * Commits previously-previewed CSV rows through pawcruz_import_inventory_csv
+ * -- one Postgres transaction for the whole file, with the same duplicate
+ * detection applied again server-side (authoritative; the client-side
+ * preview above is for display only). Returns { results, summary } exactly
+ * as the RPC produced them.
+ */
+export async function commitInventoryImport(rows, profile) {
+  const payload = rows.map((row) => ({
+    _row: row._row,
+    item_name: row.item_name,
+    category: row.category,
+    sku: row.sku,
+    description: row.description,
+    unit: row.unit,
+    quantity: row.quantity,
+    unit_price: row.unit_price,
+    reorder_level: row.reorder_level,
+    expiry_date: row.expiry_date,
+    supplier_name: row.supplier_name,
+    batch_number: row.batch_number,
+  }));
+
+  const { data, error } = await supabase.rpc("pawcruz_import_inventory_csv", {
+    p_rows: payload,
+    p_actor_id: profile?.id || null,
+  });
+
+  if (error) {
+    throw friendly(error, "Unable to import inventory items.");
+  }
+
+  return data;
 }
 
 export function downloadInventoryImportTemplate() {

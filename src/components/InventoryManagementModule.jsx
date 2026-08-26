@@ -29,7 +29,7 @@ import jsPDF from "jspdf";
 
 import {
   downloadInventoryImportTemplate,
-  attachInventoryUnitCodes,
+  commitInventoryImport,
   exportInventoryCsv,
   getInventoryBatches,
   getInventoryBatchCounts,
@@ -37,10 +37,12 @@ import {
   getInventoryItems,
   getInventorySummary,
   getInventoryTransactions,
+  getInventoryTransactionBatch,
   getInventoryUnits,
   getInventoryForecasts,
   mergeInventoryItems,
   parseInventoryImportCsv,
+  previewInventoryImport,
   recordInventoryTransaction,
   saveInventoryItem,
   setBatchActive,
@@ -109,6 +111,44 @@ function formatDate(date) {
   return new Date(
     `${date}T00:00:00`
   ).toLocaleDateString();
+}
+
+/**
+ * Client-side preview of the Unique Unit ID pawcruz_generate_units_for_batch
+ * will assign on the backend at save time -- same {SKU}-{BATCH}-{SEQUENCE}
+ * formula (including the auto batch reference when none is entered), shown
+ * read-only before saving so staff can see what will be generated. The
+ * backend is authoritative: on the rare same-day collision it appends a
+ * numeric suffix to the batch reference that this preview can't predict, so
+ * the actual saved ID may differ slightly from the preview in that one case.
+ */
+function buildPreviewUnitCode(sku, batchNumber, sequence) {
+  const skuPart = (sku || "").trim().toUpperCase() || "ITEM";
+  const trimmedBatch = (batchNumber || "").trim();
+  const batchPart = trimmedBatch
+    ? trimmedBatch.toUpperCase()
+    : `B${new Date().getFullYear()}${skuPart.replace(/[^A-Z0-9]/g, "")}`;
+
+  return `${skuPart}-${batchPart}-${String(sequence).padStart(3, "0")}`;
+}
+
+function importStatusBadgeClass(status) {
+  switch (status) {
+    case "New Item":
+    case "New Item – Imported":
+      return "new-item";
+    case "Existing Item – Add Stock":
+    case "Existing Item – Stock Updated":
+      return "stock-updated";
+    case "Duplicate Item – Skipped":
+    case "Duplicate Batch – Skipped":
+      return "inactive";
+    case "Duplicate SKU – Conflict":
+    case "Invalid Row":
+      return "out-of-stock";
+    default:
+      return "";
+  }
 }
 
 function money(value) {
@@ -306,6 +346,26 @@ export default function InventoryManagementModule({
     setSelectedItem,
   ] = useState(null);
 
+  const unitIdPreview = useMemo(() => {
+    if (!BATCH_CREATING_TX_TYPES.includes(txForm.transactionType)) return [];
+
+    const count = txForm.isBatchEntry
+      ? Math.max(0, Math.floor(Number(txForm.quantity) || 0))
+      : 1;
+
+    if (!count) return [];
+
+    return Array.from({ length: count }, (_, index) =>
+      buildPreviewUnitCode(selectedItem?.sku, txForm.batchNumber, index + 1)
+    );
+  }, [
+    txForm.transactionType,
+    txForm.isBatchEntry,
+    txForm.quantity,
+    txForm.batchNumber,
+    selectedItem?.sku,
+  ]);
+
   const [batchRows, setBatchRows] = useState([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
   const [batchesError, setBatchesError] = useState("");
@@ -330,12 +390,9 @@ export default function InventoryManagementModule({
 
   const [importFileName, setImportFileName] = useState("");
   const [importPreview, setImportPreview] = useState(null);
+  const [importPreviewLoading, setImportPreviewLoading] = useState(false);
   const [importResults, setImportResults] = useState(null);
   const [importing, setImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState({
-    current: 0,
-    total: 0,
-  });
 
   const [loading, setLoading] =
     useState(true);
@@ -354,14 +411,8 @@ export default function InventoryManagementModule({
   const [stockChoiceItem, setStockChoiceItem] =
     useState(null);
 
-  const [unitEntries, setUnitEntries] =
-    useState([]);
-
   const [unitModalOpen, setUnitModalOpen] =
     useState(false);
-
-  const [unitCopyFromTop, setUnitCopyFromTop] =
-    useState(true);
 
   const [archiving, setArchiving] =
     useState(false);
@@ -566,6 +617,7 @@ export default function InventoryManagementModule({
   function resetImportState() {
     setImportFileName("");
     setImportPreview(null);
+    setImportPreviewLoading(false);
     setImportResults(null);
   }
 
@@ -586,13 +638,30 @@ export default function InventoryManagementModule({
 
     setImportFileName(file.name);
     setImportResults(null);
+    setImportPreviewLoading(true);
 
     const reader = new FileReader();
 
-    reader.onload = () => {
-      setImportPreview(
-        parseInventoryImportCsv(String(reader.result || ""))
-      );
+    reader.onload = async () => {
+      const parsed = parseInventoryImportCsv(String(reader.result || ""));
+
+      if (!parsed.items.length) {
+        setImportPreview(parsed);
+        setImportPreviewLoading(false);
+        return;
+      }
+
+      try {
+        const items = await previewInventoryImport(parsed.items);
+        setImportPreview({ items, errors: parsed.errors });
+      } catch (previewError) {
+        setImportPreview({
+          items: [],
+          errors: [previewError.message || "Unable to check the file against current inventory."],
+        });
+      } finally {
+        setImportPreviewLoading(false);
+      }
     };
 
     reader.onerror = () => {
@@ -600,6 +669,7 @@ export default function InventoryManagementModule({
         items: [],
         errors: ["Unable to read the selected file."],
       });
+      setImportPreviewLoading(false);
     };
 
     reader.readAsText(file);
@@ -610,46 +680,28 @@ export default function InventoryManagementModule({
     if (!rows.length) return;
 
     setImporting(true);
-    setImportProgress({ current: 0, total: rows.length });
 
-    const results = [];
+    try {
+      const outcome = await commitInventoryImport(rows, profile);
+      setImportResults(outcome);
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      setImportProgress({ current: i + 1, total: rows.length });
-
-      try {
-        await saveInventoryItem(row, profile);
-        results.push({
-          row: row._row,
-          item_name: row.item_name,
-          success: true,
-          message: "Imported.",
+      const { summary } = outcome;
+      if (summary.new_items > 0 || summary.updated_items > 0) {
+        setNotice({
+          type: "success",
+          text: `${summary.new_items} new item(s) created, ${summary.updated_items} existing item(s) updated.`,
         });
-      } catch (error) {
-        results.push({
-          row: row._row,
-          item_name: row.item_name,
-          success: false,
-          message: error.message,
-        });
+
+        await load();
       }
-    }
-
-    setImportResults(results);
-    setImporting(false);
-
-    const successCount = results.filter(
-      (result) => result.success
-    ).length;
-
-    if (successCount > 0) {
-      setNotice({
-        type: "success",
-        text: `${successCount} of ${results.length} item(s) imported.`,
+    } catch (error) {
+      setImportResults({
+        results: [],
+        summary: { new_items: 0, updated_items: 0, skipped: 0, invalid: rows.length },
+        error: error.message || "Unable to import inventory items.",
       });
-
-      await load();
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -680,13 +732,7 @@ export default function InventoryManagementModule({
       quantity: isBatchEntry ? "" : "1",
     });
 
-    setUnitEntries(
-      isBatchEntry
-        ? []
-        : [{ unitCode: "", expiryDate: "", dateReceived: "" }]
-    );
     setUnitModalOpen(false);
-    setUnitCopyFromTop(true);
 
     setModal("transaction");
   }
@@ -701,53 +747,16 @@ export default function InventoryManagementModule({
     openTransaction(item, "Stock In", isBatchEntry);
   }
 
-  function openUnitEntryModal() {
-    const count = Math.max(
-      1,
-      Math.floor(Number(txForm.quantity) || 0)
-    );
-
-    if (!count) {
+  function openUnitPreviewModal() {
+    if (!unitIdPreview.length) {
       setNotice({
         type: "error",
-        text: "Enter a valid quantity before setting unit IDs.",
+        text: "Enter a valid quantity to preview unit IDs.",
       });
       return;
     }
 
-    setUnitEntries((current) =>
-      Array.from({ length: count }, (_, index) =>
-        current[index] || {
-          unitCode: "",
-          expiryDate: unitCopyFromTop ? txForm.expiryDate : "",
-          dateReceived: unitCopyFromTop ? txForm.dateReceived : "",
-        }
-      )
-    );
-
     setUnitModalOpen(true);
-  }
-
-  function updateUnitEntry(index, patch) {
-    setUnitEntries((current) =>
-      current.map((entry, i) =>
-        i === index ? { ...entry, ...patch } : entry
-      )
-    );
-  }
-
-  function toggleUnitCopyFromTop(checked) {
-    setUnitCopyFromTop(checked);
-
-    if (checked) {
-      setUnitEntries((current) =>
-        current.map((entry) => ({
-          ...entry,
-          expiryDate: txForm.expiryDate,
-          dateReceived: txForm.dateReceived,
-        }))
-      );
-    }
   }
 
   function openHistory(item = null) {
@@ -1568,37 +1577,6 @@ export default function InventoryManagementModule({
       txForm.transactionType
     );
 
-    if (createsBatch) {
-      const expectedCount = txForm.isBatchEntry
-        ? Math.max(1, Math.floor(Number(txForm.quantity) || 0))
-        : 1;
-
-      // Single-item entry, and any batch row while "copy from above" is
-      // on, use the form's top-level Expiry Date (already required there)
-      // rather than a per-row value, so only the unit code needs checking
-      // in those cases.
-      const perRowExpiryRequired =
-        txForm.isBatchEntry && !unitCopyFromTop;
-
-      const incomplete =
-        unitEntries.length !== expectedCount ||
-        unitEntries.some(
-          (entry) =>
-            !entry.unitCode?.trim() ||
-            (perRowExpiryRequired && !entry.expiryDate)
-        );
-
-      if (incomplete) {
-        setNotice({
-          type: "error",
-          text: txForm.isBatchEntry
-            ? "Set a unique unit ID and expiry date for every unit before saving."
-            : "Enter a unique unit ID for this item.",
-        });
-        return;
-      }
-    }
-
     setSaving(true);
 
     try {
@@ -1607,32 +1585,24 @@ export default function InventoryManagementModule({
         profile
       );
 
-      if (createsBatch) {
-        const useTopDates = !txForm.isBatchEntry || unitCopyFromTop;
-
-        await attachInventoryUnitCodes(
-          transactionId,
-          unitEntries.map((entry) => ({
-            unitCode: entry.unitCode,
-            expiryDate: useTopDates
-              ? txForm.expiryDate
-              : entry.expiryDate,
-            dateReceived: useTopDates
-              ? txForm.dateReceived
-              : entry.dateReceived,
-          }))
-        );
-      }
-
       setModal("");
 
       setNotice({
         type: "success",
-        text:
-          "Stock transaction recorded successfully.",
+        text: createsBatch
+          ? "Stock transaction recorded successfully. Unique Unit IDs were generated automatically."
+          : "Stock transaction recorded successfully.",
       });
 
       await load();
+
+      // Unit IDs are assigned by the backend as part of the transaction
+      // above -- show the real, saved (read-only) codes for this batch now,
+      // via the same Individual Units viewer used elsewhere.
+      if (createsBatch) {
+        const batch = await getInventoryTransactionBatch(transactionId);
+        if (batch) await openUnits(batch);
+      }
     } catch (error) {
       setNotice({
         type: "error",
@@ -2498,7 +2468,14 @@ export default function InventoryManagementModule({
               </div>
             )}
 
-            {importPreview?.items?.length > 0 &&
+            {importPreviewLoading && (
+              <div className="notice">
+                <span>Checking this file against current inventory…</span>
+              </div>
+            )}
+
+            {!importPreviewLoading &&
+              importPreview?.items?.length > 0 &&
               !importResults && (
                 <>
                   <div className="table-wrap">
@@ -2511,6 +2488,8 @@ export default function InventoryManagementModule({
                           <th>Category</th>
                           <th>Qty</th>
                           <th>Expiry Date</th>
+                          <th>Status</th>
+                          <th>Details</th>
                         </tr>
                       </thead>
 
@@ -2539,6 +2518,14 @@ export default function InventoryManagementModule({
                                   <em>Missing</em>
                                 )}
                               </td>
+                              <td>
+                                <span
+                                  className={`badge ${importStatusBadgeClass(row.status)}`}
+                                >
+                                  {row.status}
+                                </span>
+                              </td>
+                              <td>{row.statusMessage || "—"}</td>
                             </tr>
                           ))}
                       </tbody>
@@ -2552,6 +2539,13 @@ export default function InventoryManagementModule({
                       row(s) not shown.
                     </small>
                   )}
+
+                  <p className="forecast-note">
+                    New Item rows create a new inventory item. Existing
+                    Item rows only add a new stock batch — item details
+                    are never overwritten. Duplicate and Invalid rows are
+                    skipped automatically; nothing is imported twice.
+                  </p>
 
                   <div className="form-actions">
                     <button
@@ -2570,7 +2564,7 @@ export default function InventoryManagementModule({
                       disabled={importing}
                     >
                       {importing
-                        ? `Importing ${importProgress.current}/${importProgress.total}…`
+                        ? "Importing…"
                         : `Import ${importPreview.items.length} Item${
                             importPreview.items.length === 1
                               ? ""
@@ -2583,53 +2577,59 @@ export default function InventoryManagementModule({
 
             {importResults && (
               <div className="import-results">
-                <div
-                  className={`notice ${
-                    importResults.some(
-                      (result) => !result.success
-                    )
-                      ? "error"
-                      : "success"
-                  }`}
-                >
-                  <span>
-                    {
-                      importResults.filter(
-                        (result) => result.success
-                      ).length
-                    }{" "}
-                    of {importResults.length} item(s)
-                    imported successfully.
-                  </span>
-                </div>
+                {importResults.error ? (
+                  <div className="notice error">
+                    <span>{importResults.error}</span>
+                  </div>
+                ) : (
+                  <div
+                    className={`notice ${
+                      importResults.summary.invalid > 0 ||
+                      importResults.summary.skipped > 0
+                        ? "error"
+                        : "success"
+                    }`}
+                  >
+                    <span>
+                      {importResults.summary.new_items} new item(s)
+                      created, {importResults.summary.updated_items}{" "}
+                      existing item(s) updated,{" "}
+                      {importResults.summary.skipped} duplicate row(s)
+                      skipped, {importResults.summary.invalid} invalid
+                      row(s) rejected.
+                    </span>
+                  </div>
+                )}
 
-                {importResults.some(
-                  (result) => !result.success
-                ) && (
+                {importResults.results?.length > 0 && (
                   <div className="table-wrap">
                     <table>
                       <thead>
                         <tr>
                           <th>Row</th>
                           <th>Item</th>
-                          <th>Reason</th>
+                          <th>Status</th>
+                          <th>Details</th>
                         </tr>
                       </thead>
 
                       <tbody>
-                        {importResults
-                          .filter(
-                            (result) => !result.success
-                          )
-                          .map((result) => (
-                            <tr key={result.row}>
-                              <td>{result.row}</td>
-                              <td>
-                                {result.item_name || "—"}
-                              </td>
-                              <td>{result.message}</td>
-                            </tr>
-                          ))}
+                        {importResults.results.map((result) => (
+                          <tr key={result.row}>
+                            <td>{result.row}</td>
+                            <td>
+                              {result.item_name || "—"}
+                            </td>
+                            <td>
+                              <span
+                                className={`badge ${importStatusBadgeClass(result.status)}`}
+                              >
+                                {result.status}
+                              </span>
+                            </td>
+                            <td>{result.message}</td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -2693,63 +2693,39 @@ export default function InventoryManagementModule({
 
       {unitModalOpen && (
         <Modal
-          title={`Unique Unit IDs (${unitEntries.length})`}
+          title={`Unique Unit IDs (${unitIdPreview.length})`}
           close={() => setUnitModalOpen(false)}
           large
           elevated
         >
-          <label className="check unit-copy-toggle">
-            <input
-              type="checkbox"
-              checked={unitCopyFromTop}
-              onChange={(e) => toggleUnitCopyFromTop(e.target.checked)}
-            />
-            Use the expiry date and date received entered above for every unit
-          </label>
+          <p className="forecast-note">
+            Automatically generated by the system. These IDs cannot be
+            edited and the final values are assigned when you save this
+            transaction.
+          </p>
 
           <div className="table-wrap">
             <table className="batch-table">
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Unique Unit ID</th>
-                  <th>Expiry Date</th>
-                  <th>Date Received</th>
+                  <th>Unique Unit ID (preview)</th>
                 </tr>
               </thead>
               <tbody>
-                {unitEntries.map((entry, index) => (
-                  <tr key={index}>
+                {unitIdPreview.map((code, index) => (
+                  <tr key={code}>
                     <td>{index + 1}</td>
                     <td>
                       <input
-                        required
-                        value={entry.unitCode}
-                        placeholder="Type unit ID"
-                        onChange={(e) =>
-                          updateUnitEntry(index, { unitCode: e.target.value })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="date"
-                        required
-                        disabled={unitCopyFromTop}
-                        value={entry.expiryDate}
-                        onChange={(e) =>
-                          updateUnitEntry(index, { expiryDate: e.target.value })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="date"
-                        disabled={unitCopyFromTop}
-                        value={entry.dateReceived}
-                        onChange={(e) =>
-                          updateUnitEntry(index, { dateReceived: e.target.value })
-                        }
+                        readOnly
+                        tabIndex={-1}
+                        aria-readonly="true"
+                        autoComplete="off"
+                        className="readonly-field"
+                        value={code}
+                        onPaste={(e) => e.preventDefault()}
+                        onCut={(e) => e.preventDefault()}
                       />
                     </td>
                   </tr>
@@ -2762,14 +2738,9 @@ export default function InventoryManagementModule({
             <button
               type="button"
               className="primary"
-              disabled={unitEntries.some(
-                (entry) =>
-                  !entry.unitCode?.trim() ||
-                  (!unitCopyFromTop && !entry.expiryDate)
-              )}
               onClick={() => setUnitModalOpen(false)}
             >
-              Done
+              Close
             </button>
           </div>
         </Modal>
@@ -2935,31 +2906,32 @@ export default function InventoryManagementModule({
                     <button
                       type="button"
                       className="secondary"
-                      onClick={openUnitEntryModal}
+                      onClick={openUnitPreviewModal}
                     >
-                      {unitEntries.length ? "Edit Unit IDs" : "Set Unique Unit IDs"}
+                      Preview Unit IDs
                     </button>
-                    {unitEntries.length > 0 && (
+                    {unitIdPreview.length > 0 && (
                       <span className="unit-entry-status">
-                        {
-                          unitEntries.filter(
-                            (entry) => entry.unitCode?.trim() && entry.expiryDate
-                          ).length
-                        }{" "}
-                        of {unitEntries.length} unit ID(s) set
+                        {unitIdPreview.length} unique unit ID(s) will be
+                        generated automatically
                       </span>
                     )}
                   </div>
                 ) : (
-                  <Field label="Unique Unit ID" wide required>
+                  <Field label="Unique Unit ID" wide>
                     <input
-                      required
-                      value={unitEntries[0]?.unitCode || ""}
-                      placeholder="Type this item's unique ID"
-                      onChange={(e) =>
-                        updateUnitEntry(0, { unitCode: e.target.value })
-                      }
+                      readOnly
+                      tabIndex={-1}
+                      aria-readonly="true"
+                      autoComplete="off"
+                      className="readonly-field"
+                      value={unitIdPreview[0] || ""}
+                      onPaste={(e) => e.preventDefault()}
+                      onCut={(e) => e.preventDefault()}
                     />
+                    <small className="readonly-hint">
+                      Automatically generated by the system
+                    </small>
                   </Field>
                 )}
               </>
@@ -3431,7 +3403,7 @@ export default function InventoryManagementModule({
                 <tbody>
                   {paginatedUnitRows.map((unit) => (
                     <tr key={unit.id}>
-                      <td>{formatUnitId(unit.unit_no)}</td>
+                      <td>{unit.unit_code || formatUnitId(unit.unit_no)}</td>
                       <td>{viewingUnitsBatch.batch_number || "—"}</td>
                       <td>{formatDate(viewingUnitsBatch.expiry_date)}</td>
                       <td>
@@ -3903,6 +3875,16 @@ export default function InventoryManagementModule({
           color: #5b6b76;
         }
 
+        .badge.new-item {
+          background: #e6f7ee;
+          color: #1f8550;
+        }
+
+        .badge.stock-updated {
+          background: #eaf1fb;
+          color: #2c5ab5;
+        }
+
         .actions {
           display: flex;
           gap: 6px;
@@ -4071,17 +4053,18 @@ export default function InventoryManagementModule({
           width: auto;
         }
 
-        .unit-copy-toggle {
-          display: flex !important;
-          grid-template-columns: auto 1fr !important;
-          align-items: center;
-          gap: 8px;
-          font-weight: 600 !important;
-          margin-bottom: 14px;
+        .readonly-field {
+          background: #eceff1;
+          color: #2e4750;
+          cursor: not-allowed;
         }
 
-        .unit-copy-toggle input {
-          width: auto;
+        .readonly-hint {
+          display: block;
+          margin-top: 6px;
+          font-size: 12.5px;
+          color: #7c8f99;
+          font-style: italic;
         }
 
         .field-lock-note {
