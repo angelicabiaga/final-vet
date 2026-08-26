@@ -161,7 +161,7 @@ export default function PetOwnerMedRec({ navigation, route }) {
             </View>
           ))}
 
-          {!loading && !error && !records.length ? <View style={localStyles.stateCard}><Text style={localStyles.emptyTitle}>No finalized medical records yet</Text><Text style={localStyles.stateText}>When your veterinarian finalizes a record on the web, it will appear here automatically.</Text></View> : null}
+          {!loading && !error && !records.length ? <View style={localStyles.stateCard}><Text style={localStyles.emptyTitle}>No completed medical consultations yet.</Text><Text style={localStyles.stateText}>When your veterinarian finalizes a record on the web, it will appear here automatically.</Text></View> : null}
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>

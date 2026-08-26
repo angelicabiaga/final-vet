@@ -13,7 +13,11 @@ const VetMedRec = ({ navigation, route }) => {
 
   const loadRecords = useCallback(async () => {
     try {
-      const rows = await getMobileMedicalRecords({ ...currentUser, role: currentUser?.role || 'veterinarian' });
+      // Medical History shows only consultations that have actually been
+      // completed and finalized -- drafts stay out of this list (they're
+      // still there in Supabase, just not surfaced here) until the vet
+      // finishes and finalizes them.
+      const rows = await getMobileMedicalRecords({ ...currentUser, role: currentUser?.role || 'veterinarian' }, { status: 'Finalized' });
       setRecords(rows);
       setError('');
     } catch (e) {
@@ -51,7 +55,7 @@ const VetMedRec = ({ navigation, route }) => {
             <TouchableOpacity style={styles.viewButton} onPress={() => openRecord(record)} activeOpacity={0.9}><Text style={styles.viewButtonText}>View Full Report</Text></TouchableOpacity>
           </View>
         ))}
-        {!loading && !error && !records.length ? <View style={styles.emptyCard}><Text style={styles.emptyTitle}>No medical records available</Text><Text style={styles.emptyText}>Records assigned to you on the web will appear here automatically.</Text></View> : null}
+        {!loading && !error && !records.length ? <View style={styles.emptyCard}><Text style={styles.emptyTitle}>No completed medical consultations yet.</Text><Text style={styles.emptyText}>Records finalized on the web will appear here automatically.</Text></View> : null}
       </ScrollView>
     </VetShell>
   );
