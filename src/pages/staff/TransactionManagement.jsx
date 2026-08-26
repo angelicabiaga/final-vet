@@ -887,7 +887,10 @@ export function NewTransaction({ profile }) {
         if (!data) { setBillingError("This could not be loaded for billing."); return; }
         setBilling(data);
         setCheckupFee(String(data.consultationFee ?? 500));
-        setIncludeCheckupFee(invoiceKind === "Consultation");
+        // Already collected on an earlier transaction for this same visit
+        // (a vet completed a second template after the first was already
+        // paid) -- off by default so it's never charged twice.
+        setIncludeCheckupFee(invoiceKind === "Consultation" && !data.alreadyBilled);
 
         if (data.ownerId) {
           getOwnerOutstandingBalance(data.ownerId)
@@ -1033,7 +1036,7 @@ export function NewTransaction({ profile }) {
   // tests the vet actually rendered stay fixed at qty 1.
   function updateCartLine(inventoryItemId, patch) { setCart((current) => current.map((line) => line.inventory_item_id === inventoryItemId && (!line.locked || !line.qtyLocked) ? { ...line, ...patch } : line)); }
   function removeCartLine(inventoryItemId) { setCart((current) => current.filter((line) => line.inventory_item_id !== inventoryItemId || line.locked)); }
-  function resetForm() { setIncludeCheckupFee(invoiceKind === "Consultation"); setCheckupFee(String(billing?.consultationFee ?? 500)); setPaymentMethod("Cash"); setAmountPaid(""); setAmountTouched(false); setSplitPayment({ cash: "", digital: "", digitalMethod: "GCash" }); setNotes(""); setError(""); setItemSearchOpen(false); }
+  function resetForm() { setIncludeCheckupFee(invoiceKind === "Consultation" && !billing?.alreadyBilled); setCheckupFee(String(billing?.consultationFee ?? 500)); setPaymentMethod("Cash"); setAmountPaid(""); setAmountTouched(false); setSplitPayment({ cash: "", digital: "", digitalMethod: "GCash" }); setNotes(""); setError(""); setItemSearchOpen(false); }
 
   // The medicine will be picked up from elsewhere -- drop it from this cart
   // and stop asking about it until staff re-opens this consultation.
@@ -1226,7 +1229,7 @@ export function NewTransaction({ profile }) {
         </div>
       </>}
 
-      <div className="fee-row"><div><label className="field-label toggle-label"><input type="checkbox" className="inline-checkbox" checked={includeCheckupFee} onChange={(event) => setIncludeCheckupFee(event.target.checked)} /> Checkup fee (PHP)</label><input type="number" min="0" step="0.01" value={checkupFee} disabled={!includeCheckupFee} readOnly className={!includeCheckupFee ? "fee-disabled" : ""} />{!includeCheckupFee && <span className="muted fee-off-note">Off — product-only POS sale.</span>}</div><div><label className="field-label">Payment method</label><select value={paymentMethod} onChange={(event) => { setPaymentMethod(event.target.value); setAmountTouched(false); }}>{PAYMENT_METHODS.map((method) => <option key={method}>{method}</option>)}</select></div></div>
+      <div className="fee-row"><div><label className="field-label toggle-label"><input type="checkbox" className="inline-checkbox" checked={includeCheckupFee} disabled={billing?.alreadyBilled} onChange={(event) => setIncludeCheckupFee(event.target.checked)} /> Checkup fee (PHP)</label><input type="number" min="0" step="0.01" value={checkupFee} disabled={!includeCheckupFee} readOnly className={!includeCheckupFee ? "fee-disabled" : ""} />{billing?.alreadyBilled ? <span className="muted fee-off-note">Already collected earlier for this visit.</span> : !includeCheckupFee && <span className="muted fee-off-note">Off — product-only POS sale.</span>}</div><div><label className="field-label">Payment method</label><select value={paymentMethod} onChange={(event) => { setPaymentMethod(event.target.value); setAmountTouched(false); }}>{PAYMENT_METHODS.map((method) => <option key={method}>{method}</option>)}</select></div></div>
 
       {paymentMethod === "Split Payment" ? <div className="split-payment-form"><label>Cash portion<input type="number" min="0" step="0.01" value={splitPayment.cash} onChange={(event) => setSplitPayment((current) => ({ ...current, cash: event.target.value }))} placeholder="0.00" /></label><label>{splitPayment.digitalMethod} portion<input type="number" min="0" step="0.01" value={splitPayment.digital} onChange={(event) => setSplitPayment((current) => ({ ...current, digital: event.target.value }))} placeholder="0.00" /></label><label>Digital method<select value={splitPayment.digitalMethod} onChange={(event) => setSplitPayment((current) => ({ ...current, digitalMethod: event.target.value }))}>{PAYMENT_METHODS.filter((method) => !["Cash", "Split Payment"].includes(method)).map((method) => <option key={method}>{method}</option>)}</select></label><p>Total received: <b>{money(splitTotal)}</b>{paymentStatusPreview && paymentStatusPreview !== "Full Payment" && <span className={`payment-preview-note ${paymentStatusPreview === "Unpaid" ? "unpaid" : "partial"}`}> · {paymentStatusPreview}</span>}</p></div> : isGcash ? <div className="online-payment-note"><CreditCard size={18} /> GCash is saved as <b>Pending</b>; inventory is deducted only after PayMongo confirms payment.</div> : <div className="payment-amount-row"><label>Amount paid<input type="number" min="0" max={totalAmount.toFixed(2)} step="0.01" value={amountPaid} onChange={(event) => { const raw = event.target.value; const numeric = Number(raw); const clamped = Number.isFinite(numeric) && numeric > totalAmount ? totalAmount.toFixed(2) : raw; setAmountPaid(clamped); setAmountTouched(true); }} placeholder="0.00" />{paymentStatusPreview && paymentStatusPreview !== "Full Payment" && <small className={`payment-preview-note ${paymentStatusPreview === "Unpaid" ? "unpaid" : "partial"}`}>{paymentStatusPreview}</small>}</label><div><span>Change</span><strong>{money(changeAmount)}</strong></div></div>}
       <label className="field-label">Notes<span className="optional-mark"> (Optional)</span></label>

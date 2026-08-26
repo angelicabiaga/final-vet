@@ -16,6 +16,7 @@ import {
   Check,
   FileDown,
   Plus,
+  Printer,
   Search,
   Upload,
   X,
@@ -26,6 +27,7 @@ import {
 } from "../services/petService";
 
 import {
+  finalizeQueueDrafts,
   generateConsultationHealthInsight,
   getActiveVeterinarians,
   getAppointmentsForPet,
@@ -39,6 +41,7 @@ import {
 import { formatTime12h } from "../utils/timeFormat";
 
 import { getInventoryItems } from "../services/inventoryService";
+import { printMedicalRecordDocument } from "../utils/invoicePdf";
 import ConfirmDialog from "./ConfirmDialog";
 
 import { markConsultationReadyForBilling } from "../services/queueService";
@@ -130,6 +133,37 @@ function formatHistoryDate(dateStr) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function formatPetAge(dateOfBirth) {
+  if (!dateOfBirth) return "";
+
+  const dob = new Date(`${dateOfBirth}T00:00:00`);
+  if (Number.isNaN(dob.getTime())) return "";
+
+  const now = new Date();
+  if (dob > now) return "";
+
+  let years = now.getFullYear() - dob.getFullYear();
+  let months = now.getMonth() - dob.getMonth();
+
+  if (now.getDate() < dob.getDate()) {
+    months -= 1;
+  }
+
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const totalMonths = years * 12 + months;
+  if (totalMonths < 1) return "Less than a month old";
+
+  const parts = [];
+  if (years > 0) parts.push(`${years} year${years === 1 ? "" : "s"}`);
+  if (months > 0) parts.push(`${months} month${months === 1 ? "" : "s"}`);
+
+  return `${parts.join(", ")} old`;
 }
 
 const VACCINE_KEYS = [
@@ -264,6 +298,16 @@ export default function MedicalRecordsModule({
     setExpandedHistoryId,
   ] = useState(null);
 
+  const [
+    pendingTemplateSwitch,
+    setPendingTemplateSwitch,
+  ] = useState(null);
+
+  const [
+    showDrafts,
+    setShowDrafts,
+  ] = useState(false);
+
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -291,6 +335,11 @@ export default function MedicalRecordsModule({
 
   const visitSavedTemplateValues = useMemo(
     () => visitSavedRecords.map((record) => record.record_template),
+    [visitSavedRecords]
+  );
+
+  const visitDraftRecords = useMemo(
+    () => visitSavedRecords.filter((record) => record.record_status === "Draft"),
     [visitSavedRecords]
   );
 
@@ -411,6 +460,7 @@ export default function MedicalRecordsModule({
       recordTemplate: getMedicalRecordTemplate(
         params.get("template")
       ).value,
+      resumeRecordId: params.get("resumeRecordId") || "",
     };
   }, [
     location.search,
@@ -512,6 +562,20 @@ export default function MedicalRecordsModule({
     getMedicalRecords(profile, { petId: queueLaunch.petIds[0] })
       .then((petRecords) => {
         if (!active) return;
+
+        // Explicit resume (from the Queue page's Drafts panel) takes
+        // priority over the same-template auto-reopen below -- it can
+        // target any of this visit's records, Draft or Finalized, by id.
+        if (queueLaunch.resumeRecordId) {
+          const resumeRecord = petRecords.find(
+            (record) => record.id === queueLaunch.resumeRecordId
+          );
+          if (resumeRecord) {
+            setForm(recordToFormValues(resumeRecord));
+            return;
+          }
+        }
+
         const alreadyFinalized = petRecords.find(
           (record) =>
             record.queue_entry_id === queueLaunch.queueEntryId &&
@@ -740,6 +804,10 @@ export default function MedicalRecordsModule({
     setSuccess("");
 
     try {
+      // Idempotent -- a no-op if the first attempt already got this far
+      // before the billing handoff failed.
+      await finalizeQueueDrafts(queueContext.queueEntryId);
+
       await markConsultationReadyForBilling(
         queueContext.queueEntryId,
         profile
@@ -761,7 +829,7 @@ export default function MedicalRecordsModule({
     }
   }
 
-  async function saveQueuedTemplate(nextTemplate = "") {
+  async function saveQueuedTemplate(nextTemplate = "", resumeRecord = null) {
     if (!queueContext || saving) return;
 
     if (pendingQueueCompletion) {
@@ -774,10 +842,14 @@ export default function MedicalRecordsModule({
     setSuccess("");
 
     try {
+      // Switching to another template mid-visit only ever saves the current
+      // one as a Draft -- it isn't finalized until Complete is clicked (at
+      // which point finalizeQueueDrafts sweeps up every other Draft left
+      // over from earlier template switches too).
       const savedRecord = await saveMedicalRecord(
         {
           ...form,
-          recordStatus: "Finalized",
+          recordStatus: nextTemplate ? "Draft" : "Finalized",
           queueEntryId: queueContext.queueEntryId,
         },
         profile
@@ -786,7 +858,7 @@ export default function MedicalRecordsModule({
       setForm((current) => ({
         ...current,
         id: savedRecord?.id || current.id,
-        recordStatus: "Finalized",
+        recordStatus: nextTemplate ? "Draft" : "Finalized",
       }));
 
       await load();
@@ -805,13 +877,17 @@ export default function MedicalRecordsModule({
         setQueueContext(nextContext);
         setPendingQueueCompletion(null);
         setSuccess(
-          `${activeTemplate.label} saved. Add the next record for this appointment.`
+          resumeRecord
+            ? `${activeTemplate.label} saved as a draft.`
+            : `${activeTemplate.label} saved as a draft. Add the next record for this appointment.`
         );
-        openAdditionalTemplate(nextTemplate, nextContext);
+        openAdditionalTemplate(nextTemplate, nextContext, resumeRecord);
         return;
       }
 
       try {
+        await finalizeQueueDrafts(queueContext.queueEntryId);
+
         await markConsultationReadyForBilling(
           queueContext.queueEntryId,
           profile
@@ -920,8 +996,18 @@ export default function MedicalRecordsModule({
     }
   }
 
-  function openAdditionalTemplate(template, context = queueContext) {
+  // `resumeRecord`, when given, reopens an already-saved (Draft or
+  // Finalized) record for this template instead of a blank form -- used
+  // when the vet switches back to a template they'd already started.
+  function openAdditionalTemplate(template, context = queueContext, resumeRecord = null) {
     if (!context) return;
+
+    if (resumeRecord) {
+      setForm(recordToFormValues(resumeRecord));
+      setInventorySearch("");
+      setShow(true);
+      return;
+    }
 
     const petId =
       context.selectedPetId ||
@@ -955,9 +1041,11 @@ export default function MedicalRecordsModule({
 
   // Left-rail "Choose Template" click. Before anything has been saved for
   // this visit there's nothing to preserve, so just switch locally with no
-  // network call; once at least one template has been saved, switching
-  // behaves exactly like the old "Add Another Record" control -- save the
-  // current template, then open the next one blank.
+  // network call and no confirmation. Once at least one template has been
+  // saved, leaving the current one always asks for confirmation first --
+  // see confirmTemplateSwitch, which saves the current entry as a Draft
+  // (or resumes the target template's own saved data if it already has
+  // some) before switching.
   function selectTemplate(template) {
     if (template === form.recordTemplate || saving) return;
 
@@ -976,7 +1064,66 @@ export default function MedicalRecordsModule({
       return;
     }
 
-    saveQueuedTemplate(template);
+    const existing = visitSavedRecords.find(
+      (record) => record.record_template === template
+    );
+
+    setPendingTemplateSwitch({
+      template,
+      label: getMedicalRecordTemplate(template).label,
+      existing: existing || null,
+    });
+  }
+
+  function confirmTemplateSwitch() {
+    if (!pendingTemplateSwitch || saving) return;
+
+    const { template, existing } = pendingTemplateSwitch;
+    setPendingTemplateSwitch(null);
+    saveQueuedTemplate(template, existing);
+  }
+
+  // Explicit "Save as Draft" action -- saves the current template's
+  // progress without finalizing the visit and without switching to another
+  // template, so the vet can step away and pick this exact entry back up
+  // later from the Drafts list.
+  async function saveAsDraft() {
+    if (!queueContext || saving) return;
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const savedRecord = await saveMedicalRecord(
+        {
+          ...form,
+          recordStatus: "Draft",
+          queueEntryId: queueContext.queueEntryId,
+        },
+        profile
+      );
+
+      setForm((current) => ({
+        ...current,
+        id: savedRecord?.id || current.id,
+        recordStatus: "Draft",
+      }));
+
+      await load();
+      setSuccess(`${activeTemplate.label} progress saved.`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Drafts panel "Resume" button -- reuses the exact same
+  // confirm-then-switch flow as clicking the template in the rail would.
+  function resumeDraft(draft) {
+    setShowDrafts(false);
+    selectTemplate(draft.record_template);
   }
 
   return (
@@ -1265,7 +1412,41 @@ export default function MedicalRecordsModule({
 
             <div className="mrp-grid">
               <aside className="mrp-rail">
-                <span className="mrp-rail-title">Choose Template</span>
+                <div className="mrp-rail-head">
+                  <span className="mrp-rail-title">Choose Template</span>
+
+                  <button
+                    type="button"
+                    className="mrp-drafts-toggle"
+                    onClick={() => setShowDrafts((current) => !current)}
+                  >
+                    Drafts
+                    {visitDraftRecords.length > 0 && (
+                      <span className="mrp-drafts-count">{visitDraftRecords.length}</span>
+                    )}
+                  </button>
+                </div>
+
+                {showDrafts && (
+                  <div className="mrp-drafts-panel">
+                    {visitDraftRecords.length === 0 ? (
+                      <p className="mrp-drafts-empty">No drafts saved for this visit yet.</p>
+                    ) : (
+                      visitDraftRecords.map((draft) => (
+                        <button
+                          type="button"
+                          key={draft.id}
+                          className="mrp-drafts-item"
+                          disabled={saving}
+                          onClick={() => resumeDraft(draft)}
+                        >
+                          {getMedicalRecordTemplate(draft.record_template).label}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+
                 {MEDICAL_RECORD_TEMPLATES.map((template) => (
                   <button
                     type="button"
@@ -2159,6 +2340,26 @@ export default function MedicalRecordsModule({
                             {!record.symptoms && !record.diagnosis && !record.treatment && !record.veterinarian_notes && (
                               <p>No additional details recorded.</p>
                             )}
+
+                            <button
+                              type="button"
+                              className="mrp-history-pdf-btn"
+                              onClick={async (event) => {
+                                event.stopPropagation();
+                                try {
+                                  await printMedicalRecordDocument(record, selectedPet, {
+                                    veterinarianName: record.veterinarian?.full_name || "",
+                                    veterinarianPhone: record.veterinarian?.phone || "",
+                                    visitDateTime: record.consultation_date ? formatHistoryDate(record.consultation_date) : "",
+                                    petAge: formatPetAge(selectedPet?.date_of_birth),
+                                  });
+                                } catch (pdfError) {
+                                  setError(pdfError.message || "Unable to generate this record's PDF.");
+                                }
+                              }}
+                            >
+                              <Printer size={13} /> Download PDF
+                            </button>
                           </div>
                         )}
                       </div>
@@ -2170,20 +2371,33 @@ export default function MedicalRecordsModule({
 
             <div className="mrp-actions">
               {queueContext ? (
-                <button
-                  type="submit"
-                  className="save"
-                  disabled={saving}
-                  formNoValidate={
-                    Boolean(pendingQueueCompletion)
-                  }
-                >
-                  {saving
-                    ? "Saving..."
-                    : pendingQueueCompletion
-                      ? "Retry Complete"
-                      : "Complete"}
-                </button>
+                <>
+                  {!pendingQueueCompletion && (
+                    <button
+                      type="button"
+                      className="save-draft"
+                      disabled={saving}
+                      onClick={saveAsDraft}
+                    >
+                      Save as Draft
+                    </button>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="save"
+                    disabled={saving}
+                    formNoValidate={
+                      Boolean(pendingQueueCompletion)
+                    }
+                  >
+                    {saving
+                      ? "Saving..."
+                      : pendingQueueCompletion
+                        ? "Retry Complete"
+                        : "Complete"}
+                  </button>
+                </>
               ) : (
                 <button
                   className="save"
@@ -2209,6 +2423,22 @@ export default function MedicalRecordsModule({
         busy={saving}
         onConfirm={confirmComplete}
         onCancel={() => setShowCompleteConfirm(false)}
+      />
+
+      <ConfirmDialog
+        open={!!pendingTemplateSwitch}
+        title="Switch Template?"
+        description={
+          pendingTemplateSwitch
+            ? `Are you sure you want to continue to ${pendingTemplateSwitch.label}? Your progress on this template will be saved automatically.`
+            : ""
+        }
+        confirmLabel="Yes, Continue"
+        cancelLabel="Cancel"
+        tone="primary"
+        busy={saving}
+        onConfirm={confirmTemplateSwitch}
+        onCancel={() => setPendingTemplateSwitch(null)}
       />
 
       <style>{`
@@ -2302,6 +2532,82 @@ export default function MedicalRecordsModule({
           letter-spacing: .05em;
           color: #6f8792;
           padding: 0 2px 4px;
+        }
+
+        .mrp-rail-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .mrp-rail-head .mrp-rail-title {
+          padding: 0;
+        }
+
+        .mrp-drafts-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          border: 1px solid #e7d6a8;
+          background: #fff8e8;
+          color: #9a7000;
+          border-radius: 999px;
+          padding: 5px 10px;
+          font-weight: 700;
+          font-size: 11px;
+          cursor: pointer;
+        }
+
+        .mrp-drafts-count {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 16px;
+          height: 16px;
+          padding: 0 4px;
+          border-radius: 999px;
+          background: #9a7000;
+          color: #fff;
+          font-size: 10px;
+        }
+
+        .mrp-drafts-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          margin-bottom: 4px;
+          padding: 10px;
+          border: 1px dashed #e7d6a8;
+          border-radius: 12px;
+          background: #fffdf6;
+        }
+
+        .mrp-drafts-empty {
+          margin: 0;
+          color: #8a8060;
+          font-size: 12px;
+        }
+
+        .mrp-drafts-item {
+          border: 1px solid #f0e2ba;
+          background: #fff;
+          border-radius: 9px;
+          padding: 9px 11px;
+          text-align: left;
+          font-weight: 700;
+          font-size: 12.5px;
+          color: #9a7000;
+          cursor: pointer;
+        }
+
+        .mrp-drafts-item:hover {
+          background: #fff6e0;
+        }
+
+        .mrp-drafts-item:disabled {
+          opacity: .6;
+          cursor: not-allowed;
         }
 
         .mrp-rail-item {
@@ -2440,12 +2746,33 @@ export default function MedicalRecordsModule({
           color: #294653;
         }
 
+        .mrp-history-pdf-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          margin-top: 4px;
+          border: 1px solid #cfe2ea;
+          background: #fff;
+          border-radius: 9px;
+          padding: 8px 11px;
+          color: #257fa9;
+          font-weight: 700;
+          font-size: 12px;
+          cursor: pointer;
+        }
+
+        .mrp-history-pdf-btn:hover {
+          background: #f2f9fc;
+        }
+
         .mrp-actions {
+          display: flex;
+          gap: 12px;
           margin-top: 22px;
         }
 
         .mrp-actions .save {
-          width: 100%;
+          flex: 1;
           min-height: 50px;
           border: 0;
           border-radius: 11px;
@@ -2456,7 +2783,20 @@ export default function MedicalRecordsModule({
           cursor: pointer;
         }
 
-        .mrp-actions .save:disabled {
+        .mrp-actions .save-draft {
+          flex: 1;
+          min-height: 50px;
+          border: 1px solid #cfe2ea;
+          border-radius: 11px;
+          background: #fff;
+          color: #21697f;
+          font-weight: 800;
+          font-size: 14px;
+          cursor: pointer;
+        }
+
+        .mrp-actions .save:disabled,
+        .mrp-actions .save-draft:disabled {
           opacity: .65;
           cursor: not-allowed;
         }
@@ -3058,6 +3398,10 @@ export default function MedicalRecordsModule({
 
         @media(max-width:650px) {
           .mrp-header {
+            flex-direction: column;
+          }
+
+          .mrp-actions {
             flex-direction: column;
           }
 

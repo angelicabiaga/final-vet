@@ -250,8 +250,8 @@ begin
 
   if target_id is null then
     insert into public.medical_records (
-      pet_id, owner_id, veterinarian_id, appointment_id,
-      consultation_date, chief_complaint, symptoms, vital_signs,
+      pet_id, owner_id, veterinarian_id, appointment_id, queue_entry_id,
+      consultation_date, consultation_fee, chief_complaint, symptoms, vital_signs,
       weight, temperature, diagnosis, treatment, treatment_plan,
       medication, dosage, frequency, duration,
       laboratory_request, laboratory_result, vaccination,
@@ -264,7 +264,9 @@ begin
       nullif(payload->>'owner_id', '')::uuid,
       nullif(payload->>'veterinarian_id', '')::uuid,
       nullif(payload->>'appointment_id', '')::uuid,
+      nullif(payload->>'queue_entry_id', '')::uuid,
       coalesce(nullif(payload->>'consultation_date', '')::date, current_date),
+      coalesce(nullif(payload->>'consultation_fee', '')::numeric, 500),
       nullif(payload->>'chief_complaint', ''),
       nullif(payload->>'symptoms', ''),
       nullif(payload->>'vital_signs', ''),
@@ -298,7 +300,9 @@ begin
         owner_id = nullif(payload->>'owner_id', '')::uuid,
         veterinarian_id = nullif(payload->>'veterinarian_id', '')::uuid,
         appointment_id = nullif(payload->>'appointment_id', '')::uuid,
+        queue_entry_id = nullif(payload->>'queue_entry_id', '')::uuid,
         consultation_date = coalesce(nullif(payload->>'consultation_date', '')::date, consultation_date),
+        consultation_fee = coalesce(nullif(payload->>'consultation_fee', '')::numeric, consultation_fee),
         chief_complaint = nullif(payload->>'chief_complaint', ''),
         symptoms = nullif(payload->>'symptoms', ''),
         vital_signs = nullif(payload->>'vital_signs', ''),

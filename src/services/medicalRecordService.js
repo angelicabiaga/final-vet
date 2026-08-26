@@ -487,12 +487,16 @@ export async function getMedicalRecords(
   } else if (
     role === "veterinarian"
   ) {
-    filteredData =
-      filteredData.filter(
-        (record) =>
-          record.veterinarian_id ===
-          profile.id
-      );
+    filteredData = allVeterinarians
+      ? filteredData.filter(
+          (record) =>
+            record.record_status === "Finalized"
+        )
+      : filteredData.filter(
+          (record) =>
+            record.veterinarian_id ===
+            profile.id
+        );
   }
 
   if (petId) {
@@ -558,6 +562,28 @@ export async function getMedicalRecords(
       );
     }
   );
+}
+
+/**
+ * Flips every remaining Draft record for one visit (queue_entry_id) over to
+ * Finalized -- called when the visit is completed, so a template the vet
+ * started but switched away from mid-entry doesn't sit unfinalized forever
+ * just because they never revisited it.
+ */
+export async function finalizeQueueDrafts(queueEntryId) {
+  if (!queueEntryId) return;
+
+  const { error } = await supabase
+    .from("medical_records")
+    .update({ record_status: "Finalized" })
+    .eq("queue_entry_id", queueEntryId)
+    .eq("record_status", "Draft");
+
+  if (error) {
+    throw new Error(
+      `Unable to finalize the other draft records for this visit: ${error.message}`
+    );
+  }
 }
 
 export async function getActiveVeterinarians() {
@@ -644,9 +670,10 @@ export async function saveMedicalRecord(
 
   // A "Complete" click that fires twice for the same consultation -- a
   // refreshed tab, a re-opened queue link, a slow request retried by hand --
-  // must update the already-finalized record for this queue visit +
-  // template instead of inserting a duplicate one. queue_entry_id +
-  // record_template together identify one completed consultation.
+  // must update the already-saved record for this queue visit + template
+  // instead of inserting a duplicate one. queue_entry_id + record_template
+  // together identify one consultation record, whether it's still a Draft
+  // (the vet switched away mid-entry) or already Finalized.
   let targetId = values.id || null;
 
   if (!targetId && values.queueEntryId) {
@@ -655,7 +682,6 @@ export async function saveMedicalRecord(
       .select("id")
       .eq("queue_entry_id", values.queueEntryId)
       .eq("record_template", normalizedTemplate)
-      .eq("record_status", "Finalized")
       .order("created_at", { ascending: true })
       .limit(1);
 

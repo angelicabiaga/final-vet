@@ -83,6 +83,14 @@ export async function startBillingProcessing(queueEntryId, profile) {
  * queue_entry_id, so their inventory items are merged (de-duplicated) and
  * their diagnosis/treatment/notes are concatenated; the consultation fee is
  * taken from the first (earliest) record so it is only charged once.
+ *
+ * A visit can be billed here more than once in its lifetime -- a vet may
+ * complete a second template (e.g. via the Drafts flow) after the first was
+ * already paid, reopening billing (see markConsultationReadyForBilling).
+ * When that happens this must never re-surface the checkup fee or an item
+ * already sold on an earlier, still-active transaction for this same
+ * queue_entry_id -- only genuinely new items get billed, and the fee comes
+ * back as 0 with `alreadyBilled: true` for the caller to show accordingly.
  */
 export async function getConsultationForBilling(queueEntryId) {
   if (!queueEntryId) return null;
@@ -102,6 +110,31 @@ export async function getConsultationForBilling(queueEntryId) {
   if (recordsError) throw new Error(`Unable to load the consultation record: ${recordsError.message}`);
   if (!records?.length) throw new Error("No finalized medical record was found for this consultation.");
 
+  const { data: priorTransactions, error: priorError } = await supabase
+    .from("transactions")
+    .select("id,payment_status")
+    .eq("queue_entry_id", queueEntryId);
+  if (priorError) throw new Error(`Unable to check this visit's billing history: ${priorError.message}`);
+
+  // Voided/Cancelled transactions never happened financially, so they don't
+  // count as "already billed" -- everything else (Paid, Partially Paid,
+  // Pending, Unpaid, Refunded) does, since the fee/items were genuinely
+  // charged at some point.
+  const activePriorTransactionIds = (priorTransactions || [])
+    .filter((transaction) => !["Voided", "Cancelled"].includes(transaction.payment_status))
+    .map((transaction) => transaction.id);
+  const alreadyBilled = activePriorTransactionIds.length > 0;
+
+  let alreadyBilledItemIds = new Set();
+  if (activePriorTransactionIds.length) {
+    const { data: priorItems, error: priorItemsError } = await supabase
+      .from("transaction_items")
+      .select("inventory_item_id")
+      .in("transaction_id", activePriorTransactionIds);
+    if (priorItemsError) throw new Error(`Unable to check this visit's billed items: ${priorItemsError.message}`);
+    alreadyBilledItemIds = new Set((priorItems || []).map((row) => row.inventory_item_id).filter(Boolean));
+  }
+
   const [petResult, profilesResult] = await Promise.all([
     supabase.from("pets").select("id,pet_name,species").eq("id", entry.pet_id).maybeSingle(),
     supabase.from("profiles").select("id,full_name").in("id", uniq([entry.owner_id, entry.veterinarian_id])),
@@ -112,7 +145,7 @@ export async function getConsultationForBilling(queueEntryId) {
   const seen = new Set();
   records.forEach((record) => {
     (record.template_data?.inventoryItems || []).forEach((item) => {
-      if (item.isNA || seen.has(item.id)) return;
+      if (item.isNA || seen.has(item.id) || alreadyBilledItemIds.has(item.id)) return;
       seen.add(item.id);
       inventoryItems.push(item);
     });
@@ -131,7 +164,8 @@ export async function getConsultationForBilling(queueEntryId) {
     pet: petResult.data || null,
     owner: profilesById.get(entry.owner_id) || null,
     veterinarian: profilesById.get(entry.veterinarian_id) || null,
-    consultationFee: Number(records[0].consultation_fee ?? 500),
+    consultationFee: alreadyBilled ? 0 : Number(records[0].consultation_fee ?? 500),
+    alreadyBilled,
     diagnosis: joinField("diagnosis"),
     treatment: joinField("treatment"),
     veterinarianNotes: joinField("veterinarian_notes"),

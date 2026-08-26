@@ -338,6 +338,14 @@ export async function completeQueueEntry(id,profile){
  * Compare-and-set + an idempotent "already done" return mirrors
  * completeQueueEntry so a flaky retry can never send the same consultation
  * to billing twice.
+ *
+ * A visit already billed ('Billed') is also allowed to reopen -- a vet can
+ * complete a second template for the same visit (e.g. via the Drafts flow)
+ * after the first was already paid, and that second template's own new
+ * items still need to reach staff. getConsultationForBilling handles never
+ * re-charging the checkup fee or re-selling an already-paid item when this
+ * happens; this function only decides whether the ticket is eligible to
+ * reopen at all.
  */
 export async function markConsultationReadyForBilling(id,profile){
   if(!id)throw new Error("A queue entry is required to send this consultation to billing.");
@@ -346,14 +354,14 @@ export async function markConsultationReadyForBilling(id,profile){
     .from("queue_entries")
     .update({billing_status:"Pending Billing",consultation_finalized_at:new Date().toISOString(),consultation_finalized_by:profile.id})
     .eq("id",id)
-    .eq("billing_status","Not Applicable")
+    .in("billing_status",["Not Applicable","Billed"])
     .select("id,billing_status");
   if(error)throw new Error(`Unable to send this consultation to billing: ${error.message}`);
   if(data?.[0])return {id:data[0].id,billing_status:data[0].billing_status,alreadyDone:false};
 
   const {data:current,error:loadError}=await supabase.from("queue_entries").select("id,billing_status").eq("id",id).single();
   if(loadError)throw new Error(`Unable to verify billing status: ${loadError.message}`);
-  if(current.billing_status&&current.billing_status!=="Not Applicable"){
+  if(current.billing_status==="Pending Billing"||current.billing_status==="Processing"){
     return {id:current.id,billing_status:current.billing_status,alreadyDone:true};
   }
   throw new Error("The queue ticket changed before it could be sent to billing. Please try again.");
