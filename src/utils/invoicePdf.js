@@ -132,8 +132,13 @@ export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
   pdf.setTextColor(37, 80, 101);
   pdf.text("PawCruz Veterinary Clinic", centerX, y, { align: "center" });
 
-  y += 7;
+  y += 6;
   pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(9);
+  pdf.setTextColor(120, 135, 143);
+  pdf.text("2189 Stall G, Felimarc Pet Center, A. Luna St, Pasay City", centerX, y, { align: "center" });
+
+  y += 6;
   pdf.setFontSize(11);
   pdf.setTextColor(97, 118, 129);
   pdf.text("Veterinarian Prescription / Purchase Notice", centerX, y, { align: "center" });
@@ -155,19 +160,36 @@ export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
   pdf.line(20, y, 190, y);
   y += 8;
 
+  pdf.setFont("helvetica", "normal");
   pdf.setFontSize(11);
+  // Fixed label column measured from the two longest labels this function
+  // ever prints, so no label can run into the value column -- and the
+  // value wraps (growing the row's own height) instead of overlapping the
+  // label or running past the page margin.
+  const labelColWidth = Math.max(
+    pdf.getTextWidth("Veterinarian Contact Number"),
+    pdf.getTextWidth("Veterinary License Number")
+  ) + 6;
+  const valueColX = 20 + labelColWidth;
+  const valueColWidth = 190 - valueColX;
+  const rowLineHeight = 5.4;
   const infoRow = (label, value) => {
+    // Label inherits whatever font is already set -- unchanged from before,
+    // this is how "Remaining quantity" below renders its label in bold.
     pdf.setTextColor(97, 118, 129);
     pdf.text(label, 20, y);
     pdf.setTextColor(30, 49, 58);
     pdf.setFont("helvetica", "bold");
-    pdf.text(String(value ?? "—"), 190, y, { align: "right" });
+    const lines = pdf.splitTextToSize(String(value ?? "—"), valueColWidth);
+    pdf.text(lines, valueColX, y);
     pdf.setFont("helvetica", "normal");
-    y += 7;
+    y += Math.max(1, lines.length) * rowLineHeight + 1.6;
   };
   infoRow("Pet owner", meta.ownerName || "—");
   infoRow("Pet", meta.petName || "—");
-  infoRow("Veterinarian", meta.veterinarianName || "—");
+  infoRow("Prescribing Veterinarian", meta.veterinarianName || "—");
+  infoRow("Veterinarian Contact Number", meta.veterinarianPhone || "N/A");
+  infoRow("Veterinary License Number", meta.veterinarianLicense || "N/A");
 
   y += 3;
   pdf.line(20, y, 190, y);
@@ -219,8 +241,13 @@ function buildPrescriptionPadPdf(prescriptions, meta = {}) {
   pdf.setTextColor(37, 80, 101);
   pdf.text("PawCruz Veterinary Clinic", centerX, y, { align: "center" });
 
-  y += 6.5;
+  y += 5;
   pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  pdf.setTextColor(120, 135, 143);
+  pdf.text("2189 Stall G, Felimarc Pet Center, A. Luna St, Pasay City", centerX, y, { align: "center" });
+
+  y += 5.5;
   pdf.setFontSize(10.5);
   pdf.setTextColor(97, 118, 129);
   pdf.text("Veterinarian Prescription", centerX, y, { align: "center" });
@@ -232,21 +259,39 @@ function buildPrescriptionPadPdf(prescriptions, meta = {}) {
   y += 11;
 
   pdf.setFontSize(10.5);
+  // "Veterinarian Contact Number" / "Veterinary License Number" are wider
+  // than the 40mm default label column below fits -- measured once here so
+  // those three rows get a column wide enough that the label never runs
+  // into the value. Other rows keep the original, already-fine default.
+  const vetLabelWidth = Math.max(
+    pdf.getTextWidth("Veterinarian Contact Number"),
+    pdf.getTextWidth("Veterinary License Number"),
+    pdf.getTextWidth("Prescribing Veterinarian")
+  ) + 4;
   const fieldRow = (label, value, labelWidth = 40) => {
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(97, 118, 129);
     pdf.text(label, left, y);
     const valueX = left + labelWidth;
+    const valueWidth = right - valueX;
     pdf.setFont("helvetica", "bold");
     pdf.setTextColor(30, 49, 58);
-    pdf.text(String(value || "—"), valueX, y);
+    // Wraps instead of overflowing the page edge; the row's own height
+    // (and the divider under it) grows to match, so nothing is ever cut
+    // through or overlapped by whatever comes next.
+    const lines = pdf.splitTextToSize(String(value || "—"), valueWidth);
+    pdf.text(lines, valueX, y);
+    const extraLines = Math.max(0, lines.length - 1);
+    const underlineY = y + 1.8 + extraLines * 5;
     pdf.setDrawColor(214, 228, 235);
     pdf.setLineWidth(0.3);
-    pdf.line(valueX, y + 1.8, right, y + 1.8);
-    y += 10;
+    pdf.line(valueX, underlineY, right, underlineY);
+    y += 10 + extraLines * 5;
   };
 
-  fieldRow("Prescriber", meta.veterinarianName || "—");
+  fieldRow("Prescribing Veterinarian", meta.veterinarianName || "—", vetLabelWidth);
+  fieldRow("Veterinarian Contact Number", meta.veterinarianPhone || "N/A", vetLabelWidth);
+  fieldRow("Veterinary License Number", meta.veterinarianLicense || "N/A", vetLabelWidth);
   fieldRow("Client / Pet Owner", meta.ownerName || "—");
   if (meta.ownerAddress) fieldRow("Address", meta.ownerAddress);
   fieldRow("Patient / Pet", [meta.petName, meta.petSpecies && meta.petBreed ? `(${meta.petSpecies} - ${meta.petBreed})` : meta.petSpecies].filter(Boolean).join(" "));

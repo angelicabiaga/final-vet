@@ -6,6 +6,7 @@ import {
   getPrescriptionsForVeterinarian,
   subscribeToPrescriptions,
 } from "../../services/billingService";
+import { getActiveVeterinarians } from "../../services/medicalRecordService";
 import { downloadPrescriptionNoticePdf } from "../../utils/invoicePdf";
 
 function statusClass(status) {
@@ -62,6 +63,17 @@ export default function VeterinarianPrescriptions({ profile }) {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [selfProfile, setSelfProfile] = useState(null);
+
+  // This page's own veterinarian's contact number and verified license --
+  // resolved by profile id, never persisted onto any prescription, and
+  // never anyone else's. Read live for the print/download action below.
+  useEffect(() => {
+    if (!profile?.id) return;
+    getActiveVeterinarians()
+      .then((list) => setSelfProfile(list.find((vet) => vet.id === profile.id) || null))
+      .catch(() => {});
+  }, [profile?.id]);
 
   const load = useCallback(async () => {
     if (!profile?.id) return;
@@ -148,6 +160,8 @@ export default function VeterinarianPrescriptions({ profile }) {
                         petName: row.pet?.pet_name,
                         ownerName: row.owner?.full_name,
                         veterinarianName: profile?.full_name ? `Dr. ${profile.full_name}` : "",
+                        veterinarianPhone: selfProfile?.phone || profile?.phone || "",
+                        veterinarianLicense: selfProfile?.license_number || "",
                       })}
                     >
                       <Download size={14} /> Download
