@@ -15,5 +15,5 @@ export default function MedicalRecordsManagement({ profile }) {
     return <Navigate to="/veterinarian/patients" replace />;
   }
 
-  return <AppShell profile={profile} title="Create Health Record"><MedicalRecordsModule profile={profile}/></AppShell>;
+  return <AppShell profile={profile} title="Create Medical Record"><MedicalRecordsModule profile={profile}/></AppShell>;
 }

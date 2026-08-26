@@ -1,11 +1,10 @@
 import React,{useCallback,useEffect,useMemo,useState}from"react";
 import {useNavigate}from"react-router-dom";
-import {PawPrint}from"lucide-react";
+import {FileText,PawPrint}from"lucide-react";
 import AppShell from"./AppShell";
 import {getQueue,getTodayCheckinAppointments,checkInAppointment,updateQueueStatus,requeueToNextAvailable,subscribeToQueue,QUEUE_STATUSES}from"../services/queueService";
 import {getVeterinarians,formatTime,todayLocal}from"../services/appointmentService";
 import {formatClockTime}from"../utils/timeFormat";
-import {MEDICAL_RECORD_TEMPLATES}from"../constants/medicalRecordTemplates";
 
 // One representative photo per row -- multi-pet visits already collapse
 // their names into a single comma-joined summary, so this mirrors that
@@ -34,11 +33,10 @@ export default function QueueManagementModule({profile,mode="staff"}){
  const canManage=["admin","staff"].includes(profile?.role);
  const isVet=profile?.role==="veterinarian";
  const navigate=useNavigate();
- function openRecordTemplate(r,template){
-  if(!template)return;
+ function openRecordTemplate(r){
   const petIds=(r.pets?.length?r.pets:[{id:r.pet_id,appointmentId:r.appointment_id}]).map(p=>p.id).join(",");
   const appointmentIds=(r.pets?.length?r.pets:[{id:r.pet_id,appointmentId:r.appointment_id}]).map(p=>p.appointmentId||"").join(",");
-  const params=new URLSearchParams({queueEntryId:r.id,ownerId:r.owner_id||"",veterinarianId:r.veterinarian_id||"",petIds,appointmentIds,template});
+  const params=new URLSearchParams({queueEntryId:r.id,ownerId:r.owner_id||"",veterinarianId:r.veterinarian_id||"",petIds,appointmentIds});
   navigate(`/veterinarian/medical-records?${params.toString()}`);
  }
  const load=useCallback(async()=>{try{setLoading(true);setError("");const vid=profile?.role==="veterinarian"?profile.id:vet;const [q,v,a]=await Promise.all([getQueue({veterinarianId:vid,status}),getVeterinarians(),profile?.role==="veterinarian"?Promise.resolve([]):getTodayCheckinAppointments()]);setRows(q);setVets(v);setAppointments(a);}catch(e){setError(e.message)}finally{setLoading(false)}},[profile,vet,status]);
@@ -99,12 +97,9 @@ export default function QueueManagementModule({profile,mode="staff"}){
    {isVet&&<div className="actions">
     {r.billing_status&&r.billing_status!=="Not Applicable"?
      <button className="serve-btn completed-btn" disabled>Completed</button>:
-     <select className="template-select" aria-label="Choose medical record template" defaultValue="" disabled={r.status!=="Serving"} onChange={e=>openRecordTemplate(r,e.target.value)}>
-      <option value="">Choose template</option>
-      {MEDICAL_RECORD_TEMPLATES.map(template=><option key={template.value} value={template.value}>{template.label}</option>)}
-     </select>}
+     <button className="create-record-btn" disabled={r.status!=="Serving"} onClick={()=>openRecordTemplate(r)}><FileText size={15}/>Create Medical Record</button>}
    </div>}
   </td></tr>)}</tbody></table></div>}</div>
-  <style>{`.ok,.err{padding:12px 15px;border-radius:12px;margin-bottom:14px}.ok{background:#e9f8ef;color:#26754a}.err{background:#fff0f0;color:#b34b4b}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}.stat{background:#fff;border-radius:16px;padding:18px;box-shadow:0 7px 20px #d9edf5}.stat strong{display:block;font-size:27px;color:#318fbe;text-transform:capitalize}.stat span{text-transform:capitalize;color:#6f7f88}.filters{display:flex;gap:10px;margin-bottom:16px}.filters select,.filters button,.actions button,.actions select{padding:10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.filters button,.appt button{background:#4DA8DA;color:#fff;border:0}.appt button:disabled,.template-select:disabled{opacity:.65;cursor:not-allowed}.apptHead{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px}.apptHead h3{margin:0}.apptDatePick{display:flex;align-items:center;gap:8px;font-size:13px;color:#6f7f88;font-weight:700}.apptDatePick input{padding:8px 10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.apptEmpty{color:#72838c;margin:0}.apptgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.appt{border:1px solid #e2f0f5;border-radius:12px;padding:12px;display:grid;gap:8px}.apptTop{display:flex;align-items:center;gap:10px;min-width:0}.apptInfo{display:grid;gap:2px;min-width:0}.petThumb{flex-shrink:0;width:32px;height:32px;border-radius:9px;object-fit:cover;background:#eaf8fd;color:#4da8da}.petThumbFallback{display:grid;place-items:center}.table{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #e6f1f5;text-align:left;white-space:nowrap}td small{display:block;color:#72838c}.queuePetCell{display:flex;align-items:center;gap:10px}.late{color:#d88416!important}.petcount{color:#318fbe!important;font-weight:700}.pill{padding:5px 9px;border-radius:999px;background:#eaf7fb;font-size:12px}.serving{background:#e7f7ed;color:#26754a}.waiting{background:#fff5d9;color:#9a7015}.actions{display:flex;gap:6px}.serve-btn{background:#4DA8DA!important;color:#fff!important;border:0!important;font-weight:700;cursor:pointer}.serve-btn:disabled{opacity:.55;cursor:not-allowed}.template-select{max-width:215px;color:#247ba5;font-weight:700;cursor:pointer}.link{color:#318fbe;cursor:pointer}.link:disabled{opacity:.5;cursor:not-allowed;color:#8fa3ab}@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.filters{display:grid}}`}</style>
+  <style>{`.ok,.err{padding:12px 15px;border-radius:12px;margin-bottom:14px}.ok{background:#e9f8ef;color:#26754a}.err{background:#fff0f0;color:#b34b4b}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}.stat{background:#fff;border-radius:16px;padding:18px;box-shadow:0 7px 20px #d9edf5}.stat strong{display:block;font-size:27px;color:#318fbe;text-transform:capitalize}.stat span{text-transform:capitalize;color:#6f7f88}.filters{display:flex;gap:10px;margin-bottom:16px}.filters select,.filters button,.actions button,.actions select{padding:10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.filters button,.appt button{background:#4DA8DA;color:#fff;border:0}.appt button:disabled,.create-record-btn:disabled{opacity:.65;cursor:not-allowed}.apptHead{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px}.apptHead h3{margin:0}.apptDatePick{display:flex;align-items:center;gap:8px;font-size:13px;color:#6f7f88;font-weight:700}.apptDatePick input{padding:8px 10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.apptEmpty{color:#72838c;margin:0}.apptgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.appt{border:1px solid #e2f0f5;border-radius:12px;padding:12px;display:grid;gap:8px}.apptTop{display:flex;align-items:center;gap:10px;min-width:0}.apptInfo{display:grid;gap:2px;min-width:0}.petThumb{flex-shrink:0;width:32px;height:32px;border-radius:9px;object-fit:cover;background:#eaf8fd;color:#4da8da}.petThumbFallback{display:grid;place-items:center}.table{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #e6f1f5;text-align:left;white-space:nowrap}td small{display:block;color:#72838c}.queuePetCell{display:flex;align-items:center;gap:10px}.late{color:#d88416!important}.petcount{color:#318fbe!important;font-weight:700}.pill{padding:5px 9px;border-radius:999px;background:#eaf7fb;font-size:12px}.serving{background:#e7f7ed;color:#26754a}.waiting{background:#fff5d9;color:#9a7015}.actions{display:flex;gap:6px}.serve-btn{background:#4DA8DA!important;color:#fff!important;border:0!important;font-weight:700;cursor:pointer}.serve-btn:disabled{opacity:.55;cursor:not-allowed}.create-record-btn{display:inline-flex;align-items:center;gap:6px;background:#4DA8DA;color:#fff;border:0;font-weight:700;cursor:pointer;white-space:nowrap}.link{color:#318fbe;cursor:pointer}.link:disabled{opacity:.5;cursor:not-allowed;color:#8fa3ab}@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.filters{display:grid}}`}</style>
  </AppShell>
 }

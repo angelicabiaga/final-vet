@@ -13,6 +13,7 @@ import {
 } from "../constants/medicalRecordTemplates";
 
 import {
+  Check,
   FileDown,
   Plus,
   Search,
@@ -116,6 +117,19 @@ function recordToFormValues(record) {
     attachmentUrl: record.attachment_url || "",
     recordStatus: record.record_status || "Finalized",
   };
+}
+
+// Built from the y/m/d components (not parsed from the string) so this never
+// shifts a day off from timezone-parsing a plain "YYYY-MM-DD" value.
+function formatHistoryDate(dateStr) {
+  if (!dateStr) return "—";
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y) return dateStr;
+  return new Date(y, m - 1, d).toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 const VACCINE_KEYS = [
@@ -240,6 +254,16 @@ export default function MedicalRecordsModule({
     setShowCompleteConfirm,
   ] = useState(false);
 
+  const [
+    historyRecords,
+    setHistoryRecords,
+  ] = useState([]);
+
+  const [
+    expandedHistoryId,
+    setExpandedHistoryId,
+  ] = useState(null);
+
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -250,6 +274,24 @@ export default function MedicalRecordsModule({
   const selectedPet = useMemo(
     () => pets.find((pet) => pet.id === form.petId),
     [pets, form.petId]
+  );
+
+  // Every record already saved for this visit, regardless of template --
+  // lets the left-side template rail mark which ones are done, and lets
+  // selectTemplate know whether switching needs to save first.
+  const visitSavedRecords = useMemo(
+    () =>
+      queueContext
+        ? records.filter(
+            (record) => record.queue_entry_id === queueContext.queueEntryId
+          )
+        : [],
+    [records, queueContext]
+  );
+
+  const visitSavedTemplateValues = useMemo(
+    () => visitSavedRecords.map((record) => record.record_template),
+    [visitSavedRecords]
   );
 
   // Sorted by owner first so pets belonging to the same owner sit
@@ -496,6 +538,22 @@ export default function MedicalRecordsModule({
     getAppointmentsForPet(queueLaunch.petIds[0])
       .then(setAppointments)
       .catch(() => setAppointments([]));
+
+    // History panel: every vet's finalized past visits for this pet, minus
+    // whatever's already been saved for the visit in progress right now.
+    getMedicalRecords(profile, {
+      petId: queueLaunch.petIds[0],
+      allVeterinarians: true,
+    })
+      .then((pastRecords) => {
+        if (!active) return;
+        setHistoryRecords(
+          pastRecords.filter(
+            (record) => record.queue_entry_id !== queueLaunch.queueEntryId
+          )
+        );
+      })
+      .catch(() => setHistoryRecords([]));
 
     setInventorySearch("");
     setShow(true);
@@ -895,20 +953,46 @@ export default function MedicalRecordsModule({
     setShow(true);
   }
 
+  // Left-rail "Choose Template" click. Before anything has been saved for
+  // this visit there's nothing to preserve, so just switch locally with no
+  // network call; once at least one template has been saved, switching
+  // behaves exactly like the old "Add Another Record" control -- save the
+  // current template, then open the next one blank.
+  function selectTemplate(template) {
+    if (template === form.recordTemplate || saving) return;
+
+    if (visitSavedRecords.length === 0 && !form.id) {
+      setForm((current) => ({
+        ...blank,
+        petId: current.petId,
+        ownerId: current.ownerId,
+        veterinarianId: current.veterinarianId,
+        appointmentId: current.appointmentId,
+        consultationDate: current.consultationDate,
+        recordTemplate: template,
+        templateData: {},
+      }));
+      setInventorySearch("");
+      return;
+    }
+
+    saveQueuedTemplate(template);
+  }
+
   return (
     <div className="mr">
 
       {show && (
-        <div className="mr-modal">
-          <form
-            className="mr-panel"
-            onSubmit={
-              submit
-            }
-          >
+        <div className="mrp">
+          <div className="mrp-header">
+            <div>
+              <p className="mrp-eyebrow">Medical Record</p>
+              <h1>{form.id ? "Update" : "Create"} {activeTemplate.label}</h1>
+            </div>
+
             <button
               type="button"
-              className="close"
+              className="mrp-back"
               onClick={() => {
                 setPendingQueueCompletion(null);
                 setQueueContext(null);
@@ -925,49 +1009,45 @@ export default function MedicalRecordsModule({
                 navigate(queuePath);
               }}
             >
-              <X />
+              <X size={16} /> Back to Queue
             </button>
+          </div>
 
-            {error && (
-              <div className="alert err">
-                {error}
-              </div>
-            )}
-
-            {success && (
-              <div className="alert ok">
-                {success}
-              </div>
-            )}
-
-            {queueContext && (
-              <div className="queue-context-banner">
-                {pendingQueueCompletion
-                  ? `${pendingQueueCompletion.templateLabel} is already saved. Retry Complete to send this consultation to billing without creating another record.`
-                  : <>
-                      Adding {activeTemplate.label} for pet{" "}
-                      {queueContext.currentIndex + 1}{" "}
-                      of {queueContext.petIds.length}{" "}
-                      in this visit. Add more
-                      templates as needed, then
-                      choose Complete to
-                      finish this consultation.
-                    </>}
-              </div>
-            )}
-
-            <h2>
-              {form.id ? "Update" : "Create"}{" "}
-              {activeTemplate.label}
-            </h2>
-
-            <div className="template-intro">
-              <b>{activeTemplate.label}</b>
-              <span>{activeTemplate.description}</span>
+          {error && (
+            <div className="alert err">
+              {error}
             </div>
+          )}
 
-            <div className="fields">
-              <div className="wide context-fields">
+          {success && (
+            <div className="alert ok">
+              {success}
+            </div>
+          )}
+
+          {queueContext && (
+            <div className="queue-context-banner">
+              {pendingQueueCompletion
+                ? `${pendingQueueCompletion.templateLabel} is already saved. Retry Complete to send this consultation to billing without creating another record.`
+                : <>
+                    Adding {activeTemplate.label} for pet{" "}
+                    {queueContext.currentIndex + 1}{" "}
+                    of {queueContext.petIds.length}{" "}
+                    in this visit. Choose a
+                    different template on the left
+                    whenever you need to, then
+                    choose Complete to
+                    finish this consultation.
+                  </>}
+            </div>
+          )}
+
+          <form
+            onSubmit={
+              submit
+            }
+          >
+            <div className="context-fields mrp-summary">
               <label>
                 Pet Owner<span className="required-mark"> *</span>
 
@@ -1181,7 +1261,32 @@ export default function MedicalRecordsModule({
                   />
                 </label>
               )}
-              </div>
+            </div>
+
+            <div className="mrp-grid">
+              <aside className="mrp-rail">
+                <span className="mrp-rail-title">Choose Template</span>
+                {MEDICAL_RECORD_TEMPLATES.map((template) => (
+                  <button
+                    type="button"
+                    key={template.value}
+                    className={`mrp-rail-item${form.recordTemplate === template.value ? " active" : ""}${visitSavedTemplateValues.includes(template.value) ? " saved" : ""}`}
+                    disabled={saving}
+                    onClick={() => selectTemplate(template.value)}
+                  >
+                    <span>{template.label}</span>
+                    {visitSavedTemplateValues.includes(template.value) && <Check size={14} />}
+                  </button>
+                ))}
+              </aside>
+
+              <section className="mr-panel">
+                <div className="template-intro">
+                  <b>{activeTemplate.label}</b>
+                  <span>{activeTemplate.description}</span>
+                </div>
+
+                <div className="fields">
 
               {form.recordTemplate === "health-record" && (
                 <>
@@ -2017,52 +2122,57 @@ export default function MedicalRecordsModule({
                   </div>
                 )}
               </label>
+                </div>
+              </section>
+
+              <aside className="mrp-history">
+                <span className="mrp-history-title">History</span>
+
+                {historyRecords.length === 0 ? (
+                  <p className="mrp-history-empty">
+                    No past visits recorded for this pet yet.
+                  </p>
+                ) : (
+                  historyRecords.map((record) => {
+                    const expanded = expandedHistoryId === record.id;
+                    const template = getMedicalRecordTemplate(record.record_template);
+
+                    return (
+                      <div className={`mrp-history-card${expanded ? " expanded" : ""}`} key={record.id}>
+                        <button
+                          type="button"
+                          className="mrp-history-summary"
+                          onClick={() => setExpandedHistoryId(expanded ? null : record.id)}
+                        >
+                          <span className="mrp-history-date">{formatHistoryDate(record.consultation_date)}</span>
+                          <span className="mrp-history-label">{template.label}</span>
+                          <span className="mrp-history-title-text">{record.diagnosis || record.chief_complaint || "General consultation"}</span>
+                          <span className="mrp-history-vet">{record.veterinarian?.full_name ? `Dr. ${record.veterinarian.full_name}` : "Veterinarian not recorded"}</span>
+                        </button>
+
+                        {expanded && (
+                          <div className="mrp-history-details">
+                            {record.symptoms && <p><b>Symptoms:</b> {record.symptoms}</p>}
+                            {record.diagnosis && <p><b>Diagnosis:</b> {record.diagnosis}</p>}
+                            {record.treatment && <p><b>Treatment:</b> {record.treatment}</p>}
+                            {record.veterinarian_notes && <p><b>Notes:</b> {record.veterinarian_notes}</p>}
+                            {!record.symptoms && !record.diagnosis && !record.treatment && !record.veterinarian_notes && (
+                              <p>No additional details recorded.</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </aside>
             </div>
 
-            {queueContext ? (
-              <div className="template-actions">
-                <select
-                  className="add-template-action"
-                  aria-label="Add another record"
-                  defaultValue=""
-                  disabled={
-                    saving ||
-                    Boolean(pendingQueueCompletion)
-                  }
-                  onChange={(event) => {
-                    const template = event.target.value;
-                    if (!template) return;
-
-                    if (!event.currentTarget.form?.reportValidity()) {
-                      event.currentTarget.value = "";
-                      return;
-                    }
-
-                    event.target.value = "";
-                    saveQueuedTemplate(template);
-                  }}
-                >
-                  <option value="" disabled>
-                    {pendingQueueCompletion
-                      ? "Record saved — retry completion"
-                      : saving
-                        ? "Saving..."
-                        : "Add Another Record"}
-                  </option>
-
-                  {MEDICAL_RECORD_TEMPLATES.map((template) => (
-                    <option
-                      key={template.value}
-                      value={template.value}
-                    >
-                      {template.label}
-                    </option>
-                  ))}
-                </select>
-
+            <div className="mrp-actions">
+              {queueContext ? (
                 <button
                   type="submit"
-                  className="save mark-done-action"
+                  className="save"
                   disabled={saving}
                   formNoValidate={
                     Boolean(pendingQueueCompletion)
@@ -2074,17 +2184,17 @@ export default function MedicalRecordsModule({
                       ? "Retry Complete"
                       : "Complete"}
                 </button>
-              </div>
-            ) : (
-              <button
-                className="save"
-                disabled={saving}
-              >
-                {saving
-                  ? "Saving..."
-                  : "Save Medical Record"}
-              </button>
-            )}
+              ) : (
+                <button
+                  className="save"
+                  disabled={saving}
+                >
+                  {saving
+                    ? "Saving..."
+                    : "Save Medical Record"}
+                </button>
+              )}
+            </div>
           </form>
         </div>
       )}
@@ -2123,56 +2233,232 @@ export default function MedicalRecordsModule({
           color: #27734b;
         }
 
-        .mr-modal {
-          position: fixed;
-          inset: 0 0 0 280px;
-          background: rgba(24,47,59,.62);
-          backdrop-filter: blur(2px);
-          z-index: 1000;
+        .mrp {
+          width: 100%;
+        }
+
+        .mrp-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 18px;
+        }
+
+        .mrp-eyebrow {
+          margin: 0 0 2px;
+          color: #6f8792;
+          font-weight: 700;
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+        }
+
+        .mrp-header h1 {
+          margin: 0;
+          color: #17445a;
+          font-size: 26px;
+        }
+
+        .mrp-back {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          flex-shrink: 0;
+          border: 1px solid #cfe2ea;
+          background: #fff;
+          color: #21697f;
+          border-radius: 10px;
+          padding: 10px 15px;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+        }
+
+        .mrp-back:hover {
+          background: #eaf6fb;
+        }
+
+        .mrp-grid {
+          display: grid;
+          grid-template-columns: 220px minmax(0, 1fr) 300px;
+          gap: 20px;
+          align-items: start;
+        }
+
+        .mrp-rail {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          position: sticky;
+          top: 20px;
+        }
+
+        .mrp-rail-title,
+        .mrp-history-title {
+          font-weight: 800;
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: .05em;
+          color: #6f8792;
+          padding: 0 2px 4px;
+        }
+
+        .mrp-rail-item {
           display: flex;
           align-items: center;
-          justify-content: center;
-          padding: 24px;
+          justify-content: space-between;
+          gap: 8px;
+          border: 1px solid #dcecf2;
+          background: #fff;
+          border-radius: 12px;
+          padding: 13px 14px;
+          font-weight: 700;
+          font-size: 13px;
+          color: #48717f;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .mrp-rail-item:hover {
+          background: #f4fbfe;
+        }
+
+        .mrp-rail-item.saved {
+          color: #267da3;
+          border-color: #bfe3f0;
+        }
+
+        .mrp-rail-item.active {
+          border-color: #4da8da;
+          background: #eaf6fb;
+          color: #17445a;
+          box-shadow: 0 0 0 1px #4da8da;
+        }
+
+        .mrp-rail-item.active svg {
+          color: #267da3;
+        }
+
+        .mrp-rail-item:disabled {
+          opacity: .6;
+          cursor: not-allowed;
         }
 
         .mr-panel {
           background: #fff;
-          border-radius: 20px;
-          width: min(1080px, 100%);
-          max-height: calc(100vh - 48px);
-          overflow: auto;
-          position: relative;
-          box-shadow: 0 24px 70px rgba(17,48,63,.28);
-          padding: 0 28px 28px;
+          border-radius: 16px;
+          box-shadow: 0 8px 24px rgba(47,117,150,.09);
+          padding: 22px;
+          min-width: 0;
         }
 
-        .mr-panel > h2 {
+        .mrp-history {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
           position: sticky;
-          top: 0;
-          z-index: 3;
-          margin: 0 -28px 24px;
-          padding: 25px 76px 21px 28px;
+          top: 20px;
+          max-height: calc(100vh - 150px);
+          overflow-y: auto;
+        }
+
+        .mrp-history-empty {
+          margin: 0;
+          padding: 14px;
+          border: 1px dashed #d7e6ec;
+          border-radius: 12px;
+          color: #7c8c94;
+          font-size: 12.5px;
+        }
+
+        .mrp-history-card {
+          border: 1px solid #e1eef3;
+          border-radius: 12px;
           background: #fff;
-          border-bottom: 1px solid #e5eff3;
-          color: #17445a;
-          font-size: 25px;
+          overflow: hidden;
         }
 
-        .mr-panel .close {
-          position: sticky;
-          float: right;
-          top: 16px;
-          z-index: 5;
-          margin-top: 14px;
+        .mrp-history-card.expanded {
+          border-color: #a9dff0;
+        }
+
+        .mrp-history-summary {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          width: 100%;
           border: 0;
-          background: #eef7fa;
-          color: #183642;
-          border-radius: 50%;
-          width: 46px;
-          height: 46px;
-          display: grid;
-          place-items: center;
+          background: none;
+          padding: 12px 13px;
+          text-align: left;
           cursor: pointer;
+        }
+
+        .mrp-history-summary:hover {
+          background: #f7fbfd;
+        }
+
+        .mrp-history-date {
+          color: #6f8792;
+          font-weight: 700;
+          font-size: 11px;
+          text-transform: uppercase;
+          letter-spacing: .03em;
+        }
+
+        .mrp-history-label {
+          color: #267da3;
+          font-weight: 700;
+          font-size: 11.5px;
+        }
+
+        .mrp-history-title-text {
+          color: #20313b;
+          font-weight: 700;
+          font-size: 13px;
+        }
+
+        .mrp-history-vet {
+          color: #7c8c94;
+          font-size: 12px;
+        }
+
+        .mrp-history-details {
+          display: grid;
+          gap: 6px;
+          padding: 0 13px 13px;
+          font-size: 12.5px;
+          color: #48717f;
+        }
+
+        .mrp-history-details p {
+          margin: 0;
+        }
+
+        .mrp-history-details b {
+          color: #294653;
+        }
+
+        .mrp-actions {
+          margin-top: 22px;
+        }
+
+        .mrp-actions .save {
+          width: 100%;
+          min-height: 50px;
+          border: 0;
+          border-radius: 11px;
+          background: #318fbe;
+          color: #fff;
+          font-weight: 800;
+          font-size: 14px;
+          cursor: pointer;
+        }
+
+        .mrp-actions .save:disabled {
+          opacity: .65;
+          cursor: not-allowed;
         }
 
         .mr .template-intro {
@@ -2200,18 +2486,19 @@ export default function MedicalRecordsModule({
           clear: both;
         }
 
-        .mr-panel .context-fields {
+        .mr .context-fields {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0,1fr));
+          grid-template-columns: repeat(4, minmax(0,1fr));
           gap: 16px 18px;
-          margin-bottom: 4px;
+          margin-bottom: 18px;
           padding: 16px 18px;
           border: 1px solid #e1edf2;
           border-radius: 14px;
           background: #f7fbfd;
         }
 
-        .mr-panel .fields label {
+        .mr-panel .fields label,
+        .mr .context-fields label {
           display: grid;
           gap: 7px;
           font-weight: 700;
@@ -2221,7 +2508,9 @@ export default function MedicalRecordsModule({
 
         .mr-panel .fields input,
         .mr-panel .fields select,
-        .mr-panel .fields textarea {
+        .mr-panel .fields textarea,
+        .mr .context-fields input,
+        .mr .context-fields select {
           width: 100%;
           padding: 12px 13px;
           border: 1px solid #cfe2ea;
@@ -2233,19 +2522,25 @@ export default function MedicalRecordsModule({
         }
 
         .mr-panel .fields input,
-        .mr-panel .fields select {
+        .mr-panel .fields select,
+        .mr .context-fields input,
+        .mr .context-fields select {
           height: 48px;
         }
 
         .mr-panel .fields input:focus,
         .mr-panel .fields select:focus,
-        .mr-panel .fields textarea:focus {
+        .mr-panel .fields textarea:focus,
+        .mr .context-fields input:focus,
+        .mr .context-fields select:focus {
           border-color: #4da8da;
           box-shadow: 0 0 0 3px rgba(77,168,218,.12);
         }
 
         .mr-panel .fields input:disabled,
-        .mr-panel .fields select:disabled {
+        .mr-panel .fields select:disabled,
+        .mr .context-fields input:disabled,
+        .mr .context-fields select:disabled {
           background: #f4f7f9;
           color: #7c8c94;
           cursor: not-allowed;
@@ -2562,52 +2857,6 @@ export default function MedicalRecordsModule({
           font-size: 13px;
         }
 
-        .mr-panel .save {
-          margin-top: 22px;
-          width: 100%;
-          min-height: 48px;
-          font-size: 14px;
-        }
-
-        .mr-panel .save:disabled {
-          opacity: .65;
-          cursor: not-allowed;
-        }
-
-        .mr-panel .template-actions {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 12px;
-          margin-top: 22px;
-        }
-
-        .mr-panel .template-actions button,
-        .mr-panel .template-actions select {
-          min-height: 50px;
-          border-radius: 11px;
-          padding: 12px 15px;
-          font: inherit;
-          font-weight: 800;
-          cursor: pointer;
-        }
-
-        .mr-panel .add-template-action {
-          border: 1px solid #98d3e8;
-          background: #eaf8fd;
-          color: #267da3;
-        }
-
-        .mr-panel .mark-done-action {
-          margin: 0;
-          background: #318fbe;
-        }
-
-        .mr-panel .template-actions button:disabled,
-        .mr-panel .template-actions select:disabled {
-          opacity: .65;
-          cursor: not-allowed;
-        }
-
         .queue-context-banner {
           margin: 0 0 18px;
           padding: 12px 15px;
@@ -2786,43 +3035,39 @@ export default function MedicalRecordsModule({
           accent-color: #4da8da;
         }
 
-        @media(max-width:900px) {
-          .mr-modal {
-            left: 0;
-            padding: 16px;
+        @media(max-width:1100px) {
+          .mrp-grid {
+            grid-template-columns: 1fr;
           }
 
-          .mr-panel {
-            max-height: calc(100vh - 32px);
+          .mrp-rail {
+            position: static;
+            flex-direction: row;
+            flex-wrap: wrap;
+          }
+
+          .mrp-rail-item {
+            flex: 1 1 160px;
+          }
+
+          .mrp-history {
+            position: static;
+            max-height: none;
           }
         }
 
         @media(max-width:650px) {
-          .mr-modal {
-            padding: 0;
-            align-items: stretch;
+          .mrp-header {
+            flex-direction: column;
           }
 
-          .mr-panel {
-            width: 100%;
-            max-height: 100vh;
-            border-radius: 0;
-            padding: 0 16px 22px;
-          }
-
-          .mr-panel > h2 {
-            margin: 0 -16px 20px;
-            padding: 22px 65px 18px 16px;
-            font-size: 21px;
+          .mr .context-fields {
+            grid-template-columns: 1fr;
+            padding: 14px;
           }
 
           .mr-panel .fields {
             grid-template-columns: 1fr;
-          }
-
-          .mr-panel .context-fields {
-            grid-template-columns: 1fr;
-            padding: 14px;
           }
 
           .mr-panel .wide {
@@ -2838,16 +3083,8 @@ export default function MedicalRecordsModule({
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .mr-panel .template-actions {
-            grid-template-columns: 1fr;
-          }
-
           .mr-panel .pet-profile-summary dl {
             grid-template-columns: 1fr;
-          }
-
-          .mr-panel .close {
-            right: 0;
           }
         }
       `}</style>

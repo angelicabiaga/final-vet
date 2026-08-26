@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[1848],{21848(e,t,r){r.r(t),r.d(t,{default:()=>l});r(65043);var a=r(73216),s=r(68584),n=r(42819),c=r(70579);function l(e){let t=e.profile;const r=(0,a.zy)();return new URLSearchParams(r.search).get("queueEntryId")?(0,c.jsx)(s.A,{profile:t,title:"Create Health Record",children:(0,c.jsx)(n.A,{profile:t})}):(0,c.jsx)(a.C5,{to:"/staff/patients",replace:!0})}}}]);
+//# sourceMappingURL=1848.47bddf7b.chunk.js.map

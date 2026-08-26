@@ -318,6 +318,7 @@ export async function getMedicalRecords(
     petId = "",
     status = "",
     search = "",
+    allVeterinarians = false,
   } = {}
 ) {
   if (
@@ -364,10 +365,20 @@ export async function getMedicalRecords(
   if (
     role === "veterinarian"
   ) {
-    query = query.eq(
-      "veterinarian_id",
-      profile.id
-    );
+    if (allVeterinarians) {
+      // Cross-vet visibility for clinical context (e.g. the record-creation
+      // page's history panel) only ever shows finalized records, never
+      // another vet's in-progress draft.
+      query = query.eq(
+        "record_status",
+        "Finalized"
+      );
+    } else {
+      query = query.eq(
+        "veterinarian_id",
+        profile.id
+      );
+    }
   }
 
   if (petId) {

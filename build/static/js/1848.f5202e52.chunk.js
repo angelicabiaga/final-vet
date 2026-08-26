@@ -1,2 +1,0 @@
-"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[1848],{21848(e,t,a){a.r(t),a.d(t,{default:()=>l});a(65043);var r=a(73216),n=a(68584),s=a(26693),i=a(70579);function l(e){let t=e.profile;const a=(0,r.zy)(),l=new URLSearchParams(a.search);return l.get("queueEntryId")||l.get("petId")?(0,i.jsx)(n.A,{profile:t,title:"Animal Patient Profile",children:(0,i.jsx)(s.A,{profile:t})}):(0,i.jsx)(r.C5,{to:"/staff/patients",replace:!0})}}}]);
-//# sourceMappingURL=1848.f5202e52.chunk.js.map

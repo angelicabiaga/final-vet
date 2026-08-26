@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[9239],{99239(e,r,i){i.r(r),i.d(r,{default:()=>l});i(65043);var t=i(68584),n=i(49088),a=i(70579);function l(e){let r=e.profile;return(0,a.jsx)(t.A,{profile:r,title:"Veterinarian Profile",children:(0,a.jsx)(n.A,{vetId:null===r||void 0===r?void 0:r.id,viewerProfile:r})})}}}]);
+//# sourceMappingURL=9239.8b48b6d4.chunk.js.map
