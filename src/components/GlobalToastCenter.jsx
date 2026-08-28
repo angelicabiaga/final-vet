@@ -29,6 +29,7 @@ const EXCLUDED_SELECTOR = [
   '.registration-success-card',
   '.walkin-success-view',
   '.walkin-success-card',
+  '.otp-blocked-card',
   '.global-toast-region',
   '.msg',
   '.messages',

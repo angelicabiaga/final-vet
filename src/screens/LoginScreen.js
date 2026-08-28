@@ -112,6 +112,11 @@ const handleLogin = async () => {
       password,
     });
 
+    if (response.requiresOtp) {
+      navigation.navigate("otp", { email: response.email });
+      return;
+    }
+
     await handleOtpSuccess(response.user);
   } catch (error) {
     setAlertModal({

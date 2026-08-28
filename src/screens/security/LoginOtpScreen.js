@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { verifyLoginOtp, resendLoginOtp, resolveVeterinarianLandingRoute } from "../../api/authService";
+import { verifyLoginOtp, resendLoginOtp, resolveVeterinarianLandingRoute, TRUSTED_DEVICE_DAYS } from "../../api/authService";
 import otpBg from "../assets/reset.jpg";
 
 const OTP_LENGTH = 6;
@@ -28,6 +28,7 @@ const LoginOtpScreen = () => {
   const [error, setError] = useState("");
   const [cooldown, setCooldown] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [trustDevice, setTrustDevice] = useState(false);
 
   const inputsRef = useRef([]);
 
@@ -55,6 +56,7 @@ const LoginOtpScreen = () => {
   };
 
   const handleVerify = async () => {
+    if (loading) return;
     setError("");
     const otpValue = otp.join("");
 
@@ -65,7 +67,7 @@ const LoginOtpScreen = () => {
 
     setLoading(true);
     try {
-      const { user } = await verifyLoginOtp(email, otpValue);
+      const { user } = await verifyLoginOtp(email, otpValue, trustDevice);
 
       const role = user.role;
       if (role === "admin") navigation.replace("admin-screen");
@@ -148,6 +150,24 @@ const LoginOtpScreen = () => {
                   />
                 ))}
               </View>
+
+              <TouchableOpacity
+                style={styles.trustDeviceRow}
+                onPress={() => setTrustDevice((current) => !current)}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.checkbox, trustDevice && styles.checkboxChecked]}>
+                  {trustDevice ? <View style={styles.checkboxTick} /> : null}
+                </View>
+                <View style={styles.trustDeviceCopy}>
+                  <Text style={styles.trustDeviceTitle}>
+                    Trust this device for {TRUSTED_DEVICE_DAYS} days
+                  </Text>
+                  <Text style={styles.trustDeviceSubtitle}>
+                    Do not ask for OTP again on this device for the next {TRUSTED_DEVICE_DAYS} days.
+                  </Text>
+                </View>
+              </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.button, loading && styles.disabledButton]}
@@ -284,6 +304,58 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#173f5c",
     backgroundColor: "rgba(255,255,255,0.96)",
+  },
+
+  trustDeviceRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 18,
+  },
+
+  checkbox: {
+    width: 20,
+    height: 20,
+    marginTop: 2,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: "#d1dce8",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+
+  checkboxChecked: {
+    backgroundColor: "#9edcff",
+    borderColor: "#9edcff",
+  },
+
+  checkboxTick: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    backgroundColor: "#173f5c",
+  },
+
+  trustDeviceCopy: {
+    flex: 1,
+  },
+
+  trustDeviceTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#ffffff",
+    lineHeight: 18,
+  },
+
+  trustDeviceSubtitle: {
+    fontSize: 11.5,
+    fontWeight: "400",
+    color: "#b9cddb",
+    lineHeight: 15,
+    marginTop: 3,
   },
 
   button: {

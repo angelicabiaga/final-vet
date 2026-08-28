@@ -8,9 +8,11 @@ import { getAppointments, todayLocal } from "./appointmentService";
 const SESSION_KEY = "pawcruz_session";
 const OTP_KEY = "pawcruz_pending_otp";
 const RESET_KEY = "pawcruz_password_reset";
-const TRUSTED_DEVICE_KEY = "pawcruz_trusted_devices";
 export const OTP_EXPIRY_MINUTES = 10;
 export const TRUSTED_DEVICE_DAYS = 30;
+
+const SUPABASE_FUNCTIONS_URL = `${process.env.REACT_APP_SUPABASE_URL || ""}/functions/v1`;
+const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || "";
 
 function normalizeIdentifier(value) {
   return String(value || "").trim().toLowerCase();
@@ -50,39 +52,65 @@ function saveSession(profile) {
   return session;
 }
 
-// "Don't ask again on this device for 30 days" -- purely client-side, keyed
-// by profile id so multiple accounts on the same browser are tracked
-// separately. There is no server-side device record; trust lives only in
-// this browser's localStorage, same as the rest of this custom auth system.
-function readTrustedDevices() {
-  return readJson(TRUSTED_DEVICE_KEY) || {};
+// Per-device login trust, opt-in via the "Trust this device for 30 days"
+// checkbox on the login OTP screen, backed by the trusted_devices table
+// (see supabase/TRUSTED_DEVICES.sql) instead of a client-side timer. The
+// browser never handles the raw device token directly: it lives only in
+// an HttpOnly/Secure/SameSite=None cookie that register-trusted-device
+// sets and check-trusted-device reads, so page JavaScript (and therefore
+// this file) never sees its value. `credentials: "include"` is required
+// on both calls so the browser attaches/accepts that cookie even though
+// the Edge Function lives on a different origin than this app.
+//
+// Trust expires exactly TRUSTED_DEVICE_DAYS after it was granted (fixed
+// server-side by register-trusted-device -- this file never computes or
+// sends an expiry itself), or ends earlier if the cookie is cleared (new
+// browser/profile, cleared site data, reinstalled app) or the account's
+// password changes, which revokes every trusted device for that user
+// server-side (see the trigger in supabase/TRUSTED_DEVICES.sql). Leaving
+// the checkbox unchecked means registerTrustedDevice is never called at
+// all, so the next login always requires OTP again.
+async function callDeviceTrustFunction(name, payload) {
+  const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/${name}`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.error) throw new Error(data?.error || "Device trust request failed.");
+  return data;
 }
 
-function isDeviceTrusted(profileId) {
+// Fails closed: if the check can't be completed (network error, function
+// down), the device is treated as untrusted so login falls back to OTP
+// instead of silently skipping it.
+async function checkTrustedDevice(profileId) {
   if (!profileId) return false;
-  const trusted = readTrustedDevices();
-  const expiresAt = Number(trusted[profileId] || 0);
-  if (!expiresAt) return false;
-  if (Date.now() > expiresAt) {
-    delete trusted[profileId];
-    writeJson(TRUSTED_DEVICE_KEY, trusted);
+  try {
+    const data = await callDeviceTrustFunction("check-trusted-device", { userId: profileId });
+    return Boolean(data?.trusted);
+  } catch (error) {
+    console.warn("Unable to check trusted device, requiring OTP:", error.message);
     return false;
   }
-  return true;
 }
 
-function trustThisDevice(profileId) {
+// Best-effort and never throws: a failed device registration must not
+// block a login that has already succeeded, and must not leave the OTP
+// screen showing "No active verification request was found" (see
+// completeLoginOtp below, which clears the OTP only after this settles).
+async function registerTrustedDevice(profileId) {
   if (!profileId) return;
-  const trusted = readTrustedDevices();
-  trusted[profileId] = Date.now() + TRUSTED_DEVICE_DAYS * 24 * 60 * 60 * 1000;
-  writeJson(TRUSTED_DEVICE_KEY, trusted);
-}
-
-export function forgetTrustedDevice(profileId) {
-  if (!profileId) return;
-  const trusted = readTrustedDevices();
-  delete trusted[profileId];
-  writeJson(TRUSTED_DEVICE_KEY, trusted);
+  try {
+    await callDeviceTrustFunction("register-trusted-device", { userId: profileId, platform: "web" });
+  } catch (error) {
+    console.warn("Unable to register this device as trusted:", error.message);
+  }
 }
 
 async function writeActivity(profile, action, description) {
@@ -240,7 +268,7 @@ export async function loginUser(identifier, password) {
   }
   if (profile.account_status !== "active") throw new Error("Your account is inactive. Contact the administrator.");
 
-  if (isDeviceTrusted(profile.id)) {
+  if (await checkTrustedDevice(profile.id)) {
     const now = new Date().toISOString();
     await supabase.from("profiles").update({ last_login_at: now }).eq("id", profile.id);
     const updatedProfile = { ...profile, last_login_at: now };
@@ -253,16 +281,29 @@ export async function loginUser(identifier, password) {
 }
 
 export async function completeLoginOtp(code, trustDevice = false) {
+  // Deliberately does not clear OTP_KEY until after the session below is
+  // established: an interrupted verification (e.g. a thrown error before
+  // this point) must leave the pending OTP intact so the user can retry,
+  // rather than getting stuck on "No active verification request was
+  // found" for an OTP that was already wiped out from under them.
   const pending = verifyOtpCode("login", code);
   const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", pending.payload?.profileId).single();
   if (error || !profile) throw new Error("Unable to complete login.");
   const now = new Date().toISOString();
   await supabase.from("profiles").update({ last_login_at: now }).eq("id", profile.id);
   const updatedProfile = { ...profile, last_login_at: now };
+
+  // Session first -- this is what makes the login "succeed". Device
+  // registration only happens if the user opted in (unchecked is the
+  // default, and means OTP is required again next time); it's also
+  // best-effort (never throws, see above) and always runs before the OTP
+  // is cleared, but a failure there must not undo or block the login that
+  // has already happened.
+  const session = saveSession(updatedProfile);
+  if (trustDevice) await registerTrustedDevice(profile.id);
   localStorage.removeItem(OTP_KEY);
   await writeActivity(updatedProfile, "Login", `${profile.full_name} logged in.`);
-  if (trustDevice) trustThisDevice(profile.id);
-  return saveSession(updatedProfile);
+  return session;
 }
 
 export async function logoutUser() {

@@ -8,6 +8,13 @@ import { getQueue } from "./queueService";
 import { getVeterinarianAppointments, todayLocal } from "./mobileAppointmentService";
 
 const SESSION_KEY = "pawcruz_session";
+const OTP_KEY = "pawcruz_pending_otp";
+const DEVICE_TOKEN_KEY = "pawcruz_device_token";
+export const OTP_EXPIRY_MINUTES = 10;
+export const TRUSTED_DEVICE_DAYS = 30;
+
+const SUPABASE_FUNCTIONS_URL = `${process.env.REACT_APP_SUPABASE_URL || ""}/functions/v1`;
+const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || "";
 
 function normalizeIdentifier(value) {
   return String(value || "").trim().toLowerCase();
@@ -52,41 +59,151 @@ export async function logoutUser() {
   await SecureStore.deleteItemAsync(SESSION_KEY);
 }
 
-/*
-async function callOtpFunction(functionName, body) {
-  const { data, error } = await supabase.functions.invoke(
-    functionName,
-    { body }
-  );
+// ---------------------------------------------------------------------------
+// OTP (login) -- mirrors the web app's client-side OTP model in
+// src/services/authService.js: the code and its expiry are generated here
+// and only emailed via the send-otp-email Edge Function, which never
+// stores or verifies it itself. Kept in Expo SecureStore instead of
+// AsyncStorage since it's short-lived credential-adjacent data.
+// ---------------------------------------------------------------------------
 
-  if (error) {
-    console.log("Edge Function Error:", error);
-    console.log("Status:", error.context?.status);
+function generateOtp() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
 
-    let message = error.message;
-
-    try {
-      const responseBody = await error.context?.json();
-
-      console.log("Response:", responseBody);
-
-      message =
-        responseBody?.error ||
-        responseBody?.message ||
-        error.message;
-    } catch {
-      console.log("Could not parse Edge Function response");
-    }
-
-    throw new Error(message);
+async function readPendingOtp() {
+  try {
+    const stored = await SecureStore.getItemAsync(OTP_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    await SecureStore.deleteItemAsync(OTP_KEY).catch(() => {});
+    return null;
   }
+}
 
+async function writePendingOtp(record) {
+  await SecureStore.setItemAsync(OTP_KEY, JSON.stringify(record));
+}
+
+async function clearPendingOtp() {
+  await SecureStore.deleteItemAsync(OTP_KEY);
+}
+
+async function sendOtpEmail(email, code, purpose) {
+  const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/send-otp-email`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ email, code, purpose, expiresMinutes: OTP_EXPIRY_MINUTES }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.error) throw new Error(data?.error || "Unable to send OTP email.");
   return data;
 }
-*/
+
+async function createAndSendLoginOtp(email, profileId) {
+  const cleanEmail = normalizeIdentifier(email);
+  const code = generateOtp();
+  const record = {
+    email: cleanEmail,
+    purpose: "login",
+    code,
+    payload: { profileId },
+    createdAt: Date.now(),
+    expiresAt: Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000,
+  };
+  await sendOtpEmail(cleanEmail, code, "login");
+  await writePendingOtp(record);
+}
+
+export async function resendLoginOtp() {
+  const pending = await readPendingOtp();
+  if (!pending || pending.purpose !== "login") {
+    throw new Error("No OTP request is available to resend.");
+  }
+  await createAndSendLoginOtp(pending.email, pending.payload?.profileId);
+  return { success: true };
+}
+
+async function verifyPendingLoginOtp(code) {
+  const pending = await readPendingOtp();
+  if (!pending || pending.purpose !== "login") {
+    throw new Error("No active OTP request was found. Please request a new code.");
+  }
+  if (Date.now() > Number(pending.expiresAt || 0)) {
+    await clearPendingOtp();
+    throw new Error("This OTP has expired. Please resend a new code.");
+  }
+  if (String(code || "").trim() !== String(pending.code || "")) {
+    throw new Error("Invalid OTP code.");
+  }
+  return pending;
+}
 
 // ---------------------------------------------------------------------------
-// Login without OTP
+// Per-device login trust -- opt-in via a "Trust this device for 30 days"
+// toggle on the login OTP screen, mirrors src/services/authService.js on
+// web, backed by the same trusted_devices table (see
+// supabase/TRUSTED_DEVICES.sql) via the same check-trusted-device /
+// register-trusted-device Edge Functions. Mobile has no HttpOnly cookie
+// jar, so the raw device token is stored directly in Expo SecureStore
+// (never AsyncStorage) and sent to the Edge Functions over HTTPS instead
+// of riding in a cookie the way it does on web. Trust expires exactly
+// TRUSTED_DEVICE_DAYS after it was granted (fixed server-side by
+// register-trusted-device); leaving the toggle off means this is never
+// called, so the next login always requires OTP again.
+// ---------------------------------------------------------------------------
+
+async function callDeviceTrustFunction(name, payload) {
+  const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/${name}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.error) throw new Error(data?.error || "Device trust request failed.");
+  return data;
+}
+
+// Fails closed: if the check can't be completed, the device is treated as
+// untrusted so login falls back to OTP instead of silently skipping it.
+async function checkTrustedDevice(profileId) {
+  if (!profileId) return false;
+  try {
+    const deviceToken = await SecureStore.getItemAsync(DEVICE_TOKEN_KEY);
+    if (!deviceToken) return false;
+    const data = await callDeviceTrustFunction("check-trusted-device", { userId: profileId, deviceToken });
+    return Boolean(data?.trusted);
+  } catch (error) {
+    console.warn("Unable to check trusted device, requiring OTP:", error.message);
+    return false;
+  }
+}
+
+// Best-effort and never throws: a failed device registration must not
+// block a login that has already succeeded.
+async function registerTrustedDevice(profileId) {
+  if (!profileId) return;
+  try {
+    const data = await callDeviceTrustFunction("register-trusted-device", { userId: profileId, platform: "mobile" });
+    if (data?.deviceToken) {
+      await SecureStore.setItemAsync(DEVICE_TOKEN_KEY, data.deviceToken);
+    }
+  } catch (error) {
+    console.warn("Unable to register this device as trusted:", error.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Login -- OTP required only for a device not already trusted for this
+// account (see checkTrustedDevice/registerTrustedDevice above).
 // ---------------------------------------------------------------------------
 
 export async function attemptLogin({ username, password }) {
@@ -133,37 +250,34 @@ export async function attemptLogin({ username, password }) {
     );
   }
 
-  /*
-  await callOtpFunction("send-otp", {
-    email: normalizeIdentifier(profile.email),
-    purpose: "login",
-  });
+  if (await checkTrustedDevice(profile.id)) {
+    const session = await saveSession(profile);
+
+    await supabase
+      .from("activity_logs")
+      .insert({
+        user_id: profile.id,
+        role: profile.role,
+        action: "User login",
+        module: "Authentication",
+        description: `${profile.username || profile.email} logged in (trusted device, OTP skipped).`,
+      });
+
+    return {
+      requiresOtp: false,
+      email: profile.email,
+      user: session.profile,
+      profile: session.profile,
+      session,
+    };
+  }
+
+  await createAndSendLoginOtp(profile.email, profile.id);
 
   return {
     requiresOtp: true,
     email: profile.email,
     user: publicProfile(profile),
-  };
-  */
-
-  const session = await saveSession(profile);
-
-  await supabase
-    .from("activity_logs")
-    .insert({
-      user_id: profile.id,
-      role: profile.role,
-      action: "User login",
-      module: "Authentication",
-      description: `${profile.username || profile.email} logged in.`,
-    });
-
-  return {
-    requiresOtp: false,
-    email: profile.email,
-    user: session.profile,
-    profile: session.profile,
-    session,
   };
 }
 
@@ -204,44 +318,45 @@ export async function resolveVeterinarianLandingRoute(veterinarianId) {
   return { route: "vet-screen" };
 }
 
-/*
-export async function verifyLoginOtp(email, otp) {
-  const data = await callOtpFunction("verify-otp", {
-    email: normalizeIdentifier(email),
-    purpose: "login",
-    code: String(otp || "").trim(),
-    payload: {},
-  });
+export async function verifyLoginOtp(email, otp, trustDevice = false) {
+  // Does not clear the pending OTP until the session below is established,
+  // so a failure before that point leaves the OTP intact for a retry
+  // instead of surfacing "No active verification request was found" for
+  // an OTP that was already wiped out from under the user.
+  const pending = await verifyPendingLoginOtp(otp);
 
-  const session = await saveSession(data.profile);
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", pending.payload?.profileId)
+    .single();
+
+  if (error || !profile) {
+    throw new Error("Unable to complete login.");
+  }
+
+  // Session first -- this is what makes the login "succeed". Device
+  // registration only happens if the user opted in (off is the default,
+  // and means OTP is required again next time); it's also best-effort
+  // (never throws, see above) and always runs before the OTP is cleared,
+  // but a failure there must not undo or block the login that has
+  // already happened.
+  const session = await saveSession(profile);
+  if (trustDevice) await registerTrustedDevice(profile.id);
+  await clearPendingOtp();
+
+  await supabase
+    .from("activity_logs")
+    .insert({
+      user_id: profile.id,
+      role: profile.role,
+      action: "User login",
+      module: "Authentication",
+      description: `${profile.username || profile.email} logged in.`,
+    });
 
   return {
     user: session.profile,
-  };
-}
-*/
-
-/*
-export async function resendLoginOtp(email) {
-  await callOtpFunction("send-otp", {
-    email: normalizeIdentifier(email),
-    purpose: "login",
-  });
-}
-*/
-
-// Temporary functions to prevent import errors in existing screens
-
-export async function verifyLoginOtp() {
-  throw new Error(
-    "OTP verification is temporarily disabled."
-  );
-}
-
-export async function resendLoginOtp() {
-  return {
-    success: false,
-    message: "OTP sending is temporarily disabled.",
   };
 }
 

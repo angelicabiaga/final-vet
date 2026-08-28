@@ -140,7 +140,17 @@ export default function OtpVerification() {
     [location.search],
   );
 
-  const pending = getPendingOtp();
+  // Captured once at mount instead of re-read on every render: completing
+  // login clears this same localStorage key (see completeLoginOtp) and
+  // then fires a "pawcruz-auth-change" event that App.jsx listens for --
+  // that event updates App's own state and re-renders its whole tree,
+  // including this still-mounted screen, *before* the subsequent
+  // navigate() away from /otp actually happens. Re-reading storage on
+  // that stray render would find the OTP already gone and flash this
+  // screen's "No active verification request was found" fallback right
+  // after a successful, correct verification. Freezing the value at
+  // mount means a login that already succeeded can't un-render itself.
+  const [pending] = useState(() => getPendingOtp());
   const [code, setCode] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -208,7 +218,13 @@ export default function OtpVerification() {
         subtitle='No active verification request was found.'
         showBackToHome
       >
-        <div className='error' role='alert'>
+        {/* otp-blocked-card keeps this out of GlobalToastCenter's
+           auto-toast scan (see its EXCLUDED_SELECTOR) -- this message IS
+           the whole page's content here, not a transient form error, so
+           it must stay visible in place instead of being turned into a
+           toast that both disappears after 5s and permanently hides this
+           div (aria-hidden + display:none) once converted. */}
+        <div className='error otp-blocked-card' role='alert'>
           Please start the request again.
         </div>
 
@@ -255,24 +271,65 @@ export default function OtpVerification() {
           white-space: nowrap;
         }
 
+        /* .login-screen-card label (Login.jsx) sets display:grid, gap:6px,
+           uppercase, bold text, etc. on every <label> in this card, and
+           that selector (.login-screen-card label) is more specific than
+           a bare .otp-trust-device class -- so without !important here,
+           its rules would silently win over the ones below. Every
+           property it also sets is repeated here with !important so this
+           block can't be overridden by it again.
+
+           This is a real two-column grid -- a fixed-width checkbox column
+           next to a flexible text column -- rather than an unconstrained
+           flex row, so the checkbox's column always starts exactly at the
+           grid's own align-items: flex-start line (the top of the first
+           text line) instead of depending on flex-grow/shrink defaults
+           that a plain flex row would otherwise leave ambiguous. */
         .otp-trust-device {
-          display: flex !important;
-          flex-direction: row;
-          align-items: center;
-          gap: 9px;
+          display: grid !important;
+          grid-template-columns: 17px 1fr !important;
+          column-gap: 10px !important;
+          row-gap: 0 !important;
+          align-items: flex-start !important;
+          width: 100%;
+          margin: 0 !important;
+          padding: 0 !important;
           text-transform: none !important;
-          font-weight: 700 !important;
-          font-size: 13px !important;
-          color: #3d5c6c !important;
+          font-weight: 400 !important;
+          letter-spacing: normal !important;
           cursor: pointer;
         }
 
         .otp-trust-device input[type='checkbox'] {
           width: 17px;
           height: 17px;
-          flex-shrink: 0;
+          margin: 1px 0 0 !important;
+          padding: 0;
           accent-color: #4da8da;
           cursor: pointer;
+        }
+
+        .otp-trust-device-copy {
+          display: grid !important;
+          gap: 3px !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        .otp-trust-device-copy strong {
+          font-weight: 600 !important;
+          font-size: 13px !important;
+          line-height: 1.3 !important;
+          color: #3d5c6c !important;
+        }
+
+        .otp-trust-device-copy small {
+          font-weight: 500 !important;
+          font-size: 11px !important;
+          line-height: 1.35 !important;
+          color: #7c94a1 !important;
+          letter-spacing: normal !important;
+          text-transform: none !important;
         }
 
         @media (max-width: 520px) {
@@ -288,6 +345,18 @@ export default function OtpVerification() {
 
           .otp-expiry-note {
             font-size: 10px;
+          }
+
+          .otp-trust-device {
+            column-gap: 8px !important;
+          }
+
+          .otp-trust-device-copy strong {
+            font-size: 12.5px !important;
+          }
+
+          .otp-trust-device-copy small {
+            font-size: 10.5px !important;
           }
         }
       `}</style>
@@ -310,8 +379,9 @@ export default function OtpVerification() {
               checked={trustDevice}
               onChange={(event) => setTrustDevice(event.target.checked)}
             />
-            <span>
-              Don't ask again on this device for {TRUSTED_DEVICE_DAYS} days
+            <span className='otp-trust-device-copy'>
+              <strong>Trust this device for {TRUSTED_DEVICE_DAYS} days</strong>
+              <small>Do not ask for OTP again on this device for the next {TRUSTED_DEVICE_DAYS} days.</small>
             </span>
           </label>
         )}
