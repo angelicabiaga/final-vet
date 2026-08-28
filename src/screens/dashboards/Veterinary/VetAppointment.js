@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import VetShell, { getVetUser } from './VetShell';
-import { formatTime, getVeterinarianAppointments } from '../../../api/mobileAppointmentService';
+import { formatTime, getVeterinarianAppointments, todayLocal } from '../../../api/mobileAppointmentService';
 import { supabase } from '../../../config/supabaseClient';
 import { formatDateTime12h } from '../../../utils/timeFormat';
 
@@ -21,9 +21,23 @@ const formatTimestamp = (value) => {
 export default function VetAppointment({ navigation, route }) {
   const user = getVetUser(route);
   const veterinarianId = getId(user);
+  // Set when this screen is opened via the Appointments badge/menu item --
+  // puts today's consultations first instead of the default recency order.
+  const focusToday = Boolean(route?.params?.focusToday);
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
+
+  const displayItems = React.useMemo(() => {
+    if (!focusToday) return items;
+    const today = todayLocal();
+    return [...items].sort((a, b) => {
+      const todayA = a.appointment_date === today;
+      const todayB = b.appointment_date === today;
+      if (todayA !== todayB) return todayA ? -1 : 1;
+      return 0;
+    });
+  }, [items, focusToday]);
 
   const load = React.useCallback(async () => {
     try {
@@ -57,7 +71,7 @@ export default function VetAppointment({ navigation, route }) {
       {loading && !items.length ? <ActivityIndicator size="large" color="#447C99" /> : null}
       {error ? <View style={styles.empty}><Text style={styles.emptyTitle}>Appointments unavailable</Text><Text style={styles.emptyText}>{error}</Text></View> : null}
       {!loading && !error && !items.length ? <View style={styles.empty}><Text style={styles.emptyTitle}>No assigned appointments</Text><Text style={styles.emptyText}>Assigned appointments will appear here automatically.</Text></View> : null}
-      {items.map((item) => <View key={item.id} style={styles.card}>
+      {displayItems.map((item) => <View key={item.id} style={styles.card}>
         <View style={styles.row}><Text style={styles.pet}>{label(item.pet?.pet_name)}</Text><Text style={[styles.status, item.status === 'Cancelled' && styles.cancelled, item.status === 'Completed' && styles.completed]}>{item.status}</Text></View>
         <Info label="Pet Owner" value={label(item.owner?.full_name)} />
         <Info label="Veterinarian" value={label(item.veterinarian?.full_name)} />

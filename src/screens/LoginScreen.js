@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { attemptLogin as loginUser, sendUnlockEmail } from "../api/authService";
+import { attemptLogin as loginUser, sendUnlockEmail, resolveVeterinarianLandingRoute } from "../api/authService";
 import {
   Animated,
   Easing,
@@ -87,12 +87,14 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
-const handleOtpSuccess = (user) => {
+const handleOtpSuccess = async (user) => {
   const role = user?.role;
 
   if (role === "veterinarian") {
-    navigation.replace("vet-screen", {
+    const destination = await resolveVeterinarianLandingRoute(user?.id);
+    navigation.replace(destination.route, {
       user,
+      ...(destination.params || {}),
     });
   } else if (role === "pet_owner") {
     navigation.replace("petowner-screen", {
@@ -110,7 +112,7 @@ const handleLogin = async () => {
       password,
     });
 
-    handleOtpSuccess(response.user);
+    await handleOtpSuccess(response.user);
   } catch (error) {
     setAlertModal({
       show: true,

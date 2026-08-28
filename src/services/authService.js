@@ -1,6 +1,9 @@
 import { supabase } from "../config/supabaseClient";
-import { validatePassword } from "../utils/validators";
+import { validatePassword, isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
 import { clearWelcomed } from "../utils/notificationSound";
+import { CONSENT_REQUIRED_ERROR, PRIVACY_NOTICE_VERSION } from "../constants/privacyNotice";
+import { getQueue } from "./queueService";
+import { getAppointments, todayLocal } from "./appointmentService";
 
 const SESSION_KEY = "pawcruz_session";
 const OTP_KEY = "pawcruz_pending_otp";
@@ -160,12 +163,26 @@ function validateRegistration(values) {
   const fullName = String(values.fullName || "").trim();
   const username = normalizeIdentifier(values.username);
   const email = normalizeIdentifier(values.email);
+  const address = String(values.address || "").trim();
+  const phone = String(values.phone || "").trim();
   const password = String(values.password || "");
   if (fullName.split(/\s+/).filter(Boolean).length < 2) throw new Error("First name and last name are both required.");
   if (!/^[a-z0-9_.-]{3,30}$/.test(username)) throw new Error("Username must be 3–30 characters and may use letters, numbers, dots, dashes, or underscores.");
   if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error("Please enter a valid email address.");
+  // The profiles table requires every pet_owner account to have an
+  // address and a correctly-formatted phone number on file (see
+  // supabase/pet_owner_address_constraint.sql and the
+  // pet_owner_phone_format check constraint) -- checked here so a
+  // missing/invalid value surfaces as a clear message instead of a raw
+  // database constraint error.
+  if (!address) throw new Error("Address is required.");
+  if (!isValidPhMobile(phone)) throw new Error(INVALID_PH_MOBILE_MESSAGE);
   validatePassword(password);
-  return { fullName, username, email, password };
+  // Checked separately from the field/password validation above -- the
+  // caller (Register.jsx) already blocks submission on this in the UI;
+  // this is the service-layer backstop so no caller can skip it.
+  if (values.serviceConsent !== true) throw new Error(CONSENT_REQUIRED_ERROR);
+  return { fullName, username, email, address, phone, password, marketingConsent: Boolean(values.marketingConsent) };
 }
 
 export async function registerPetOwner(values) {
@@ -177,18 +194,34 @@ export async function registerPetOwner(values) {
   return { requiresOtp: true, email: clean.email, purpose: "register" };
 }
 
+/**
+ * pawcruz_create_pet_owner_with_consent inserts the profile and the
+ * consent_records row(s) in one transaction (see
+ * supabase/DATA_PRIVACY_CONSENT.sql) -- there is no separate consent
+ * insert here, so a completed registration can never end up without its
+ * required consent record. The consent choice is made on the
+ * registration form itself (Register.jsx), not on this OTP screen -- it
+ * travels here inside the OTP's stored payload (set by
+ * registerPetOwner/validateRegistration above) exactly the same way
+ * fullName/username/email/password already do, and is only actually
+ * recorded once the OTP is verified and the account is truly created.
+ */
 export async function completeRegistrationOtp(code) {
   const pending = verifyOtpCode("register", code);
   const values = pending.payload || {};
-  const { data: profile, error } = await supabase.from("profiles").insert({
-    full_name: values.fullName,
-    username: values.username,
-    email: values.email,
-    password: values.password,
-    role: "pet_owner",
-    account_status: "active"
-  }).select("*").single();
-  if (error) throw new Error("Registration failed. Check your Supabase SQL policies and required columns.");
+  const { data: profile, error } = await supabase.rpc("pawcruz_create_pet_owner_with_consent", {
+    p_full_name: values.fullName,
+    p_username: values.username,
+    p_email: values.email,
+    p_password: values.password,
+    p_marketing_consent: Boolean(values.marketingConsent),
+    p_privacy_notice_version: PRIVACY_NOTICE_VERSION,
+    p_source_context: "Account Registration",
+    p_method: "Web Form",
+    p_address: values.address,
+    p_phone: values.phone,
+  });
+  if (error) throw new Error(error.message || "Registration failed. Check your Supabase SQL policies and required columns.");
   localStorage.removeItem(OTP_KEY);
   await writeActivity(profile, "Account creation", `Pet-owner account created for ${values.username}.`);
   return publicProfile(profile);
@@ -240,13 +273,53 @@ export async function logoutUser() {
   window.dispatchEvent(new Event("pawcruz-auth-change"));
 }
 
+// A logged-in Veterinarian's default landing spot: whichever of their own
+// active work needs attention first, never another veterinarian's patients.
+//   1. An assigned queue entry that's actually active (Waiting/Serving --
+//      this app has no separate "Ready" status) -- go straight to My Queue,
+//      where the current/next patient already sorts to the top.
+//   2. No active queue, but a Confirmed consultation later today -- go to
+//      Today's Appointments, with focusToday so the table doesn't hide
+//      today's (not-yet-checked-in) consultations the way it normally would.
+//   3. Neither -- fall through to the Dashboard.
+// Never throws: if the lookup itself fails, the caller falls back to the
+// Dashboard rather than blocking login on this convenience redirect.
+async function resolveVeterinarianLandingRoute(veterinarianId) {
+  const queueRows = await getQueue({ veterinarianId });
+  const hasActiveQueue = queueRows.some((entry) => ["Waiting", "Serving"].includes(entry.status));
+  if (hasActiveQueue) return { pathname: "/veterinarian/queue" };
+
+  const todaysAppointments = await getAppointments({
+    veterinarianId,
+    status: "Confirmed",
+    date: todayLocal(),
+  });
+  if (todaysAppointments.length > 0) {
+    return { pathname: "/veterinarian/appointments", state: { focusToday: true } };
+  }
+
+  return null;
+}
+
 // Shared by the OTP screen and the trusted-device fast path in Login.jsx so
-// both send a freshly logged-in user to the same place.
-export function resolveLoginDestination(profile, fallback) {
+// both send a freshly logged-in user to the same place. Returns
+// { pathname, state? } -- callers spread state into their navigate() call.
+export async function resolveLoginDestination(profile, fallback) {
   const role = profile?.role;
   const rolePath = role === "pet_owner" ? "pet-owner" : role;
-  if (profile?.must_change_password) return `/${rolePath}/profile?forcePasswordChange=1`;
-  return fallback || `/${rolePath}/dashboard`;
+  if (profile?.must_change_password) return { pathname: `/${rolePath}/profile?forcePasswordChange=1` };
+  if (fallback) return { pathname: fallback };
+
+  if (role === "veterinarian" && profile?.id) {
+    try {
+      const destination = await resolveVeterinarianLandingRoute(profile.id);
+      if (destination) return destination;
+    } catch (error) {
+      console.warn("Unable to resolve the veterinarian landing route, defaulting to Dashboard:", error);
+    }
+  }
+
+  return { pathname: `/${rolePath}/dashboard` };
 }
 
 export async function getCurrentProfile(userId) {

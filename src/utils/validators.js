@@ -12,7 +12,7 @@ export function validateImageFile(file) {
 }
 
 export const PH_MOBILE_REGEX = /^(09\d{9}|\+639\d{9})$/;
-export const INVALID_PH_MOBILE_MESSAGE = "Enter a valid Philippine mobile number.";
+export const INVALID_PH_MOBILE_MESSAGE = "Enter a valid Philippine contact number (09XXXXXXXXX or +639XXXXXXXXX).";
 
 export function isValidPhMobile(value) {
   return PH_MOBILE_REGEX.test(String(value || "").trim());

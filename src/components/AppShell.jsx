@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Menu, LogOut, UserCircle, X } from "lucide-react";
 import { logoutUser } from "../services/authService";
-import { reconcileInventoryStatus } from "../services/inventoryService";
+import { reconcileInventoryStatus, getInventoryItems, subscribeToInventoryChanges } from "../services/inventoryService";
+import { getAppointments, todayLocal } from "../services/appointmentService";
+import { getQueue, subscribeToQueue } from "../services/queueService";
+import { getPendingBillingQueue, subscribeToPendingBilling } from "../services/billingService";
+import { getConversations, subscribeToMessagingOverview } from "../services/messageService";
 import NotificationBell from "./NotificationBell";
 
 import pawLogo from "../assets/reference/paw.png";
@@ -49,6 +53,29 @@ function roleLabelOf(role) {
   return ROLE_LABELS[String(role || "").trim().toLowerCase()] || "PawCruz User";
 }
 
+// Sidebar module badges -- small red numbered badges next to Appointments,
+// Queue/My Queue, Inventory, Transactions (POS), and Messages, scoped per
+// role and (for Veterinarian/Pet Owner) per-user ownership so nobody sees
+// another user's counts. Deliberately NOT routed through the Notifications
+// module, which stays reserved for admin broadcasts and clinic-wide
+// announcements -- these live in the sidebar as pure badge state instead,
+// keyed by nav route. Module-level (not redeclared per render) so it has
+// a stable identity for the effect/callback dependency arrays below.
+// Transactions (POS) is staff-only -- admin's nav has no Transactions link
+// at all, so it can never get that badge.
+const BADGE_ROUTES = {
+  admin: { "/staff/appointments": "appointments", "/admin/queue": "queue", "/admin/inventory": "inventory", "/admin/messages": "messages" },
+  staff: { "/staff/appointments": "appointments", "/staff/queue": "queue", "/staff/inventory": "inventory", "/staff/transactions": "transactions", "/staff/messages": "messages" },
+  veterinarian: { "/veterinarian/appointments": "appointments", "/veterinarian/queue": "queue", "/veterinarian/messages": "messages" },
+  pet_owner: { "/pet-owner/appointments": "appointments", "/pet-owner/queue": "queue", "/pet-owner/messages": "messages" },
+};
+
+// Live inventory statuses (from computeLiveItemStatus) that count as an
+// alert requiring restock/expiry attention -- "In Stock" is deliberately
+// excluded, and "Expired" is deliberately excluded too since the user's
+// spec for this badge names only these three buckets.
+const INVENTORY_ALERT_STATUSES = ["Low Stock", "Out of Stock", "Near Expiry"];
+
 export default function AppShell({ profile, title, children }) {
   const [open, setOpen] = useState(false);
   const [logoutConfirmationOpen, setLogoutConfirmationOpen] =
@@ -68,6 +95,93 @@ export default function AppShell({ profile, title, children }) {
     if (!["admin", "staff"].includes(profile?.role)) return;
     reconcileInventoryStatus().catch(() => {});
   }, [profile?.role]);
+
+  const [badgeCounts, setBadgeCounts] = useState({});
+
+  const loadBadgeCounts = useCallback(async () => {
+    const role = profile?.role;
+    if (!profile?.id || !BADGE_ROUTES[role]) return;
+    const today = todayLocal();
+    const jobs = {};
+
+    // Only completed/cancelled/other-owner/unrelated records are excluded
+    // by these filters -- everything counted here is an active record the
+    // signed-in user is actually responsible for.
+    if (role === "veterinarian") {
+      jobs.appointments = getAppointments({ veterinarianId: profile.id, status: "Confirmed", date: today })
+        .then((rows) => rows.length);
+      jobs.queue = getQueue({ veterinarianId: profile.id })
+        .then((rows) => rows.filter((entry) => ["Waiting", "Serving"].includes(entry.status)).length);
+    } else if (role === "admin" || role === "staff") {
+      // Every Confirmed appointment still ahead of the clinic (today or a
+      // future date) requires admin/staff attention -- not just today's, so
+      // a booking made for tomorrow shows up as soon as it's created rather
+      // than waiting until its date arrives. Only past dates are excluded.
+      jobs.appointments = getAppointments({ status: "Confirmed" })
+        .then((rows) => rows.filter((row) => row.appointment_date >= today).length);
+      jobs.queue = getQueue({})
+        .then((rows) => rows.filter((entry) => ["Waiting", "Serving"].includes(entry.status)).length);
+      jobs.inventory = getInventoryItems({})
+        .then((rows) => rows.filter((item) => INVENTORY_ALERT_STATUSES.includes(item.status)).length);
+      if (role === "staff") {
+        // Only consultations a veterinarian just finalized that staff has not
+        // yet opened ("Pending Billing") count -- once staff clicks Process
+        // Payment the queue entry flips to "Processing" and drops out of this
+        // count, and once it's actually paid it isn't in this table's status
+        // set at all. Ordinary transactions.payment_status (Paid/Partially
+        // Paid/Voided/Cancelled/plain history rows) never factor in here, and
+        // since each consultation has exactly one billing_status, this can
+        // never double-count a visit the way multiple transaction rows could.
+        jobs.transactions = getPendingBillingQueue()
+          .then((rows) => rows.filter((row) => row.billing_status === "Pending Billing").length);
+      }
+    } else if (role === "pet_owner") {
+      jobs.appointments = getAppointments({ ownerId: profile.id, status: "Confirmed" })
+        .then((rows) => rows.filter((row) => row.appointment_date >= today).length);
+      jobs.queue = getQueue({ ownerId: profile.id })
+        .then((rows) => rows.filter((entry) => ["Waiting", "Serving"].includes(entry.status)).length);
+    }
+
+    // "Unread conversations" (not total unread messages) for every role.
+    jobs.messages = getConversations(profile).then((rows) => rows.filter((row) => row.unread > 0).length);
+
+    const keys = Object.keys(jobs);
+    const settled = await Promise.all(keys.map((key) => jobs[key].catch(() => null)));
+    setBadgeCounts((current) => {
+      const next = { ...current };
+      keys.forEach((key, index) => {
+        // A failed refresh for one module leaves that badge's last known
+        // count in place rather than surfacing an app-wide error or
+        // flashing it to zero.
+        if (settled[index] !== null) next[key] = settled[index];
+      });
+      return next;
+    });
+  }, [profile?.role, profile?.id]);
+
+  useEffect(() => {
+    if (!profile?.id || !BADGE_ROUTES[profile?.role]) return;
+    loadBadgeCounts();
+    // subscribeToQueue already listens to queue_entries, queue_entry_pets,
+    // and appointments -- covers both the Appointments and Queue/My Queue
+    // badges through one realtime channel instead of opening a second one
+    // for the same tables. Inventory/Transactions (POS) subscriptions are
+    // only opened for the roles that actually have those badges.
+    const unsubQueue = subscribeToQueue(loadBadgeCounts);
+    const unsubMessages = subscribeToMessagingOverview(profile.id, loadBadgeCounts);
+    const unsubInventory = ["admin", "staff"].includes(profile.role) ? subscribeToInventoryChanges(loadBadgeCounts) : null;
+    const unsubBilling = profile.role === "staff" ? subscribeToPendingBilling(loadBadgeCounts) : null;
+    return () => {
+      unsubQueue?.();
+      unsubInventory?.();
+      unsubMessages?.();
+      unsubBilling?.();
+    };
+  }, [profile?.role, profile?.id, loadBadgeCounts]);
+
+  function badgeLabel(count) {
+    return count > 9 ? "9+" : String(count);
+  }
 
   const navByRole = {
     pet_owner: [
@@ -142,17 +256,32 @@ export default function AppShell({ profile, title, children }) {
         </div>
         <div className="clinic">Cruz Veterinary Clinic</div>
         <nav className="sidebarNav">
-          {nav.map((item) => (
-            <Link
-              key={item.to}
-              className={location.pathname === item.to ? "active" : ""}
-              to={item.to}
-              onClick={() => setOpen(false)}
-            >
-              <img src={iconByType[item.type] || dashboardIcon} alt="" aria-hidden="true" />
-              <span>{item.label}</span>
-            </Link>
-          ))}
+          {nav.map((item) => {
+            const badgeKey = BADGE_ROUTES[profile?.role]?.[item.to];
+            const badgeCount = badgeKey ? (badgeCounts[badgeKey] || 0) : 0;
+            const isVetAppointments = profile?.role === "veterinarian" && item.to === "/veterinarian/appointments";
+            const isInventoryLink = badgeKey === "inventory" && ["admin", "staff"].includes(profile?.role);
+            const linkState = isVetAppointments
+              ? { focusToday: true }
+              : isInventoryLink
+                ? { prioritizeAlerts: true }
+                : undefined;
+            return (
+              <Link
+                key={item.to}
+                className={location.pathname === item.to ? "active" : ""}
+                to={item.to}
+                state={linkState}
+                onClick={() => setOpen(false)}
+              >
+                <span className="navIconWrap">
+                  <img src={iconByType[item.type] || dashboardIcon} alt="" aria-hidden="true" />
+                  {badgeCount > 0 && <span className="navBadge">{badgeLabel(badgeCount)}</span>}
+                </span>
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
         </nav>
         <button className="logout" onClick={handleLogout}><LogOut size={18} /> Logout</button>
       </aside>
@@ -347,6 +476,8 @@ export default function AppShell({ profile, title, children }) {
         *{box-sizing:border-box}.shell{display:flex;min-height:100vh}.sidebar{width:280px;height:100dvh;background:linear-gradient(180deg,#438fb5 0%,#255065 100%);color:#fff;display:flex;flex-direction:column;position:fixed;left:0;top:0;z-index:100;padding:0;box-shadow:5px 0 20px rgba(37,80,101,.15)}
         .sidebarBrand{padding:34px 28px 8px;display:flex;align-items:center;gap:12px;flex-shrink:0}.sidebarBrand>img{width:42px;height:42px;object-fit:contain;filter:brightness(0) invert(1)}.sidebarBrand>span{font-size:30px;font-weight:700;font-family:"Quicksand",sans-serif}.clinic{font-size:12px;color:rgba(255,255,255,.78);padding:0 30px 22px;flex-shrink:0}.sidebarClose{display:none;margin-left:auto;border:0;background:rgba(255,255,255,.15);color:#fff;border-radius:9px;padding:7px}
         .sidebarNav{display:flex;flex-direction:column;gap:3px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;padding:0 15px 10px;overscroll-behavior:contain}.sidebarNav::-webkit-scrollbar{width:6px}.sidebarNav::-webkit-scrollbar-track{background:transparent}.sidebarNav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.34);border-radius:999px}.sidebarNav a{display:flex;align-items:center;gap:15px;padding:12px 18px;border-radius:8px;text-decoration:none;color:#fff;font-size:14px;font-weight:500;flex-shrink:0}.sidebarNav a img{width:22px;height:22px;object-fit:contain;filter:brightness(0) invert(1)}.sidebarNav a:hover,.sidebarNav a.active{background:rgba(255,255,255,.27);color:#fff}.sidebarNav a.active{font-weight:600}
+        .navIconWrap{position:relative;display:inline-flex;flex-shrink:0}
+        .navBadge{position:absolute;top:-6px;right:-8px;min-width:16px;height:16px;padding:0 4px;display:flex;align-items:center;justify-content:center;background:#e53935;color:#fff;font-size:10px;line-height:1;font-weight:700;border-radius:999px;box-shadow:0 0 0 2px rgba(37,80,101,.55),0 1px 3px rgba(0,0,0,.25)}
         .logout{flex-shrink:0;margin:12px 15px 20px;border:1px solid rgba(255,255,255,.26);background:rgba(255,255,255,.12);color:#fff;padding:12px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;font-weight:600}.logout:hover{background:rgba(255,255,255,.22)}
         .shell main{margin-left:280px;flex:1;min-width:0}.topBar{height:96px;background:linear-gradient(110deg,#4aa3c7 0%,#66bcc8 48%,#78c4ca 100%);display:flex;align-items:center;padding:0 38px;justify-content:space-between;color:#fff;position:fixed;left:280px;right:0;top:0;z-index:80;border-bottom:1px solid rgba(255,255,255,.32);box-shadow:0 8px 26px rgba(35,91,116,.16);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.pageHeading{display:flex;flex-direction:column;justify-content:center;min-width:0}.topBar h1{margin:0;font-size:26px;line-height:1.12;color:#fff;font-weight:800;letter-spacing:-.02em;text-shadow:0 1px 2px rgba(20,73,94,.08)}.topBar p{margin:7px 0 0;color:rgba(255,255,255,.92);font-size:13px;font-weight:600;letter-spacing:.01em}.menu{display:none;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.16);color:#fff;padding:10px;border-radius:14px;box-shadow:0 4px 12px rgba(28,84,106,.08)}.headerActions{display:flex;align-items:center;gap:14px}.headerActions>.nb .bell{width:52px;height:52px;border-radius:17px!important;border:1px solid rgba(255,255,255,.6)!important;background:rgba(255,255,255,.92)!important;box-shadow:0 8px 18px rgba(31,91,115,.14)!important}.user{display:flex;align-items:center;gap:10px;color:#fff}.userText{display:flex;flex-direction:column;gap:1px;min-width:0}.userGreeting{font-size:14px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.userRole{font-size:11px;font-weight:600;line-height:1.2;color:rgba(255,255,255,.82);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.profileLink{text-decoration:none;padding:9px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.10);transition:background .18s ease,transform .18s ease}.profileLink svg{width:25px;height:25px;flex-shrink:0}.profileLink:hover{background:rgba(255,255,255,.2);color:#fff;transform:translateY(-1px)}.content{padding:126px 30px 30px}.card{background:#fff;border-radius:15px;padding:22px;box-shadow:0 4px 10px rgba(0,0,0,.04)}.sidebarOverlay{display:none}
         .chatbotLauncher{position:fixed;right:28px;bottom:28px;z-index:80;width:72px;height:72px;display:grid;place-items:center;overflow:hidden;border:3px solid #fff;border-radius:50%;background:#fff;box-shadow:0 8px 24px rgba(37,80,101,.3);transition:transform .2s ease,box-shadow .2s ease}.chatbotLauncher img{display:block;width:100%;height:100%;object-fit:contain;border-radius:50%}.chatbotLauncher:hover{transform:translateY(-3px) scale(1.04);box-shadow:0 12px 28px rgba(37,80,101,.38)}.chatbotLauncher:focus-visible{outline:4px solid #173e52;outline-offset:4px}

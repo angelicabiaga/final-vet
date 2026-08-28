@@ -174,10 +174,8 @@ export default function OtpVerification() {
       } else {
         const result = await completeLoginOtp(code, trustDevice);
 
-        navigate(
-          resolveLoginDestination(result.profile, location.state?.from),
-          { replace: true },
-        );
+        const destination = await resolveLoginDestination(result.profile, location.state?.from);
+        navigate(destination.pathname, { replace: true, state: destination.state });
       }
     } catch (error) {
       setMessage(error.message || 'Unable to verify OTP.');

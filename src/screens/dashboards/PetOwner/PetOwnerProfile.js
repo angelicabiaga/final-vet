@@ -18,6 +18,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { styles } from '../../styles/PetOwnerProfileDesign';
 import CustomModal from '../../../components/CustomModal';
+import { scrollAndFocusFirstInvalidField } from '../../shared/formValidation';
+import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from '../../../utils/validators';
 
 const DEFAULT_PROFILE_IMAGE = require('../../assets/Profile.png');
 
@@ -70,7 +72,10 @@ const PetOwnerProfile = ({ navigation, route }) => {
   const [showProfileToast, setShowProfileToast] = useState(false);
   const [showPhotoOptions, setShowPhotoOptions] = useState(false);
   const [showRequiredFieldsModal, setShowRequiredFieldsModal] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
   const scrollViewRef = useRef(null);
+  const fieldPositions = useRef({});
+  const fieldRefs = useRef({});
 
   const loggedInUser = route?.params?.user;
 
@@ -118,11 +123,13 @@ const PetOwnerProfile = ({ navigation, route }) => {
       ...profileData,
       firstName: '',
     });
+    setFieldErrors({});
     setIsEditing(true);
   };
 
   const cancelEditMode = () => {
     setDraftProfile(profileData);
+    setFieldErrors({});
     setIsEditing(false);
     setShowPhotoOptions(false);
   };
@@ -143,22 +150,45 @@ const PetOwnerProfile = ({ navigation, route }) => {
     });
   };
 
-  const updateDraftField = (field, value) => {
-    setDraftProfile((current) => ({ ...current, [field]: value }));
+  const validateProfileField = (field, value) => {
+    switch (field) {
+      case 'firstName':
+        return value?.trim() ? '' : 'First name is required.';
+      case 'lastName':
+        return value?.trim() ? '' : 'Last name is required.';
+      case 'contact':
+        return isValidPhMobile(value) ? '' : INVALID_PH_MOBILE_MESSAGE;
+      case 'emergencyContact':
+        return value?.trim() ? '' : 'Emergency contact is required.';
+      case 'address':
+        return value?.trim() ? '' : 'Address is required.';
+      default:
+        return '';
+    }
   };
 
-  const hasEmptyRequiredField = (profile) =>
-    !profile?.firstName?.trim() ||
-    !profile?.lastName?.trim() ||
-    !profile?.username?.trim() ||
-    !profile?.email?.trim() ||
-    !profile?.contact?.trim() ||
-    !profile?.emergencyContact?.trim() ||
-    !profile?.address?.trim();
+  const updateDraftField = (field, value) => {
+    setDraftProfile((current) => ({ ...current, [field]: value }));
+
+    if (fieldErrors[field]) {
+      setFieldErrors((current) => ({ ...current, [field]: validateProfileField(field, value) }));
+    }
+  };
 
   const handleDonePress = () => {
-    if (hasEmptyRequiredField(draftProfile)) {
+    const fieldsToCheck = ['firstName', 'lastName', 'contact', 'emergencyContact', 'address'];
+    const errors = {};
+
+    fieldsToCheck.forEach((field) => {
+      const message = validateProfileField(field, draftProfile[field]);
+      if (message) errors[field] = message;
+    });
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
       setShowRequiredFieldsModal(true);
+      scrollAndFocusFirstInvalidField({ scrollViewRef, fieldPositions, fieldRefs, errors });
       return;
     }
 
@@ -618,27 +648,35 @@ const PetOwnerProfile = ({ navigation, route }) => {
 
             {isEditing ? (
               <View style={styles.formCard}>
-                <Text style={styles.formLabel}>
-                  First Name<Text style={styles.requiredMark}> *</Text>
-                </Text>
-                <TextInput
-                  value={draftProfile.firstName}
-                  onChangeText={(value) => updateDraftField('firstName', value)}
-                  style={styles.inputField}
-                  placeholder="Enter first name"
-                  placeholderTextColor="#87a0b1"
-                />
+                <View onLayout={(e) => { fieldPositions.current.firstName = e.nativeEvent.layout.y; }}>
+                  <Text style={styles.formLabel}>
+                    First Name<Text style={styles.requiredMark}> *</Text>
+                  </Text>
+                  <TextInput
+                    ref={(el) => { fieldRefs.current.firstName = el; }}
+                    value={draftProfile.firstName}
+                    onChangeText={(value) => updateDraftField('firstName', value)}
+                    style={[styles.inputField, fieldErrors.firstName && styles.inputInvalid]}
+                    placeholder="Enter first name"
+                    placeholderTextColor="#87a0b1"
+                  />
+                  {!!fieldErrors.firstName && <Text style={styles.fieldErrorText}>{fieldErrors.firstName}</Text>}
+                </View>
 
-                <Text style={styles.formLabel}>
-                  Last Name<Text style={styles.requiredMark}> *</Text>
-                </Text>
-                <TextInput
-                  value={draftProfile.lastName}
-                  onChangeText={(value) => updateDraftField('lastName', value)}
-                  style={styles.inputField}
-                  placeholder="Enter last name"
-                  placeholderTextColor="#87a0b1"
-                />
+                <View onLayout={(e) => { fieldPositions.current.lastName = e.nativeEvent.layout.y; }}>
+                  <Text style={styles.formLabel}>
+                    Last Name<Text style={styles.requiredMark}> *</Text>
+                  </Text>
+                  <TextInput
+                    ref={(el) => { fieldRefs.current.lastName = el; }}
+                    value={draftProfile.lastName}
+                    onChangeText={(value) => updateDraftField('lastName', value)}
+                    style={[styles.inputField, fieldErrors.lastName && styles.inputInvalid]}
+                    placeholder="Enter last name"
+                    placeholderTextColor="#87a0b1"
+                  />
+                  {!!fieldErrors.lastName && <Text style={styles.fieldErrorText}>{fieldErrors.lastName}</Text>}
+                </View>
 
                 <Text style={styles.formLabel}>
                   Username<Text style={styles.requiredMark}> *</Text>
@@ -660,49 +698,61 @@ const PetOwnerProfile = ({ navigation, route }) => {
                   placeholderTextColor="#9aaebd"
                 />
 
-                <Text style={styles.formLabel}>
-                  Contact<Text style={styles.requiredMark}> *</Text>
-                </Text>
-                <TextInput
-                  value={draftProfile.contact}
-                  onChangeText={(value) =>
-                    updateDraftField('contact', value.replace(/[^0-9]/g, ''))
-                  }
-                  style={styles.inputField}
-                  placeholder="Enter contact number"
-                  placeholderTextColor="#87a0b1"
-                  keyboardType="number-pad"
-                  maxLength={11}
-                />
+                <View onLayout={(e) => { fieldPositions.current.contact = e.nativeEvent.layout.y; }}>
+                  <Text style={styles.formLabel}>
+                    Contact<Text style={styles.requiredMark}> *</Text>
+                  </Text>
+                  <TextInput
+                    ref={(el) => { fieldRefs.current.contact = el; }}
+                    value={draftProfile.contact}
+                    onChangeText={(value) =>
+                      updateDraftField('contact', value.replace(/[^0-9+]/g, ''))
+                    }
+                    style={[styles.inputField, fieldErrors.contact && styles.inputInvalid]}
+                    placeholder="09XXXXXXXXX or +639XXXXXXXXX"
+                    placeholderTextColor="#87a0b1"
+                    keyboardType="phone-pad"
+                    maxLength={13}
+                  />
+                  {!!fieldErrors.contact && <Text style={styles.fieldErrorText}>{fieldErrors.contact}</Text>}
+                </View>
 
-                <Text style={styles.formLabel}>
-                  Emergency Contact<Text style={styles.requiredMark}> *</Text>
-                </Text>
-                <TextInput
-                  value={draftProfile.emergencyContact}
-                  onChangeText={(value) =>
-                    updateDraftField(
-                      'emergencyContact',
-                      value.replace(/[^0-9]/g, '')
-                    )
-                  }
-                  style={styles.inputField}
-                  placeholder="Enter emergency contact"
-                  placeholderTextColor="#87a0b1"
-                  keyboardType="number-pad"
-                  maxLength={11}
-                />
+                <View onLayout={(e) => { fieldPositions.current.emergencyContact = e.nativeEvent.layout.y; }}>
+                  <Text style={styles.formLabel}>
+                    Emergency Contact<Text style={styles.requiredMark}> *</Text>
+                  </Text>
+                  <TextInput
+                    ref={(el) => { fieldRefs.current.emergencyContact = el; }}
+                    value={draftProfile.emergencyContact}
+                    onChangeText={(value) =>
+                      updateDraftField(
+                        'emergencyContact',
+                        value.replace(/[^0-9]/g, '')
+                      )
+                    }
+                    style={[styles.inputField, fieldErrors.emergencyContact && styles.inputInvalid]}
+                    placeholder="Enter emergency contact"
+                    placeholderTextColor="#87a0b1"
+                    keyboardType="number-pad"
+                    maxLength={11}
+                  />
+                  {!!fieldErrors.emergencyContact && <Text style={styles.fieldErrorText}>{fieldErrors.emergencyContact}</Text>}
+                </View>
 
-                <Text style={styles.formLabel}>
-                  Address<Text style={styles.requiredMark}> *</Text>
-                </Text>
-                <TextInput
-                  value={draftProfile.address}
-                  onChangeText={(value) => updateDraftField('address', value)}
-                  style={styles.inputField}
-                  placeholder="Enter address"
-                  placeholderTextColor="#87a0b1"
-                />
+                <View onLayout={(e) => { fieldPositions.current.address = e.nativeEvent.layout.y; }}>
+                  <Text style={styles.formLabel}>
+                    Address<Text style={styles.requiredMark}> *</Text>
+                  </Text>
+                  <TextInput
+                    ref={(el) => { fieldRefs.current.address = el; }}
+                    value={draftProfile.address}
+                    onChangeText={(value) => updateDraftField('address', value)}
+                    style={[styles.inputField, fieldErrors.address && styles.inputInvalid]}
+                    placeholder="Enter address"
+                    placeholderTextColor="#87a0b1"
+                  />
+                  {!!fieldErrors.address && <Text style={styles.fieldErrorText}>{fieldErrors.address}</Text>}
+                </View>
               </View>
             ) : (
               <View style={styles.infoGrid}>

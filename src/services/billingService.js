@@ -173,8 +173,15 @@ export async function getConsultationForBilling(queueEntryId) {
   };
 }
 
+let pendingBillingChannelSeq = 0;
 export function subscribeToPendingBilling(callback) {
-  const channel = supabase.channel(`pending-billing-${Date.now()}`)
+  // The counter guarantees a unique channel name even when two callers
+  // mount in the same tick (e.g. AppShell's Transactions (POS) badge and
+  // PendingBillingQueue's own subscription both mounting on the
+  // Transactions page) -- Date.now() alone is only millisecond-precision,
+  // and supabase-js reuses a channel by name, which throws if a second
+  // .on() lands on a channel the first caller already .subscribe()'d.
+  const channel = supabase.channel(`pending-billing-${Date.now()}-${++pendingBillingChannelSeq}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "queue_entries" }, callback)
     .subscribe();
   return () => { supabase.removeChannel(channel); };

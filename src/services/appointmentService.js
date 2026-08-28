@@ -1,6 +1,7 @@
 import { supabase } from "../config/supabaseClient";
 import { describeDbError } from "../utils/supabaseErrors";
 import { formatTime12h } from "../utils/timeFormat";
+import { PRIVACY_NOTICE_VERSION } from "../constants/privacyNotice";
 
 export const APPOINTMENT_STATUSES = ["Confirmed", "Completed", "Cancelled"];
 
@@ -272,7 +273,16 @@ function generateTempPassword() {
   return value.join("");
 }
 
-export async function createGuestOwner({ fullName, phone, email, address }) {
+/**
+ * Registers a brand-new walk-in Pet Owner. Always creates a new account
+ * (this is the "guest, no existing account" path -- an existing owner is
+ * found through the separate search-and-select flow instead), so the
+ * Data Privacy Consent captured on the walk-in form is recorded here via
+ * the same atomic pawcruz_create_pet_owner_with_consent RPC used by
+ * self-registration -- the profile and its consent record(s) are created
+ * in one transaction, never against a temporary/fake id.
+ */
+export async function createGuestOwner({ fullName, phone, email, address, marketingConsent = false, recordedBy = null, sourceContext = "Walk-in Registration" }) {
   const trimmedName = fullName?.trim();
   const trimmedEmail = email?.trim().toLowerCase();
   const trimmedPhone = phone?.trim();
@@ -285,22 +295,25 @@ export async function createGuestOwner({ fullName, phone, email, address }) {
   const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16) || "guest";
   const username = `${slug}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const tempPassword = generateTempPassword();
-  const { data, error } = await supabase.from("profiles").insert({
-    full_name: trimmedName,
-    username,
-    email: trimmedEmail,
-    phone: trimmedPhone,
-    address: trimmedAddress,
-    role: "pet_owner",
-    account_status: "active",
-    password: tempPassword,
-    must_change_password: true
-  }).select("id, full_name, username, email, phone, address").single();
+  const { data, error } = await supabase.rpc("pawcruz_create_pet_owner_with_consent", {
+    p_full_name: trimmedName,
+    p_username: username,
+    p_email: trimmedEmail,
+    p_password: tempPassword,
+    p_marketing_consent: Boolean(marketingConsent),
+    p_privacy_notice_version: PRIVACY_NOTICE_VERSION,
+    p_source_context: sourceContext,
+    p_method: "Staff Walk-in Form",
+    p_phone: trimmedPhone,
+    p_address: trimmedAddress,
+    p_must_change_password: true,
+    p_recorded_by: recordedBy,
+  });
   if (error) {
-    if (error.code === "23505") throw new Error("That email is already registered. Search for them as an existing pet owner instead.");
+    if (error.code === "23505" || /already registered/i.test(error.message || "")) throw new Error("That email is already registered. Search for them as an existing pet owner instead.");
     throw new Error(describeDbError(error, "Unable to register the guest. Please check the details and try again.", "createGuestOwner"));
   }
-  return { ...data, tempPassword };
+  return { id: data.id, full_name: data.full_name, username: data.username, email: data.email, phone: data.phone, address: data.address, tempPassword };
 }
 
 export async function sendGuestAccountEmail(details) {

@@ -25,10 +25,8 @@ export default function Login() {
 
       if (!result.requiresOtp) {
         // Trusted device: credentials were enough, no OTP needed this time.
-        navigate(
-          resolveLoginDestination(result.profile, location.state?.from?.pathname),
-          { replace: true },
-        );
+        const destination = await resolveLoginDestination(result.profile, location.state?.from?.pathname);
+        navigate(destination.pathname, { replace: true, state: destination.state });
         return;
       }
 

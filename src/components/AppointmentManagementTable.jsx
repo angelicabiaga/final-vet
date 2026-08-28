@@ -13,8 +13,8 @@ function isHandedOffToQueue(row) {
   return row.appointment_date <= todayLocal();
 }
 
-export default function AppointmentManagementTable({ profile, veterinarianOnly = false }) {
-  const [rows,setRows]=useState([]), [loading,setLoading]=useState(true), [status,setStatus]=useState(""), [date,setDate]=useState("");
+export default function AppointmentManagementTable({ profile, veterinarianOnly = false, focusToday = false }) {
+  const [rows,setRows]=useState([]), [loading,setLoading]=useState(true), [status,setStatus]=useState(""), [date,setDate]=useState(() => focusToday ? todayLocal() : "");
   const [search,setSearch]=useState(""), [page,setPage]=useState(1);
   const [message,setMessage]=useState("");
   const [notesModal,setNotesModal]=useState(null);
@@ -146,12 +146,23 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
 
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const visible = rows.filter(row => !isHandedOffToQueue(row));
+    // focusToday (arrived here via the Veterinarian sidebar's My
+    // Appointments badge/link) means today's Confirmed consultations
+    // should be prioritized, not hidden -- so the normal hand-off-to-queue
+    // filtering is skipped in that case. Every other entry point into
+    // this table (direct visit, Staff/Admin) keeps the original behavior.
+    const visible = focusToday ? rows : rows.filter(row => !isHandedOffToQueue(row));
     const base = !query ? visible : visible.filter(row => [
       row.pet?.pet_name, row.owner?.full_name, row.owner?.username, row.owner?.email,
       row.veterinarian?.full_name, row.notes, row.appointment_source
     ].some(value => String(value || "").toLowerCase().includes(query)));
     return [...base].sort((a, b) => {
+      if (focusToday) {
+        // Today's consultations first, then the usual recency ordering.
+        const todayA = a.appointment_date === todayLocal();
+        const todayB = b.appointment_date === todayLocal();
+        if (todayA !== todayB) return todayA ? -1 : 1;
+      }
       // Most recently created/updated row first, so whatever was just
       // booked, rebooked, or changed shows at the very top.
       const touchedA = new Date(a.updated_at || a.created_at || 0).getTime();
@@ -161,7 +172,7 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       const startA = String(a.start_time || ""), startB = String(b.start_time || "");
       return startA < startB ? 1 : startA > startB ? -1 : 0;
     });
-  }, [rows, search]);
+  }, [rows, search, focusToday]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);

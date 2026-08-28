@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { verifyLoginOtp, resendLoginOtp } from "../../api/authService";
+import { verifyLoginOtp, resendLoginOtp, resolveVeterinarianLandingRoute } from "../../api/authService";
 import otpBg from "../assets/reset.jpg";
 
 const OTP_LENGTH = 6;
@@ -69,7 +69,13 @@ const LoginOtpScreen = () => {
 
       const role = user.role;
       if (role === "admin") navigation.replace("admin-screen");
-      else if (role === "veterinarian") navigation.replace("vet-screen");
+      else if (role === "veterinarian") {
+        const destination = await resolveVeterinarianLandingRoute(user?.id);
+        navigation.replace(destination.route, {
+          user: { ...user, email: user?.email || email },
+          ...(destination.params || {}),
+        });
+      }
       else if (role === "staff") {
         navigation.replace("staff-screen", {
           user: { ...user, email: user?.email || email },

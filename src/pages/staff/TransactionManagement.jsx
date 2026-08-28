@@ -33,6 +33,7 @@ import { getInventoryItems, getInventoryItemsByIds } from "../../services/invent
 import { getActiveVeterinarians } from "../../services/medicalRecordService";
 import { downloadPrescriptionNoticePdf } from "../../utils/invoicePdf";
 import { formatDateTime12h } from "../../utils/timeFormat";
+import { focusFirstInvalidField, invalidClass } from "../../utils/formValidation";
 import {
   getConsultationForBilling,
   getOutstandingPrescriptions,
@@ -846,6 +847,10 @@ export function NewTransaction({ profile }) {
   const [amountTouched, setAmountTouched] = useState(false);
   const [splitPayment, setSplitPayment] = useState({ cash: "", digital: "", digitalMethod: "GCash" });
   const [notes, setNotes] = useState("");
+  const [paymentFieldErrors, setPaymentFieldErrors] = useState({});
+  const amountPaidFieldRef = useRef(null);
+  const splitCashFieldRef = useRef(null);
+  const splitDigitalFieldRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [successReceipt, setSuccessReceipt] = useState(null);
@@ -1055,7 +1060,7 @@ export function NewTransaction({ profile }) {
   // tests the vet actually rendered stay fixed at qty 1.
   function updateCartLine(inventoryItemId, patch) { setCart((current) => current.map((line) => line.inventory_item_id === inventoryItemId && (!line.locked || !line.qtyLocked) ? { ...line, ...patch } : line)); }
   function removeCartLine(inventoryItemId) { setCart((current) => current.filter((line) => line.inventory_item_id !== inventoryItemId || line.locked)); }
-  function resetForm() { setIncludeCheckupFee(invoiceKind === "Consultation" && !billing?.alreadyBilled); setCheckupFee(String(billing?.consultationFee ?? 500)); setPaymentMethod("Cash"); setAmountPaid(""); setAmountTouched(false); setSplitPayment({ cash: "", digital: "", digitalMethod: "GCash" }); setNotes(""); setError(""); setItemSearchOpen(false); }
+  function resetForm() { setIncludeCheckupFee(invoiceKind === "Consultation" && !billing?.alreadyBilled); setCheckupFee(String(billing?.consultationFee ?? 500)); setPaymentMethod("Cash"); setAmountPaid(""); setAmountTouched(false); setSplitPayment({ cash: "", digital: "", digitalMethod: "GCash" }); setNotes(""); setError(""); setPaymentFieldErrors({}); setItemSearchOpen(false); }
 
   // The medicine will be picked up from elsewhere -- drop it from this cart
   // and stop asking about it until staff re-opens this consultation.
@@ -1085,6 +1090,7 @@ export function NewTransaction({ profile }) {
   async function handleCheckout() {
     if (submitting) return;
     setError("");
+    setPaymentFieldErrors({});
     if (!billing) { setError("This consultation could not be loaded."); return; }
     const overStock = cart.find((line) => Number(line.quantity) > Number(line.available));
     if (overStock) { setError(`Only ${overStock.available} ${overStock.item_name} left in stock. Reduce the quantity.`); return; }
@@ -1093,8 +1099,18 @@ export function NewTransaction({ profile }) {
     // Partial and even zero payment are allowed here -- the invoice is
     // recorded as Unpaid / Partially Paid / Paid and the balance (if any)
     // is collected later via Collect Balance.
-    if (!isGcash && (!Number.isFinite(recordedAmountPaid) || recordedAmountPaid < 0)) { setError("Enter a valid payment amount."); return; }
-    if (paymentMethod === "Split Payment" && (!splitPayment.digitalMethod || Number(splitPayment.cash || 0) < 0 || Number(splitPayment.digital || 0) < 0)) { setError("Enter valid split-payment amounts and a digital payment method."); return; }
+    if (!isGcash && paymentMethod !== "Split Payment" && (!Number.isFinite(recordedAmountPaid) || recordedAmountPaid < 0)) {
+      setPaymentFieldErrors({ amountPaid: "Enter a valid payment amount." });
+      setError("Please fix the highlighted field before continuing.");
+      focusFirstInvalidField({ amountPaid: amountPaidFieldRef.current }, { amountPaid: true });
+      return;
+    }
+    if (paymentMethod === "Split Payment" && (!splitPayment.digitalMethod || Number(splitPayment.cash || 0) < 0 || Number(splitPayment.digital || 0) < 0)) {
+      setPaymentFieldErrors({ split: "Enter valid split-payment amounts and a digital payment method." });
+      setError("Please fix the highlighted field(s) before continuing.");
+      focusFirstInvalidField({ split: splitCashFieldRef.current }, { split: true });
+      return;
+    }
 
     const paymentStatus = isGcash
       ? "Pending"
@@ -1250,7 +1266,7 @@ export function NewTransaction({ profile }) {
 
       <div className="fee-row"><div><label className="field-label toggle-label"><input type="checkbox" className="inline-checkbox" checked={includeCheckupFee} disabled={billing?.alreadyBilled} onChange={(event) => setIncludeCheckupFee(event.target.checked)} /> Checkup fee (PHP)</label><input type="number" min="0" step="0.01" value={checkupFee} disabled={!includeCheckupFee} readOnly className={!includeCheckupFee ? "fee-disabled" : ""} />{billing?.alreadyBilled ? <span className="muted fee-off-note">Already collected earlier for this visit.</span> : !includeCheckupFee && <span className="muted fee-off-note">Off — product-only POS sale.</span>}</div><div><label className="field-label">Payment method</label><select value={paymentMethod} onChange={(event) => { setPaymentMethod(event.target.value); setAmountTouched(false); }}>{PAYMENT_METHODS.map((method) => <option key={method}>{method}</option>)}</select></div></div>
 
-      {paymentMethod === "Split Payment" ? <div className="split-payment-form"><label>Cash portion<input type="number" min="0" step="0.01" value={splitPayment.cash} onChange={(event) => setSplitPayment((current) => ({ ...current, cash: event.target.value }))} placeholder="0.00" /></label><label>{splitPayment.digitalMethod} portion<input type="number" min="0" step="0.01" value={splitPayment.digital} onChange={(event) => setSplitPayment((current) => ({ ...current, digital: event.target.value }))} placeholder="0.00" /></label><label>Digital method<select value={splitPayment.digitalMethod} onChange={(event) => setSplitPayment((current) => ({ ...current, digitalMethod: event.target.value }))}>{PAYMENT_METHODS.filter((method) => !["Cash", "Split Payment"].includes(method)).map((method) => <option key={method}>{method}</option>)}</select></label><p>Total received: <b>{money(splitTotal)}</b>{paymentStatusPreview && paymentStatusPreview !== "Full Payment" && <span className={`payment-preview-note ${paymentStatusPreview === "Unpaid" ? "unpaid" : "partial"}`}> · {paymentStatusPreview}</span>}</p></div> : isGcash ? <div className="online-payment-note"><CreditCard size={18} /> GCash is saved as <b>Pending</b>; inventory is deducted only after PayMongo confirms payment.</div> : <div className="payment-amount-row"><label>Amount paid<input type="number" min="0" max={totalAmount.toFixed(2)} step="0.01" value={amountPaid} onChange={(event) => { const raw = event.target.value; const numeric = Number(raw); const clamped = Number.isFinite(numeric) && numeric > totalAmount ? totalAmount.toFixed(2) : raw; setAmountPaid(clamped); setAmountTouched(true); }} placeholder="0.00" />{paymentStatusPreview && paymentStatusPreview !== "Full Payment" && <small className={`payment-preview-note ${paymentStatusPreview === "Unpaid" ? "unpaid" : "partial"}`}>{paymentStatusPreview}</small>}</label><div><span>Change</span><strong>{money(changeAmount)}</strong></div></div>}
+      {paymentMethod === "Split Payment" ? <div className="split-payment-form"><label>Cash portion<input ref={splitCashFieldRef} className={invalidClass(paymentFieldErrors, "split")} type="number" min="0" step="0.01" value={splitPayment.cash} onChange={(event) => { setSplitPayment((current) => ({ ...current, cash: event.target.value })); if (paymentFieldErrors.split) setPaymentFieldErrors({}); }} placeholder="0.00" /></label><label>{splitPayment.digitalMethod} portion<input ref={splitDigitalFieldRef} className={invalidClass(paymentFieldErrors, "split")} type="number" min="0" step="0.01" value={splitPayment.digital} onChange={(event) => { setSplitPayment((current) => ({ ...current, digital: event.target.value })); if (paymentFieldErrors.split) setPaymentFieldErrors({}); }} placeholder="0.00" /></label><label>Digital method<select value={splitPayment.digitalMethod} onChange={(event) => setSplitPayment((current) => ({ ...current, digitalMethod: event.target.value }))}>{PAYMENT_METHODS.filter((method) => !["Cash", "Split Payment"].includes(method)).map((method) => <option key={method}>{method}</option>)}</select></label>{paymentFieldErrors.split && <span className="field-error-text">{paymentFieldErrors.split}</span>}<p>Total received: <b>{money(splitTotal)}</b>{paymentStatusPreview && paymentStatusPreview !== "Full Payment" && <span className={`payment-preview-note ${paymentStatusPreview === "Unpaid" ? "unpaid" : "partial"}`}> · {paymentStatusPreview}</span>}</p></div> : isGcash ? <div className="online-payment-note"><CreditCard size={18} /> GCash is saved as <b>Pending</b>; inventory is deducted only after PayMongo confirms payment.</div> : <div className="payment-amount-row"><label>Amount paid<input ref={amountPaidFieldRef} className={invalidClass(paymentFieldErrors, "amountPaid")} type="number" min="0" max={totalAmount.toFixed(2)} step="0.01" value={amountPaid} onChange={(event) => { const raw = event.target.value; const numeric = Number(raw); const clamped = Number.isFinite(numeric) && numeric > totalAmount ? totalAmount.toFixed(2) : raw; setAmountPaid(clamped); setAmountTouched(true); if (paymentFieldErrors.amountPaid) setPaymentFieldErrors({}); }} placeholder="0.00" />{paymentStatusPreview && paymentStatusPreview !== "Full Payment" && <small className={`payment-preview-note ${paymentStatusPreview === "Unpaid" ? "unpaid" : "partial"}`}>{paymentStatusPreview}</small>}{paymentFieldErrors.amountPaid && <span className="field-error-text">{paymentFieldErrors.amountPaid}</span>}</label><div><span>Change</span><strong>{money(changeAmount)}</strong></div></div>}
       <label className="field-label notes-section-label">Notes<span className="optional-mark"> (Optional)</span></label>
       <textarea className="notes-input" value={notes} onChange={(event) => setNotes(event.target.value)} />
       <div className="totals"><div><span>Service subtotal</span><span>{money(effectiveCheckupFee)}</span></div><div><span>Items subtotal</span><span>{money(itemsSubtotal)}</span></div><div><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="grand-total"><span>Total amount due</span><span>{money(totalAmount)}</span></div></div>

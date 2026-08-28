@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Check,
   MapPin,
@@ -11,8 +11,49 @@ import pawLogo from "../../assets/reference/paw.png";
 import dogCatBackground from "../../assets/reference/dog_cat.jpg";
 import PasswordInput from "../../components/PasswordInput";
 import PasswordChecklist from "../../components/PasswordChecklist";
+import DataPrivacyConsent, { focusConsentBlock } from "../../components/DataPrivacyConsent";
 import { registerPetOwner } from "../../services/authService";
-import { validatePassword, validatePasswordsMatch, validateRequiredName } from "../../utils/validators";
+import { CONSENT_REQUIRED_ERROR } from "../../constants/privacyNotice";
+import {
+  validatePassword, validatePasswordsMatch, isValidPhMobile, INVALID_PH_MOBILE_MESSAGE,
+  FIRST_NAME_REQUIRED_MESSAGE, LAST_NAME_REQUIRED_MESSAGE,
+} from "../../utils/validators";
+import { focusFirstInvalidField, invalidClass } from "../../utils/formValidation";
+
+function validateRegisterField(name, value, form) {
+  switch (name) {
+    case "firstName":
+      return String(value || "").trim() ? "" : FIRST_NAME_REQUIRED_MESSAGE;
+    case "lastName":
+      return String(value || "").trim() ? "" : LAST_NAME_REQUIRED_MESSAGE;
+    case "username": {
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "Username is required.";
+      if (!/^[a-z0-9_.-]{3,30}$/i.test(trimmed)) return "Username must be 3–30 characters and may use letters, numbers, dots, dashes, or underscores.";
+      return "";
+    }
+    case "email": {
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "Email address is required.";
+      if (!/^\S+@\S+\.\S+$/.test(trimmed)) return "Please enter a valid email address.";
+      return "";
+    }
+    case "address":
+      return String(value || "").trim() ? "" : "Address is required.";
+    case "phone":
+      return isValidPhMobile(value) ? "" : INVALID_PH_MOBILE_MESSAGE;
+    case "password": {
+      if (!String(value || "")) return "Password is required.";
+      try { validatePassword(value); return ""; } catch (error) { return error.message; }
+    }
+    case "confirm": {
+      if (!String(value || "")) return "Please confirm your password.";
+      try { validatePasswordsMatch(form.password, value); return ""; } catch (error) { return error.message; }
+    }
+    default:
+      return "";
+  }
+}
 
 const registerStyles = `
   .register-page,
@@ -284,7 +325,8 @@ const registerStyles = `
 
   .register-error,
   .register-submit-button,
-  .register-form-links {
+  .register-form-links,
+  .register-form .pcConsentBlock {
     grid-column: 1 / -1;
   }
 
@@ -1007,6 +1049,8 @@ export default function Register() {
     lastName: "",
     username: "",
     email: "",
+    address: "",
+    phone: "",
     password: "",
     confirm: "",
   });
@@ -1014,6 +1058,13 @@ export default function Register() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [passwordRulesOpen, setPasswordRulesOpen] = useState(false);
+  const [serviceConsent, setServiceConsent] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
+  const [consentError, setConsentError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const consentRef = useRef(null);
+  const fieldRefs = useRef({}).current;
+  const registerFieldRef = (name) => (el) => { fieldRefs[name] = el; };
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -1035,27 +1086,51 @@ export default function Register() {
   const registered = Boolean(location.state?.registered);
 
   function updateField(field, value) {
-    setForm((currentForm) => ({
-      ...currentForm,
-      [field]: value,
-    }));
+    const nextForm = { ...form, [field]: value };
+    setForm(nextForm);
 
     if (message) {
       setMessage("");
     }
+
+    // Only live-revalidate a field once it's already showing an error, so
+    // we don't nag the user before they've finished typing -- once shown,
+    // the error clears itself the moment the value becomes valid. Editing
+    // the password also re-checks Confirm Password if it currently has a
+    // mismatch error, since its validity depends on the password value too.
+    setFieldErrors((current) => {
+      if (!current[field] && !(field === "password" && current.confirm)) return current;
+      const next = { ...current, [field]: validateRegisterField(field, value, nextForm) };
+      if (field === "password" && current.confirm) {
+        next.confirm = validateRegisterField("confirm", nextForm.confirm, nextForm);
+      }
+      return next;
+    });
   }
 
   async function submit(e) {
     e.preventDefault();
     if (loading) return;
     setMessage("");
+    setConsentError("");
 
-    try {
-      validateRequiredName(form.firstName, form.lastName);
-      validatePassword(form.password);
-      validatePasswordsMatch(form.password, form.confirm);
-    } catch (validationError) {
-      setMessage(validationError.message);
+    const errors = {};
+    ["firstName", "lastName", "username", "email", "address", "phone", "password", "confirm"].forEach((name) => {
+      const errorMessage = validateRegisterField(name, form[name], form);
+      if (errorMessage) errors[name] = errorMessage;
+    });
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setMessage("Please fix the highlighted field(s) before continuing.");
+      focusFirstInvalidField(fieldRefs, errors);
+      return;
+    }
+
+    if (!serviceConsent) {
+      setConsentError(CONSENT_REQUIRED_ERROR);
+      focusConsentBlock(consentRef);
       return;
     }
 
@@ -1073,6 +1148,8 @@ export default function Register() {
       const result = await registerPetOwner({
         ...form,
         fullName: completeName,
+        serviceConsent,
+        marketingConsent,
       });
 
       navigate("/otp?purpose=register", {
@@ -1124,6 +1201,8 @@ export default function Register() {
                 <span>First Name<span className="required-mark"> *</span></span>
 
                 <input
+                  ref={registerFieldRef("firstName")}
+                  className={invalidClass(fieldErrors, "firstName")}
                   type="text"
                   name="firstName"
                   placeholder="Enter your first name"
@@ -1134,12 +1213,15 @@ export default function Register() {
                     updateField("firstName", e.target.value)
                   }
                 />
+                {fieldErrors.firstName && <span className="field-error-text">{fieldErrors.firstName}</span>}
               </label>
 
               <label className="register-field">
                 <span>Last Name<span className="required-mark"> *</span></span>
 
                 <input
+                  ref={registerFieldRef("lastName")}
+                  className={invalidClass(fieldErrors, "lastName")}
                   type="text"
                   name="lastName"
                   placeholder="Enter your last name"
@@ -1150,6 +1232,7 @@ export default function Register() {
                     updateField("lastName", e.target.value)
                   }
                 />
+                {fieldErrors.lastName && <span className="field-error-text">{fieldErrors.lastName}</span>}
               </label>
 
               <label className='register-field'>
@@ -1173,6 +1256,8 @@ export default function Register() {
                 <span>Username<span className="required-mark"> *</span></span>
 
                 <input
+                  ref={registerFieldRef("username")}
+                  className={invalidClass(fieldErrors, "username")}
                   type="text"
                   name="username"
                   placeholder="Enter your username"
@@ -1183,12 +1268,15 @@ export default function Register() {
                     updateField("username", e.target.value)
                   }
                 />
+                {fieldErrors.username && <span className="field-error-text">{fieldErrors.username}</span>}
               </label>
 
               <label className="register-field">
                 <span>Email Address<span className="required-mark"> *</span></span>
 
                 <input
+                  ref={registerFieldRef("email")}
+                  className={invalidClass(fieldErrors, "email")}
                   type="email"
                   name="email"
                   placeholder="Enter your email address"
@@ -1199,12 +1287,53 @@ export default function Register() {
                     updateField("email", e.target.value)
                   }
                 />
+                {fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}
+              </label>
+
+              <label className="register-field">
+                <span>Address<span className="required-mark"> *</span></span>
+
+                <input
+                  ref={registerFieldRef("address")}
+                  className={invalidClass(fieldErrors, "address")}
+                  type="text"
+                  name="address"
+                  placeholder="Enter your home address"
+                  autoComplete="street-address"
+                  required
+                  value={form.address}
+                  onChange={(e) =>
+                    updateField("address", e.target.value)
+                  }
+                />
+                {fieldErrors.address && <span className="field-error-text">{fieldErrors.address}</span>}
+              </label>
+
+              <label className="register-field">
+                <span>Contact Number<span className="required-mark"> *</span></span>
+
+                <input
+                  ref={registerFieldRef("phone")}
+                  className={invalidClass(fieldErrors, "phone")}
+                  type="tel"
+                  name="phone"
+                  placeholder="09XXXXXXXXX or +639XXXXXXXXX"
+                  autoComplete="tel"
+                  required
+                  value={form.phone}
+                  onChange={(e) =>
+                    updateField("phone", e.target.value)
+                  }
+                />
+                {fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}
               </label>
 
               <label className="register-field register-field-password">
                 <span>Password<span className="required-mark"> *</span></span>
 
                 <PasswordInput
+                  ref={registerFieldRef("password")}
+                  className={invalidClass(fieldErrors, "password")}
                   name="password"
                   placeholder="Enter your password"
                   autoComplete="new-password"
@@ -1223,12 +1352,15 @@ export default function Register() {
                     <PasswordChecklist password={form.password} />
                   </div>
                 )}
+                {fieldErrors.password && <span className="field-error-text">{fieldErrors.password}</span>}
               </label>
 
               <label className="register-field">
                 <span>Confirm Password<span className="required-mark"> *</span></span>
 
                 <PasswordInput
+                  ref={registerFieldRef("confirm")}
+                  className={invalidClass(fieldErrors, "confirm")}
                   name="confirmPassword"
                   placeholder="Re-enter your password"
                   autoComplete="new-password"
@@ -1239,7 +1371,20 @@ export default function Register() {
                     updateField("confirm", e.target.value)
                   }
                 />
+                {fieldErrors.confirm && <span className="field-error-text">{fieldErrors.confirm}</span>}
               </label>
+
+              <DataPrivacyConsent
+                ref={consentRef}
+                serviceConsent={serviceConsent}
+                onServiceConsentChange={(checked) => {
+                  setServiceConsent(checked);
+                  if (checked) setConsentError("");
+                }}
+                marketingConsent={marketingConsent}
+                onMarketingConsentChange={setMarketingConsent}
+                error={consentError}
+              />
 
               {message && (
                 <div

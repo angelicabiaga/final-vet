@@ -262,6 +262,28 @@ export const styles = StyleSheet.create({
     color: '#ffffff',
   },
 
+  menuBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 3,
+    borderRadius: 9,
+    backgroundColor: '#e53935',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+  },
+
+  menuBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '800',
+    lineHeight: 12,
+  },
+
   welcomeCard: {
     borderRadius: 28,
     paddingHorizontal: 20,

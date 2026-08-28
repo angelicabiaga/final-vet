@@ -91,3 +91,9 @@ button:not(:disabled):active{transform:translateY(0)}
   .shell .content{min-height:calc(100vh - 70px)}
   .dash-head{padding:15px 16px!important}
 }
+
+/* Focus-and-scroll invalid-field feedback -- shared across every web form.
+   Applied via invalidClass()/focusFirstInvalidField() from
+   src/utils/formValidation.js. */
+.field-invalid{border-color:#d9534f!important;box-shadow:0 0 0 1px #d9534f!important}
+.field-error-text{margin-top:4px;color:#a51d2d;font-size:12.5px;font-weight:700;line-height:1.4}

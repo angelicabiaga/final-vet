@@ -14,12 +14,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { styles } from '../../styles/PetOwnerDashboardDesign';
 import { getBookedAppointment } from './PetOwnerAppointmentData';
 import { getAllPets } from './PetOwnerMyPetsInfo';
+import { usePetOwnerBadgeCounts, badgeLabel } from '../../shared/usePetOwnerBadgeCounts';
 
 const DEFAULT_PROFILE_IMAGE = require('../../assets/Profile.png');
+const getOwnerId = (user) => user?.id || user?.user_id || user?.profile_id || '';
 
 const PetOwnerDashboard = ({ navigation, route }) => {
   const loggedInUser = route?.params?.user;
   const currentUser = loggedInUser || {};
+  const navBadgeCounts = usePetOwnerBadgeCounts(getOwnerId(loggedInUser));
   const headerDisplayName =
     loggedInUser?.username ||
     loggedInUser?.name ||
@@ -384,6 +387,9 @@ const PetOwnerDashboard = ({ navigation, route }) => {
                   extrapolate: 'clamp',
                 });
 
+                const badgeKey = item.key === 'appointment' ? 'appointments' : item.key === 'queue' ? 'queue' : item.key === 'messages' ? 'messages' : null;
+                const badgeCount = badgeKey ? (navBadgeCounts[badgeKey] || 0) : 0;
+
                 return (
                   <Animated.View
                     key={item.key}
@@ -403,6 +409,11 @@ const PetOwnerDashboard = ({ navigation, route }) => {
                           style={styles.headerMenuItemIcon}
                           resizeMode="contain"
                         />
+                        {badgeCount > 0 ? (
+                          <View style={styles.menuBadge}>
+                            <Text style={styles.menuBadgeText}>{badgeLabel(badgeCount)}</Text>
+                          </View>
+                        ) : null}
                       </View>
                       <Text style={styles.headerMenuItemLabel}>{item.label}</Text>
                     </TouchableOpacity>

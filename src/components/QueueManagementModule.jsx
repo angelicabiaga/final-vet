@@ -70,7 +70,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
  // date's batch they actually want to see and check in from.
  const checkinAppointments=useMemo(()=>appointments.filter(a=>a.appointment_date===checkinDate),[appointments,checkinDate]);
  // Once the vet marks a ticket Completed it drops off the live queue - it's
- // tracked from the Appointment Management page from there. Selecting
+ // tracked from the List of Appointments page from there. Selecting
  // "Completed" from the status filter still shows it on request.
  const tableRows=useMemo(()=>{
   const base=status==="Completed"?rows:rows.filter(r=>r.status!=="Completed");

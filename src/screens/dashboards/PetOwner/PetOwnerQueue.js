@@ -3,11 +3,15 @@ import { Animated, Easing, Image, SafeAreaView, ScrollView, StyleSheet, Text, To
 import { LinearGradient } from 'expo-linear-gradient';
 import { styles } from '../../styles/PetOwnerAppointmentDesign';
 import { getQueue, subscribeToQueue } from '../../../api/queueService';
+import { usePetOwnerBadgeCounts, badgeLabel } from '../../shared/usePetOwnerBadgeCounts';
 
 const DEFAULT_PROFILE_IMAGE = require('../../assets/Profile.png');
+const getOwnerId = (user) => user?.id || user?.user_id || user?.profile_id || '';
 
 export default function PetOwnerQueue({ navigation, route }) {
   const user = route?.params?.user;
+  const ownerId = getOwnerId(user);
+  const navBadgeCounts = usePetOwnerBadgeCounts(ownerId);
   const profileImageUri = user?.profileImageUri || user?.avatar || '';
   const headerDisplayName = user?.username || user?.name || user?.fullName || 'Pet Owner';
   const [entry, setEntry] = useState(null);
@@ -116,12 +120,23 @@ export default function PetOwnerQueue({ navigation, route }) {
 
           {isHeaderMenuVisible ? (
             <Animated.View style={[styles.headerMenuPanel, { opacity: headerMenuAnimation, transform: [{ translateY: headerMenuAnimation.interpolate({ inputRange: [0, 1], outputRange: [-18, 0] }) }] }] }>
-              {headerMenuItems.map((item) => (
-                <TouchableOpacity key={item.key} style={styles.headerMenuItem} onPress={() => goTo(item.route)} activeOpacity={0.88}>
-                  <View style={styles.headerMenuItemIconWrap}><Image source={item.icon} style={styles.headerMenuItemIcon} resizeMode="contain" /></View>
-                  <Text style={styles.headerMenuItemLabel}>{item.label}</Text>
-                </TouchableOpacity>
-              ))}
+              {headerMenuItems.map((item) => {
+                const badgeKey = item.key === 'appointment' ? 'appointments' : item.key === 'queue' ? 'queue' : item.key === 'messages' ? 'messages' : null;
+                const badgeCount = badgeKey ? (navBadgeCounts[badgeKey] || 0) : 0;
+                return (
+                  <TouchableOpacity key={item.key} style={styles.headerMenuItem} onPress={() => goTo(item.route)} activeOpacity={0.88}>
+                    <View style={styles.headerMenuItemIconWrap}>
+                      <Image source={item.icon} style={styles.headerMenuItemIcon} resizeMode="contain" />
+                      {badgeCount > 0 ? (
+                        <View style={styles.menuBadge}>
+                          <Text style={styles.menuBadgeText}>{badgeLabel(badgeCount)}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={styles.headerMenuItemLabel}>{item.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </Animated.View>
           ) : null}
         </LinearGradient>

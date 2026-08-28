@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useLocation } from "react-router-dom";
 
 import {
   Archive,
@@ -52,6 +53,7 @@ import {
 } from "../services/inventoryService";
 
 import { formatDateTime12h } from "../utils/timeFormat";
+import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 import ConfirmDialog from "./ConfirmDialog";
 import InventoryForecastReport from "./InventoryForecastReport";
 
@@ -91,6 +93,10 @@ const BATCH_CREATING_TX_TYPES = [
 const BATCH_PAGE_SIZE = 10;
 const UNIT_PAGE_SIZE = 12;
 const ITEMS_PAGE_SIZE = 10;
+
+// Matches the sidebar's Inventory alert badge -- the statuses that mean a
+// staff/admin member actually needs to act on this item.
+const ALERT_STATUSES = ["Low Stock", "Out of Stock", "Near Expiry"];
 
 function formatUnitId(unitNo) {
   return `UNIT-${String(unitNo).padStart(6, "0")}`;
@@ -281,6 +287,22 @@ function forecastSignature(rows) {
 export default function InventoryManagementModule({
   profile,
 }) {
+  // Set by AppShell's Inventory badge link (state: { prioritizeAlerts: true })
+  // so arriving from the badge surfaces the alert items first without
+  // filtering anything out of view or touching any stock record.
+  const location = useLocation();
+  const prioritizeAlerts = Boolean(location.state?.prioritizeAlerts);
+  const scrolledForAlertsRef = useRef(false);
+
+  // Set by the Staff dashboard's "Stock Alerts" card (state: { filterAlerts: true })
+  // -- unlike prioritizeAlerts (which only reorders), this actually narrows
+  // the list to Low Stock/Out of Stock/Near Expiry items, as that card's
+  // spec explicitly asks for a filtered view. Kept as its own state (not
+  // read directly from location.state) so it can self-clear the moment the
+  // staff member changes any filter themselves -- see the effect below.
+  const [filterAlertsActive, setFilterAlertsActive] = useState(Boolean(location.state?.filterAlerts));
+  const isFirstFiltersRender = useRef(true);
+
   const canManageItems = [
     "admin",
     "staff",
@@ -332,8 +354,24 @@ export default function InventoryManagementModule({
     includeArchived: false,
   });
 
+  // The Stock Alerts card's filter is a one-time starting point, not a
+  // sticky mode -- the instant the staff member changes search, category,
+  // status, or the quick-filter stat cards (all of which go through
+  // setFilters), it gets out of their way rather than silently hiding
+  // items that no longer match "alerts" but do match what they just asked for.
+  useEffect(() => {
+    if (isFirstFiltersRender.current) {
+      isFirstFiltersRender.current = false;
+      return;
+    }
+    setFilterAlertsActive(false);
+  }, [filters]);
+
   const [itemForm, setItemForm] =
     useState(EMPTY_ITEM);
+  const [itemFieldErrors, setItemFieldErrors] = useState({});
+  const itemFieldRefs = useRef({}).current;
+  const registerItemFieldRef = (name) => (el) => { itemFieldRefs[name] = el; };
 
   const [txForm, setTxForm] =
     useState(EMPTY_TX);
@@ -463,12 +501,42 @@ export default function InventoryManagementModule({
     setItemsPage(1);
   }, [filters]);
 
-  const itemsTotalPages = Math.max(1, Math.ceil(items.length / ITEMS_PAGE_SIZE));
+  // Neither path ever mutates `items` or writes anything back to the
+  // database -- both are display-only. filterAlertsActive (Staff dashboard's
+  // Stock Alerts card) actually narrows the list to alert-status items;
+  // prioritizeAlerts (the sidebar Inventory badge) only reorders, keeping
+  // every item visible.
+  const displayItems = useMemo(() => {
+    let result = items;
+    if (filterAlertsActive) {
+      result = result.filter((item) => ALERT_STATUSES.includes(item.status));
+    }
+    if (prioritizeAlerts) {
+      const alerts = [];
+      const rest = [];
+      result.forEach((item) => {
+        (ALERT_STATUSES.includes(item.status) ? alerts : rest).push(item);
+      });
+      result = [...alerts, ...rest];
+    }
+    return result;
+  }, [items, prioritizeAlerts, filterAlertsActive]);
+
+  const itemsTotalPages = Math.max(1, Math.ceil(displayItems.length / ITEMS_PAGE_SIZE));
   const itemsCurrentPage = Math.min(itemsPage, itemsTotalPages);
-  const pagedItems = items.slice(
+  const pagedItems = displayItems.slice(
     (itemsCurrentPage - 1) * ITEMS_PAGE_SIZE,
     itemsCurrentPage * ITEMS_PAGE_SIZE
   );
+
+  // Scrolls to the item list once, the first time the alert-narrowed or
+  // alert-prioritized list finishes loading after arriving from the badge
+  // or the Stock Alerts card -- not on every subsequent refresh/filter change.
+  useEffect(() => {
+    if ((!prioritizeAlerts && !filterAlertsActive) || loading || scrolledForAlertsRef.current) return;
+    scrolledForAlertsRef.current = true;
+    listSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [prioritizeAlerts, filterAlertsActive, loading]);
 
   const transactionRows = useMemo(() => {
     if (!selectedItem) {
@@ -483,6 +551,7 @@ export default function InventoryManagementModule({
 
   function openNewItem() {
     setItemForm(EMPTY_ITEM);
+    setItemFieldErrors({});
     setModal("item");
   }
 
@@ -713,6 +782,7 @@ export default function InventoryManagementModule({
       reorder_level: String(item.reorder_level),
       expiry_date: item.expiry_date || "",
     });
+    setItemFieldErrors({});
 
     setModal("item");
   }
@@ -1534,6 +1604,26 @@ export default function InventoryManagementModule({
       return;
     }
 
+    const fieldsToCheck = ["item_name", "sku", "category", "unit"];
+    const errors = {};
+    const allFieldRefs = {};
+
+    fieldsToCheck.forEach((name) => {
+      const errorMessage = validateItemField(name, itemForm[name], itemForm);
+      if (!errorMessage) return;
+      errors[name] = errorMessage;
+      const refTarget = name === "category" && itemForm.category === "Others" ? itemFieldRefs.custom_category : itemFieldRefs[name];
+      if (refTarget) allFieldRefs[name] = refTarget;
+    });
+
+    setItemFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setNotice({ type: "error", text: "Please fix the highlighted field(s) before continuing." });
+      focusFirstInvalidField(allFieldRefs, errors);
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -1886,16 +1976,26 @@ export default function InventoryManagementModule({
       </div>
 
       <div className="card table-card" ref={listSectionRef}>
+        {filterAlertsActive && (
+          <div className="alert-filter-banner">
+            <TriangleAlert size={16} />
+            <span>Showing only Low Stock, Out of Stock, and Near Expiry items.</span>
+            <button type="button" onClick={() => setFilterAlertsActive(false)}>
+              Show all items
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="empty">
             Loading inventory…
           </div>
-        ) : items.length ===
+        ) : displayItems.length ===
           0 ? (
           <div className="empty">
-            No inventory items
-            match the selected
-            filters.
+            {filterAlertsActive
+              ? "No low-stock, out-of-stock, or near-expiry items right now."
+              : "No inventory items match the selected filters."}
           </div>
         ) : (
           <div className="table-wrap">
@@ -2177,20 +2277,25 @@ export default function InventoryManagementModule({
               submitItem
             }
           >
-            <Field label="Item Name" required>
+            <Field label="Item Name" required error={itemFieldErrors.item_name}>
               <input
+                ref={registerItemFieldRef("item_name")}
+                className={invalidClass(itemFieldErrors, "item_name")}
                 value={
                   itemForm.item_name
                 }
                 required
-                onChange={(e) =>
+                onChange={(e) => {
                   setItemForm({
                     ...itemForm,
                     item_name:
                       e.target
                         .value,
-                  })
-                }
+                  });
+                  if (itemFieldErrors.item_name && e.target.value.trim()) {
+                    setItemFieldErrors((current) => ({ ...current, item_name: "" }));
+                  }
+                }}
               />
             </Field>
 
@@ -2222,31 +2327,38 @@ export default function InventoryManagementModule({
               </div>
             )}
 
-            <Field label="Item Code (SKU)" required>
+            <Field label="Item Code (SKU)" required error={itemFieldErrors.sku}>
               <input
+                ref={registerItemFieldRef("sku")}
+                className={invalidClass(itemFieldErrors, "sku")}
                 value={
                   itemForm.sku
                 }
                 required
                 disabled={!!itemForm.id}
                 placeholder="Example: VAC-001"
-                onChange={(e) =>
+                onChange={(e) => {
                   setItemForm({
                     ...itemForm,
                     sku:
                       e.target
                         .value,
-                  })
-                }
+                  });
+                  if (itemFieldErrors.sku && e.target.value.trim()) {
+                    setItemFieldErrors((current) => ({ ...current, sku: "" }));
+                  }
+                }}
               />
             </Field>
 
-            <Field label="Product Category" required>
+            <Field label="Product Category" required error={itemForm.category !== "Others" ? itemFieldErrors.category : ""}>
               <select
+                ref={registerItemFieldRef("category")}
+                className={invalidClass(itemFieldErrors, "category")}
                 value={itemForm.category}
                 required
                 disabled={!!itemForm.id}
-                onChange={(e) =>
+                onChange={(e) => {
                   setItemForm({
                     ...itemForm,
                     category: e.target.value,
@@ -2254,8 +2366,11 @@ export default function InventoryManagementModule({
                       e.target.value === "Others"
                         ? itemForm.custom_category || ""
                         : "",
-                  })
-                }
+                  });
+                  if (itemFieldErrors.category && e.target.value && e.target.value !== "Others") {
+                    setItemFieldErrors((current) => ({ ...current, category: "" }));
+                  }
+                }}
               >
                 <option value="">Select product category</option>
                 <option value="Vaccines">Vaccines</option>
@@ -2272,36 +2387,49 @@ export default function InventoryManagementModule({
 
               {itemForm.category === "Others" && (
                 <input
+                  ref={registerItemFieldRef("custom_category")}
+                  className={invalidClass(itemFieldErrors, "category")}
                   value={itemForm.custom_category || ""}
                   placeholder="Type category"
                   required
                   disabled={!!itemForm.id}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setItemForm({
                       ...itemForm,
                       custom_category: e.target.value,
-                    })
-                  }
+                    });
+                    if (itemFieldErrors.category && e.target.value.trim()) {
+                      setItemFieldErrors((current) => ({ ...current, category: "" }));
+                    }
+                  }}
                 />
+              )}
+              {itemForm.category === "Others" && itemFieldErrors.category && (
+                <span className="field-error-text">{itemFieldErrors.category}</span>
               )}
             </Field>
 
-            <Field label="Unit of Measure" required>
+            <Field label="Unit of Measure" required error={itemFieldErrors.unit}>
               <input
+                ref={registerItemFieldRef("unit")}
+                className={invalidClass(itemFieldErrors, "unit")}
                 value={
                   itemForm.unit
                 }
                 placeholder="Example: pcs, vial, bottle, box, tablet, kg"
                 required
                 disabled={!!itemForm.id}
-                onChange={(e) =>
+                onChange={(e) => {
                   setItemForm({
                     ...itemForm,
                     unit:
                       e.target
                         .value,
-                  })
-                }
+                  });
+                  if (itemFieldErrors.unit && e.target.value.trim()) {
+                    setItemFieldErrors((current) => ({ ...current, unit: "" }));
+                  }
+                }}
               />
             </Field>
 
@@ -3925,6 +4053,39 @@ export default function InventoryManagementModule({
           cursor: pointer;
         }
 
+        .alert-filter-banner {
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          padding: 12px 15px;
+          margin-bottom: 14px;
+          border-radius: 11px;
+          background: #fff6e0;
+          color: #9a7000;
+          font-size: 14px;
+          font-weight: 600;
+        }
+
+        .alert-filter-banner span {
+          flex: 1;
+        }
+
+        .alert-filter-banner button {
+          flex-shrink: 0;
+          border: 1px solid #e7cf94;
+          background: #fff;
+          color: #9a7000;
+          border-radius: 8px;
+          padding: 7px 11px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .alert-filter-banner button:hover {
+          background: #fffaf0;
+        }
+
         .empty {
           text-align: center;
           padding: 35px;
@@ -4877,6 +5038,7 @@ function Field({
   wide,
   required,
   optional,
+  error,
   children,
 }) {
   return (
@@ -4891,8 +5053,27 @@ function Field({
         {optional && <span className="optional-mark"> (Optional)</span>}
       </label>
       {children}
+      {error && <span className="field-error-text">{error}</span>}
     </div>
   );
+}
+
+function validateItemField(name, value, itemForm) {
+  switch (name) {
+    case "item_name":
+      return String(value || "").trim() ? "" : "Item name is required.";
+    case "sku":
+      return String(value || "").trim() ? "" : "Item code (SKU) is required.";
+    case "category": {
+      if (!String(value || "").trim()) return "Please select a product category.";
+      if (value === "Others" && !String(itemForm.custom_category || "").trim()) return "Please type the product category.";
+      return "";
+    }
+    case "unit":
+      return String(value || "").trim() ? "" : "Unit of measure is required.";
+    default:
+      return "";
+  }
 }
 
 function Modal({

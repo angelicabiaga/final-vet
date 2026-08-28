@@ -320,8 +320,15 @@ export async function getTransactionPayments(transactionId) {
   return (data || []).map((row) => ({ ...row, cashier: profilesById.get(row.cashier_id) || null }));
 }
 
+let transactionsChannelSeq = 0;
 export function subscribeToTransactions(callback) {
-  const channel = supabase.channel(`transactions-${Date.now()}`)
+  // The counter guarantees a unique channel name even when two callers
+  // mount in the same tick (e.g. AppShell's Transactions badge and
+  // TransactionManagement's own subscription both mounting on the
+  // Transactions page) -- Date.now() alone is only millisecond-precision,
+  // and supabase-js reuses a channel by name, which throws if a second
+  // .on() lands on a channel the first caller already .subscribe()'d.
+  const channel = supabase.channel(`transactions-${Date.now()}-${++transactionsChannelSeq}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "transactions" }, callback)
     .subscribe();
   return () => { supabase.removeChannel(channel); };

@@ -438,8 +438,18 @@ export async function getQueueStatusForAppointments(appointmentIds){
   return map;
 }
 
+let queueChannelSeq=0;
 export function subscribeToQueue(callback){
-  const channel=supabase.channel(`queue-${Date.now()}`)
+  // Date.now() alone is only millisecond-precision -- two callers mounting
+  // in the same render pass (e.g. AppShell's sidebar badges and a page's
+  // own subscribeToQueue call, both on the Veterinarian Dashboard/Queue
+  // pages) can land on the exact same channel name. supabase-js reuses a
+  // channel by name if one already exists, so the second caller's .on()
+  // calls landed on a channel the first caller had already .subscribe()'d,
+  // throwing "cannot add postgres_changes callbacks... after subscribe()".
+  // The counter guarantees a unique name on every call, no matter how many
+  // subscribers mount in the same tick.
+  const channel=supabase.channel(`queue-${Date.now()}-${++queueChannelSeq}`)
     .on("postgres_changes",{event:"*",schema:"public",table:"queue_entries"},callback)
     .on("postgres_changes",{event:"*",schema:"public",table:"queue_entry_pets"},callback)
     .on("postgres_changes",{event:"*",schema:"public",table:"appointments"},callback)

@@ -2,6 +2,10 @@ import React from 'react';
 import { Animated, Easing, Image, SafeAreaView, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { styles as dashboardStyles } from '../../styles/VetDashboardDesign';
+import { getVeterinarianAppointments, todayLocal } from '../../../api/mobileAppointmentService';
+import { getQueue, subscribeToQueue } from '../../../api/queueService';
+import { getConversations, subscribeToMessagingOverview } from '../../../api/messageService';
+import { supabase } from '../../../config/supabaseClient';
 
 const DEFAULT_PROFILE_IMAGE = require('../../assets/Profile.png');
 
@@ -20,10 +24,64 @@ export const getVetUser = (route) => route?.params?.user || route?.params || nul
 
 const VetShell = ({ navigation, route, subtitle, caption, children, showBack = false, lowerHeaderScrollY, lowerHeaderAnimation }) => {
   const currentUser = getVetUser(route);
+  const veterinarianId = currentUser?.id || currentUser?.user_id || currentUser?.profile_id || '';
   const profileImageUri = currentUser?.profileImageUri || currentUser?.avatar || '';
   const menuAnim = React.useRef(new Animated.Value(0)).current;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const isMenuAnimating = React.useRef(false);
+
+  // Header-menu badges -- Appointments counts today's still-Confirmed
+  // consultations assigned to this vet, My Queue (Live Queue) counts this
+  // vet's Waiting/Serving queue entries, Messages counts unread
+  // conversations. Deliberately not routed through the Notifications
+  // module -- that stays reserved for clinic-wide announcements.
+  const [badgeCounts, setBadgeCounts] = React.useState({ appointments: 0, queue: 0, messages: 0 });
+
+  const loadBadgeCounts = React.useCallback(async () => {
+    if (!veterinarianId) return;
+    try {
+      const [appointments, queueEntries, conversations] = await Promise.all([
+        getVeterinarianAppointments(veterinarianId),
+        getQueue({ veterinarianId }),
+        getConversations({ id: veterinarianId }).catch(() => []),
+      ]);
+      const today = todayLocal();
+      const todaysConfirmed = appointments.filter((item) => item.status === 'Confirmed' && item.appointment_date === today).length;
+      const activeQueue = queueEntries.filter((entry) => ['Waiting', 'Serving'].includes(entry.status)).length;
+      const unreadConversations = conversations.filter((item) => item.unread > 0).length;
+      setBadgeCounts({ appointments: todaysConfirmed, queue: activeQueue, messages: unreadConversations });
+    } catch {
+      // Badge counts are a convenience overlay on the header menu -- a
+      // failed refresh should never surface as an app-wide error.
+    }
+  }, [veterinarianId]);
+
+  React.useEffect(() => {
+    if (!veterinarianId) return undefined;
+    loadBadgeCounts();
+    const unsubscribeQueue = subscribeToQueue(loadBadgeCounts, { veterinarianId });
+    // The mobile queue subscription only listens to queue_entries -- the
+    // appointments table needs its own channel, following the same
+    // pattern already used for realtime appointment updates elsewhere in
+    // the mobile app (see PetOwnerAppointment.js). Named distinctly (with
+    // a "badges" suffix) because VetAppointment.js opens its own channel
+    // for this exact same table+filter while VetShell wraps it -- two
+    // channels with the same name make supabase-js reuse one channel
+    // object, and the second caller's .on() then lands after the first
+    // caller's .subscribe(), which throws.
+    const appointmentsChannel = supabase
+      .channel(`mobile-vet-appointments-badges-${veterinarianId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments', filter: `veterinarian_id=eq.${veterinarianId}` }, loadBadgeCounts)
+      .subscribe();
+    const unsubscribeMessages = subscribeToMessagingOverview(veterinarianId, loadBadgeCounts);
+    return () => {
+      unsubscribeQueue?.();
+      supabase.removeChannel(appointmentsChannel);
+      unsubscribeMessages?.();
+    };
+  }, [veterinarianId, loadBadgeCounts]);
+
+  const badgeLabel = (count) => (count > 9 ? '9+' : String(count));
   const lowerHeaderTranslateY = lowerHeaderScrollY
     ? lowerHeaderScrollY.interpolate({ inputRange: [0, 72], outputRange: [0, -72], extrapolate: 'clamp' })
     : 0;
@@ -41,8 +99,8 @@ const VetShell = ({ navigation, route, subtitle, caption, children, showBack = f
       ? { transform: [{ translateY: lowerHeaderTranslateY }] }
       : null;
 
-  const navigateVet = (screen) => {
-    navigation.navigate(screen, currentUser ? { user: currentUser } : undefined);
+  const navigateVet = (screen, extraParams) => {
+    navigation.navigate(screen, currentUser ? { user: currentUser, ...extraParams } : extraParams);
   };
 
   const openMenu = () => {
@@ -161,23 +219,31 @@ const VetShell = ({ navigation, route, subtitle, caption, children, showBack = f
                 },
               ]}
             >
-              {HEADER_MENU_ITEMS.map((item, index) => (
-                <TouchableOpacity
-                  key={item.key}
-                  style={[dashboardStyles.headerMenuItem, index === HEADER_MENU_ITEMS.length - 1 && dashboardStyles.headerMenuItemLast]}
-                  onPress={() => {
-                    setMenuOpen(false);
-                    menuAnim.setValue(0);
-                    navigateVet(item.route);
-                  }}
-                  activeOpacity={0.88}
-                >
-                  <View style={dashboardStyles.headerMenuItemIconWrap}>
-                    <Image source={item.icon} style={dashboardStyles.headerMenuItemIcon} resizeMode="contain" />
-                  </View>
-                  <Text style={dashboardStyles.headerMenuItemLabel}>{item.label}</Text>
-                </TouchableOpacity>
-              ))}
+              {HEADER_MENU_ITEMS.map((item, index) => {
+                const badgeCount = badgeCounts[item.key] || 0;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    style={[dashboardStyles.headerMenuItem, index === HEADER_MENU_ITEMS.length - 1 && dashboardStyles.headerMenuItemLast]}
+                    onPress={() => {
+                      setMenuOpen(false);
+                      menuAnim.setValue(0);
+                      navigateVet(item.route, item.key === 'appointments' ? { focusToday: true } : undefined);
+                    }}
+                    activeOpacity={0.88}
+                  >
+                    <View style={dashboardStyles.headerMenuItemIconWrap}>
+                      <Image source={item.icon} style={dashboardStyles.headerMenuItemIcon} resizeMode="contain" />
+                      {badgeCount > 0 ? (
+                        <View style={dashboardStyles.menuBadge}>
+                          <Text style={dashboardStyles.menuBadgeText}>{badgeLabel(badgeCount)}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={dashboardStyles.headerMenuItemLabel}>{item.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </Animated.View>
           ) : null}
         </LinearGradient>
