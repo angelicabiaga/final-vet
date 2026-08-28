@@ -3203,6 +3203,7 @@ export default function InventoryManagementModule({
           title={`Batch Records: ${selectedItem.item_name}`}
           close={() => setModal("")}
           large
+          extraWide
         >
           {batchesError && (
             <div className="notice error">{batchesError}</div>
@@ -3972,12 +3973,21 @@ export default function InventoryManagementModule({
         }
 
         .badge {
+          box-sizing: border-box;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 96px;
+          height: 26px;
           padding: 5px 9px;
           border-radius: 99px;
           background: #e9f7ee;
           color: #2e7b4d;
           font-size: 11px;
           font-weight: 700;
+          line-height: 1.2;
+          white-space: nowrap;
+          text-align: center;
         }
 
         .badge.low-stock,
@@ -4119,6 +4129,49 @@ export default function InventoryManagementModule({
 
         .modal-card.large {
           width: min(1000px, 100%);
+        }
+
+        /* Batch Records only (Modal's extraWide prop) -- the batch table's
+           Priority/Batch Number/Date Received/Expiration/Original Qty/
+           Remaining/Status/Actions columns need more room than the other
+           "large" modals (Import, History, Forecast, Unit IDs) ever do, so
+           this is scoped to its own class rather than widening .large
+           itself and affecting those unrelated modals. Every descendant
+           rule below (.modal-head, .batch-archived-toggle, .batch-mini-stat,
+           .batch-table, .batch-row-actions) is likewise scoped under
+           .extra-wide so this compacting never touches any other modal. */
+        .modal-card.extra-wide {
+          width: 80vw;
+          max-width: 1120px;
+          height: 80vh;
+          max-height: 740px;
+          padding: 16px 18px;
+        }
+
+        .modal-card.extra-wide .modal-body {
+          flex: 1;
+          min-height: 0;
+        }
+
+        .modal-card.extra-wide .modal-head {
+          margin-bottom: 8px;
+        }
+
+        .modal-card.extra-wide .batch-archived-toggle {
+          margin-bottom: 8px;
+        }
+
+        .modal-card.extra-wide .batch-mini-stats {
+          margin-bottom: 10px;
+        }
+
+        .modal-card.extra-wide .batch-mini-stat {
+          padding: 8px 11px;
+        }
+
+        .modal-card.extra-wide .batch-table th,
+        .modal-card.extra-wide .batch-table td {
+          padding: 9px 10px;
         }
 
         .modal-head {
@@ -4770,25 +4823,42 @@ export default function InventoryManagementModule({
 
         .batch-row-actions {
           display: flex;
-          gap: 6px;
+          flex-wrap: nowrap;
+          gap: 5px;
           justify-content: flex-end;
-          margin-top: 6px;
+          margin-top: 4px;
         }
 
         .batch-row-actions button {
+          box-sizing: border-box;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          min-width: 76px;
+          height: 28px;
           border: 1px solid #cfe4ed;
           background: #fff;
           border-radius: 8px;
-          padding: 6px 9px;
+          padding: 5px 7px;
           font-size: 11.5px;
           font-weight: 700;
           color: #257fa9;
+          text-align: center;
+          white-space: nowrap;
           cursor: pointer;
         }
 
         .batch-row-actions button:disabled {
           opacity: .6;
           cursor: wait;
+        }
+
+        @media (max-width: 700px) {
+          .batch-row-actions {
+            flex-wrap: wrap;
+            justify-content: flex-start;
+          }
         }
 
         .batch-deactivate-btn {
@@ -5082,6 +5152,7 @@ function Modal({
   children,
   large,
   elevated,
+  extraWide,
 }) {
   useEffect(() => {
     const original = document.body.style.overflow;
@@ -5106,7 +5177,7 @@ function Modal({
       <div
         className={`modal-card ${
           large ? "large" : ""
-        }`}
+        } ${extraWide ? "extra-wide" : ""}`}
       >
         <div className="modal-head">
           <h2>{title}</h2>
