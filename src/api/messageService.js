@@ -196,3 +196,22 @@ export function subscribeToMessages(conversationId, onChange) {
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` }, onChange)
     .subscribe();
 }
+
+let mobileMessagingOverviewChannelSeq = 0;
+export function subscribeToMessagingOverview(profileId, onChange) {
+  if (!profileId) return null;
+  // The counter guarantees a unique channel name even if more than one
+  // caller for the same profile mounts in the same tick -- Date.now()
+  // alone is only millisecond-precision, and supabase-js reuses a channel
+  // by name, which throws if a second .on() lands on a channel the first
+  // caller already .subscribe()'d.
+  const channel = supabase
+    .channel(`pawcruz-mobile-message-overview-${profileId}-${Date.now()}-${++mobileMessagingOverviewChannelSeq}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "conversation_participants", filter: `profile_id=eq.${profileId}` }, onChange)
+    .subscribe();
+
+  // Return a cleanup function, matching subscribeToQueue's contract, instead
+  // of the raw channel object -- callers treat the return value as unsubscribe().
+  return () => { supabase.removeChannel(channel); };
+}

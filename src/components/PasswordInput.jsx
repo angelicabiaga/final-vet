@@ -1,11 +1,11 @@
-import React, { useState } from "react";
+import React, { forwardRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 
-export default function PasswordInput({ value, onChange, placeholder, ...props }) {
+const PasswordInput = forwardRef(function PasswordInput({ value, onChange, placeholder, ...props }, ref) {
   const [visible, setVisible] = useState(false);
   return (
     <div className="password-field">
-      <input type={visible ? "text" : "password"} value={value} onChange={onChange} placeholder={placeholder} {...props} />
+      <input ref={ref} type={visible ? "text" : "password"} value={value} onChange={onChange} placeholder={placeholder} {...props} />
       <button type="button" className="password-toggle" onClick={() => setVisible(v => !v)} aria-label={visible ? "Hide password" : "Show password"}>
         {visible ? <EyeOff size={19} /> : <Eye size={19} />}
       </button>
@@ -35,4 +35,6 @@ export default function PasswordInput({ value, onChange, placeholder, ...props }
       `}</style>
     </div>
   );
-}
+});
+
+export default PasswordInput;

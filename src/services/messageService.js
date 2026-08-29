@@ -396,11 +396,18 @@ export function subscribeToMessages(conversationId, onChange) {
     });
 }
 
+let messagingOverviewChannelSeq = 0;
 export function subscribeToMessagingOverview(profileId, onChange) {
   if (!profileId) return null;
 
-  return supabase
-    .channel(`pawcruz-web-message-overview-${profileId}-${Date.now()}`)
+  // The counter guarantees a unique channel name even when two callers
+  // for the same profile mount in the same tick (e.g. AppShell's Messages
+  // badge and MessagingModule both mounting on the Messages page) --
+  // Date.now() alone is only millisecond-precision, and supabase-js
+  // reuses a channel by name, which throws if a second .on() lands on a
+  // channel the first caller already .subscribe()'d.
+  const channel = supabase
+    .channel(`pawcruz-web-message-overview-${profileId}-${Date.now()}-${++messagingOverviewChannelSeq}`)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "messages" },
@@ -421,4 +428,11 @@ export function subscribeToMessagingOverview(profileId, onChange) {
         console.warn("Messaging overview Realtime status:", status);
       }
     });
+
+  // Return a cleanup function, matching subscribeToQueue/subscribeToTransactions'
+  // contract, instead of the raw channel object -- the previous version
+  // returned the channel itself, which callers treating it like the other
+  // subscribeToX helpers' return value (calling it as a function) crashed
+  // on with "channel is not a function".
+  return () => { supabase.removeChannel(channel); };
 }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Activity, AlertTriangle, CalendarDays, CheckCircle2, Clock3, FileHeart,
   MessageCircle, PackageSearch, PawPrint, RefreshCw, Stethoscope, Users
@@ -52,6 +52,64 @@ const roleConfig = {
   }
 };
 
+// Makes a role's dashboard summary cards navigate to the same existing
+// module routes as the shortcut links below them, keyed by role then by
+// each card's exact label.
+const DASHBOARD_CARD_ROUTES = {
+  admin: {
+    "Total Users": { pathname: "/admin/users" },
+    "Animal Patients": { pathname: "/admin/pets" },
+    // AppointmentManagementTable seeds its date filter to today and stops
+    // hiding today's Confirmed appointments when focusToday is set --
+    // a genuine filter, not just a reorder (see AppointmentManagement.jsx).
+    "Today's Appointments": { pathname: "/staff/appointments", state: { focusToday: true } },
+    "Current Queue": { pathname: "/admin/queue" },
+    // filterAlerts actually narrows InventoryManagementModule's list to
+    // Low Stock/Out of Stock/Near Expiry items (not just reorders them --
+    // see filterAlertsActive there), matching this card's spec verbatim.
+    "Stock Alerts": { pathname: "/admin/inventory", state: { filterAlerts: true } },
+    // /admin/medical-records is itself just a redirect to Animal Patients
+    // (see AdminMedicalRecords.jsx) unless opened with a specific
+    // queueEntryId -- medical history lives entirely inside a pet's
+    // profile there, so this intentionally points at the same route as
+    // the Animal Patients card.
+    "Medical History": { pathname: "/admin/pets" },
+  },
+  veterinarian: {
+    "My Appointments Today": { pathname: "/veterinarian/appointments", state: { focusToday: true } },
+    "My Active Queue": { pathname: "/veterinarian/queue" },
+    // Medical Records has no standalone browsing view of its own -- it lives
+    // entirely inside Animal Patients (see MedicalRecordsManagement.jsx),
+    // so this intentionally points at the same route as the Animal Patients
+    // shortcut card below.
+    "My Medical History": { pathname: "/veterinarian/patients" },
+    // Veterinarians already only get read/record-usage access on this same
+    // Inventory route (PetManagementModule/InventoryManagementModule gate
+    // full management to admin/staff) -- it already is the authorized
+    // medicine-availability view, so no separate route is needed.
+    "Medicine Alerts": { pathname: "/veterinarian/inventory" },
+  },
+  staff: {
+    "Today's Appointments": { pathname: "/staff/appointments" },
+    "Waiting Queue": { pathname: "/staff/queue" },
+    "Animal Patients": { pathname: "/staff/patients" },
+    // filterAlerts actually narrows InventoryManagementModule's list to
+    // Low Stock/Out of Stock/Near Expiry items (not just reorders them --
+    // see filterAlertsActive there), matching this card's spec verbatim.
+    "Stock Alerts": { pathname: "/staff/inventory", state: { filterAlerts: true } },
+  },
+  pet_owner: {
+    "Animal Patients": { pathname: "/pet-owner/pets" },
+    "Upcoming Appointments": { pathname: "/pet-owner/appointments" },
+    "My Queue": { pathname: "/pet-owner/queue" },
+    // /pet-owner/medical-records is itself just a redirect to Animal
+    // Patients (see MyPetMedicalRecords.jsx) -- medical history lives
+    // entirely inside a pet's profile there, so this intentionally points
+    // at the same route as the Animal Patients card above it.
+    "My Medical History": { pathname: "/pet-owner/pets" },
+  },
+};
+
 function dateKey(value) {
   if (!value) return "";
   return String(value).slice(0, 10);
@@ -76,6 +134,7 @@ function queuePetLabel(row) {
 }
 
 export default function RoleDashboard({ profile }) {
+  const navigate = useNavigate();
   const config = roleConfig[profile?.role] || roleConfig.pet_owner;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -183,7 +242,28 @@ export default function RoleDashboard({ profile }) {
       {error && <div className="dash-alert"><AlertTriangle size={18}/>{error}</div>}
       {loading ? <div className="dash-loading"><RefreshCw className="spin"/> Loading dashboard...</div> : (
         <>
-          <div className="dash-cards">{summary.cards.map(([Icon, label, value, detail]) => <article key={label}><div className="icon"><Icon size={22}/></div><div><p>{label}</p><strong>{value}</strong><small>{detail}</small></div></article>)}</div>
+          <div className={profile?.role === "admin" ? "dash-cards dash-cards-admin" : "dash-cards"}>{summary.cards.map(([Icon, label, value, detail]) => {
+            const destination = DASHBOARD_CARD_ROUTES[profile?.role]?.[label];
+            const cardBody = <><div className="icon"><Icon size={22}/></div><div><p>{label}</p><strong>{value}</strong><small>{detail}</small></div></>;
+            if (!destination) return <article key={label}>{cardBody}</article>;
+            const openCard = () => navigate(destination.pathname, { state: destination.state });
+            return (
+              <article
+                key={label}
+                className="clickable"
+                role="button"
+                tabIndex={0}
+                aria-label={`${label}: ${value}. ${detail}. Open ${label}.`}
+                onClick={openCard}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+                    event.preventDefault();
+                    openCard();
+                  }
+                }}
+              >{cardBody}</article>
+            );
+          })}</div>
           <div className="quick-links">{config.links.map(([label, to]) => <Link key={to} to={to}>{label}<span>→</span></Link>)}</div>
           <div className="dash-grid">
             <section className="dash-panel wide"><header><div><h3>Appointment Activity</h3><p>Appointments recorded during the last seven days</p></div><Activity size={20}/></header><div className="chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={summary.chart} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="day"/><YAxis allowDecimals={false}/><Tooltip/><Bar dataKey="appointments" fill="#4DA8DA" radius={[7,7,0,0]}/></BarChart></ResponsiveContainer></div></section>
@@ -212,7 +292,7 @@ export default function RoleDashboard({ profile }) {
         </>
       )}
       <style>{`
-        .dash-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:16px}.dash-head span{font-size:11px;font-weight:800;letter-spacing:1.5px;color:#4DA8DA}.dash-head h2{font-size:27px;margin:5px 0 7px}.dash-head p{margin:0;color:#6F7F88;max-width:700px}.dash-head button{border:0;background:#fff;color:#318fbe;border-radius:12px;padding:11px 15px;display:flex;align-items:center;gap:8px;box-shadow:0 6px 18px rgba(47,117,150,.1);cursor:pointer}.dash-alert,.dash-loading{background:#fff4e2;color:#9d6817;padding:11px 14px;border-radius:13px;display:flex;gap:9px;align-items:center;margin-bottom:14px}.dash-loading{background:#fff;color:#4b6571}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.dash-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.dash-cards article{background:#fff;border:1px solid #e6f2f7;border-radius:16px;padding:15px;display:flex;gap:12px;box-shadow:0 8px 24px rgba(47,117,150,.07)}.dash-cards .icon{height:44px;width:44px;border-radius:13px;background:#eaf8fd;color:#318fbe;display:grid;place-items:center;flex:none}.dash-cards p{margin:0 0 3px;color:#6F7F88;font-size:13px}.dash-cards strong{display:block;font-size:26px}.dash-cards small{display:block;color:#7a8d96;margin-top:4px}.quick-links{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}.quick-links a{background:#4DA8DA;color:white;text-decoration:none;padding:12px 14px;border-radius:13px;font-weight:700;display:flex;justify-content:space-between}.dash-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:14px;margin-top:14px}.dash-panel{background:#fff;border-radius:16px;padding:16px;box-shadow:0 8px 24px rgba(47,117,150,.07);min-width:0}.dash-panel header{display:flex;justify-content:space-between;color:#4DA8DA}.dash-panel h3{margin:0;color:#20313B}.dash-panel header p{margin:4px 0 0;color:#78909b;font-size:12px}.chart{height:250px;margin-top:12px}.list{display:grid;gap:8px;margin-top:13px}.list div{display:flex;justify-content:space-between;background:#f4fbfd;padding:10px 12px;border-radius:11px}.list span{font-size:12px;color:#5f7884}.list em,.appointments em{color:#80949d;font-style:normal}.list .queue-row{display:grid!important;gap:4px}.queue-row-top{display:flex;justify-content:space-between;align-items:center;gap:8px}.queue-row-top b{color:#20313B;font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queue-meta{display:block;color:#5f7884;font-size:11.5px}.queue-pill{flex-shrink:0;font-style:normal;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:#eaf8fd;color:#318fbe}.queue-pill.serving{background:#e7f7ed;color:#26754a}.queue-error{display:flex;align-items:center;gap:8px;color:#b34848;background:#fff0f0;padding:12px;border-radius:11px;font-size:13px}.appointments{display:grid;gap:8px;margin-top:12px}.appointments>div{display:grid;grid-template-columns:95px 1fr auto;gap:12px;align-items:center;border-bottom:1px solid #eaf1f4;padding:10px 0}.appointments .date{font-size:12px;color:#5d7682}.appointments b{display:block}.appointments small{color:#7c9099}.appointments i{font-style:normal;font-size:11px;background:#eaf8fd;color:#318fbe;padding:6px 9px;border-radius:999px}.message-count{text-align:center;padding:20px 10px}.message-count strong{font-size:46px;color:#4DA8DA;display:block}.message-count span{display:block;color:#6F7F88}.message-count a{display:inline-block;margin-top:16px;color:#318fbe;font-weight:700}@media(max-width:950px){.quick-links{grid-template-columns:repeat(2,1fr)}.dash-grid{grid-template-columns:1fr}}@media(max-width:600px){.dash-head{display:block}.dash-head button{margin-top:14px}.quick-links{grid-template-columns:1fr}.appointments>div{grid-template-columns:1fr}.appointments i{justify-self:start}}
+        .dash-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:16px}.dash-head span{font-size:11px;font-weight:800;letter-spacing:1.5px;color:#4DA8DA}.dash-head h2{font-size:27px;margin:5px 0 7px}.dash-head p{margin:0;color:#6F7F88;max-width:700px}.dash-head button{border:0;background:#fff;color:#318fbe;border-radius:12px;padding:11px 15px;display:flex;align-items:center;gap:8px;box-shadow:0 6px 18px rgba(47,117,150,.1);cursor:pointer}.dash-alert,.dash-loading{background:#fff4e2;color:#9d6817;padding:11px 14px;border-radius:13px;display:flex;gap:9px;align-items:center;margin-bottom:14px}.dash-loading{background:#fff;color:#4b6571}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.dash-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.dash-cards article{background:#fff;border:1px solid #e6f2f7;border-radius:16px;padding:15px;display:flex;gap:12px;box-shadow:0 8px 24px rgba(47,117,150,.07)}.dash-cards article.clickable{cursor:pointer;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}.dash-cards article.clickable:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(47,117,150,.16);border-color:#c9e6f2}.dash-cards article.clickable:focus-visible{outline:3px solid #4DA8DA;outline-offset:2px}.dash-cards .icon{height:44px;width:44px;border-radius:13px;background:#eaf8fd;color:#318fbe;display:grid;place-items:center;flex:none}.dash-cards p{margin:0 0 3px;color:#6F7F88;font-size:13px}.dash-cards strong{display:block;font-size:26px}.dash-cards small{display:block;color:#7a8d96;margin-top:4px}.dash-cards-admin{grid-template-columns:repeat(3,1fr);gap:10px}.dash-cards-admin article{padding:13px 14px;gap:10px;align-items:center}.dash-cards-admin .icon{height:40px;width:40px;border-radius:11px}.dash-cards-admin p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dash-cards-admin strong{font-size:23px;white-space:nowrap}.dash-cards-admin small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.quick-links{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}.quick-links a{background:#4DA8DA;color:white;text-decoration:none;padding:12px 14px;border-radius:13px;font-weight:700;display:flex;justify-content:space-between}.dash-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:14px;margin-top:14px}.dash-panel{background:#fff;border-radius:16px;padding:16px;box-shadow:0 8px 24px rgba(47,117,150,.07);min-width:0}.dash-panel header{display:flex;justify-content:space-between;color:#4DA8DA}.dash-panel h3{margin:0;color:#20313B}.dash-panel header p{margin:4px 0 0;color:#78909b;font-size:12px}.chart{height:250px;margin-top:12px}.list{display:grid;gap:8px;margin-top:13px}.list div{display:flex;justify-content:space-between;background:#f4fbfd;padding:10px 12px;border-radius:11px}.list span{font-size:12px;color:#5f7884}.list em,.appointments em{color:#80949d;font-style:normal}.list .queue-row{display:grid!important;gap:4px}.queue-row-top{display:flex;justify-content:space-between;align-items:center;gap:8px}.queue-row-top b{color:#20313B;font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queue-meta{display:block;color:#5f7884;font-size:11.5px}.queue-pill{flex-shrink:0;font-style:normal;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;background:#eaf8fd;color:#318fbe}.queue-pill.serving{background:#e7f7ed;color:#26754a}.queue-error{display:flex;align-items:center;gap:8px;color:#b34848;background:#fff0f0;padding:12px;border-radius:11px;font-size:13px}.appointments{display:grid;gap:8px;margin-top:12px}.appointments>div{display:grid;grid-template-columns:95px 1fr auto;gap:12px;align-items:center;border-bottom:1px solid #eaf1f4;padding:10px 0}.appointments .date{font-size:12px;color:#5d7682}.appointments b{display:block}.appointments small{color:#7c9099}.appointments i{font-style:normal;font-size:11px;background:#eaf8fd;color:#318fbe;padding:6px 9px;border-radius:999px}.message-count{text-align:center;padding:20px 10px}.message-count strong{font-size:46px;color:#4DA8DA;display:block}.message-count span{display:block;color:#6F7F88}.message-count a{display:inline-block;margin-top:16px;color:#318fbe;font-weight:700}@media(max-width:950px){.quick-links{grid-template-columns:repeat(2,1fr)}.dash-grid{grid-template-columns:1fr}.dash-cards-admin{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.dash-head{display:block}.dash-head button{margin-top:14px}.quick-links{grid-template-columns:1fr}.appointments>div{grid-template-columns:1fr}.appointments i{justify-self:start}.dash-cards-admin{grid-template-columns:1fr}}
       `}</style>
     </AppShell>
   );

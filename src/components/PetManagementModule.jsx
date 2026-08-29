@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
@@ -42,6 +42,7 @@ import {
 } from "../services/petService";
 import { validateImageFile } from "../utils/validators";
 import { formatDateLong } from "../utils/timeFormat";
+import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 import { generateConsultationHealthInsight, generatePredictiveHealthAnalysis, getActiveVeterinarians, getMedicalRecords, getPreviousMedicalRecordsForAi } from "../services/medicalRecordService";
 import { computeRiskLevel, daysUntil, keywordSet, parseAiReport, parseConsultationInsight, sharesKeyword, toListItems } from "../utils/predictiveHealthParsing";
 import { downloadInvoicePdf, downloadPrescriptionPadPdf, printMedicalRecordDocument, viewPrescriptionPadPdf } from "../utils/invoicePdf";
@@ -401,6 +402,9 @@ export default function PetManagementModule({
     ...EMPTY_FORM,
     ownerId: ownerOnly ? profile.id : "",
   });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const petFieldRefs = useRef({}).current;
+  const registerPetFieldRef = (name) => (el) => { petFieldRefs[name] = el; };
 
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -813,6 +817,17 @@ export default function PetManagementModule({
       ...currentForm,
       [field]: value,
     }));
+    // customSpecies/customBreed share their error slot with species/breed
+    // since only one of the pair is ever shown at a time.
+    const errorKey = field === "customSpecies" ? "species" : field === "customBreed" ? "breed" : field;
+    if (!fieldErrors[errorKey]) return;
+    if (field === "weight") {
+      const trimmed = String(value ?? "").trim();
+      const stillInvalid = trimmed && (!/^\d+(\.\d+)?$/.test(trimmed) || Number(trimmed) <= 0);
+      setFieldErrors((current) => ({ ...current, weight: stillInvalid ? "Enter a valid weight greater than 0." : "" }));
+    } else if (String(value || "").trim()) {
+      setFieldErrors((current) => ({ ...current, [errorKey]: "" }));
+    }
   }
 
   function resetForm() {
@@ -938,38 +953,53 @@ export default function PetManagementModule({
     // record for the same pet instead of updating the first.
     if (saving) return;
 
-    setSaving(true);
     setMessage("");
 
+    const ownerId = form.ownerId || profile.id;
+    const finalSpecies = form.species === "Other" ? form.customSpecies.trim() : form.species.trim();
+    const finalBreed = form.breed === "Other" ? form.customBreed.trim() : form.breed.trim();
+
+    const errors = {};
+    const allFieldRefs = {};
+
+    if (canManageAll && !ownerId) {
+      errors.ownerId = "Please select the pet owner.";
+      if (petFieldRefs.ownerId) allFieldRefs.ownerId = petFieldRefs.ownerId;
+    }
+    if (!form.petName.trim()) {
+      errors.petName = "Pet name is required.";
+      if (petFieldRefs.petName) allFieldRefs.petName = petFieldRefs.petName;
+    }
+    if (!finalSpecies) {
+      errors.species = "Please select or enter the pet species.";
+      const target = form.species === "Other" ? petFieldRefs.customSpecies : petFieldRefs.species;
+      if (target) allFieldRefs.species = target;
+    }
+    if (!finalBreed) {
+      errors.breed = "Please select or enter the pet breed.";
+      const target = form.breed === "Other" ? petFieldRefs.customBreed : petFieldRefs.breed;
+      if (target) allFieldRefs.breed = target;
+    }
+
+    // Weight is optional here -- only checked when a value was actually
+    // entered. savePet() already stores an empty value as null, not 0.
+    const trimmedWeight = String(form.weight ?? "").trim();
+    if (trimmedWeight && (!/^\d+(\.\d+)?$/.test(trimmedWeight) || Number(trimmedWeight) <= 0)) {
+      errors.weight = "Enter a valid weight greater than 0.";
+      if (petFieldRefs.weight) allFieldRefs.weight = petFieldRefs.weight;
+    }
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setMessage("Please fix the highlighted field(s) before continuing.");
+      focusFirstInvalidField(allFieldRefs, errors);
+      return;
+    }
+
+    setSaving(true);
+
     try {
-      const ownerId = form.ownerId || profile.id;
-
-      if (!ownerId) {
-        throw new Error("Please select the pet owner.");
-      }
-
-      const finalSpecies =
-        form.species === "Other"
-          ? form.customSpecies.trim()
-          : form.species.trim();
-
-      if (!finalSpecies) {
-        throw new Error(
-          "Please select or enter the pet species."
-        );
-      }
-
-      const finalBreed =
-        form.breed === "Other"
-          ? form.customBreed.trim()
-          : form.breed.trim();
-
-      if (!finalBreed) {
-        throw new Error(
-          "Please select or enter the pet breed."
-        );
-      }
-
       let photoUrl = form.photoUrl;
 
       if (file) {
@@ -1297,6 +1327,8 @@ export default function PetManagementModule({
                         <Search size={15} />
 
                         <input
+                          ref={registerPetFieldRef("ownerId")}
+                          className={invalidClass(fieldErrors, "ownerId")}
                           type="text"
                           role="combobox"
                           aria-expanded={ownerDropdownOpen}
@@ -1354,6 +1386,7 @@ export default function PetManagementModule({
                         </div>
                       )}
                     </div>
+                    {fieldErrors.ownerId && <span className="field-error-text">{fieldErrors.ownerId}</span>}
                   </label>
                 </div>
               )}
@@ -1371,6 +1404,8 @@ export default function PetManagementModule({
                     </span>
 
                     <input
+                      ref={registerPetFieldRef("petName")}
+                      className={invalidClass(fieldErrors, "petName")}
                       required
                       value={form.petName}
                       placeholder="Enter pet name"
@@ -1381,6 +1416,7 @@ export default function PetManagementModule({
                         )
                       }
                     />
+                    {fieldErrors.petName && <span className="field-error-text">{fieldErrors.petName}</span>}
                   </label>
 
                   <label>
@@ -1394,6 +1430,8 @@ export default function PetManagementModule({
                         <Search size={15} />
 
                         <input
+                          ref={registerPetFieldRef("species")}
+                          className={invalidClass(fieldErrors, "species")}
                           type="text"
                           role="combobox"
                           aria-expanded={speciesDropdownOpen}
@@ -1476,6 +1514,7 @@ export default function PetManagementModule({
                         </div>
                       )}
                     </div>
+                    {fieldErrors.species && form.species !== "Other" && <span className="field-error-text">{fieldErrors.species}</span>}
                   </label>
 
                   {form.species === "Other" && (
@@ -1486,6 +1525,8 @@ export default function PetManagementModule({
                       </span>
 
                       <input
+                        ref={registerPetFieldRef("customSpecies")}
+                        className={invalidClass(fieldErrors, "species")}
                         required
                         maxLength={80}
                         value={form.customSpecies}
@@ -1497,6 +1538,7 @@ export default function PetManagementModule({
                           )
                         }
                       />
+                      {fieldErrors.species && <span className="field-error-text">{fieldErrors.species}</span>}
                     </label>
                   )}
 
@@ -1508,6 +1550,8 @@ export default function PetManagementModule({
 
                     {breedOptions ? (
                       <select
+                        ref={registerPetFieldRef("breed")}
+                        className={invalidClass(fieldErrors, "breed")}
                         required
                         value={form.breed}
                         onChange={(event) => {
@@ -1521,6 +1565,9 @@ export default function PetManagementModule({
                                 ? current.customBreed
                                 : "",
                           }));
+                          if (fieldErrors.breed && value && value !== "Other") {
+                            setFieldErrors((current) => ({ ...current, breed: "" }));
+                          }
                         }}
                       >
                         <option value="">Select breed</option>
@@ -1535,6 +1582,8 @@ export default function PetManagementModule({
                       </select>
                     ) : (
                       <input
+                        ref={registerPetFieldRef("breed")}
+                        className={invalidClass(fieldErrors, "breed")}
                         required
                         value={form.breed}
                         placeholder="Enter breed"
@@ -1546,6 +1595,7 @@ export default function PetManagementModule({
                         }
                       />
                     )}
+                    {fieldErrors.breed && form.breed !== "Other" && <span className="field-error-text">{fieldErrors.breed}</span>}
                   </label>
 
                   {breedOptions && form.breed === "Other" && (
@@ -1556,6 +1606,8 @@ export default function PetManagementModule({
                       </span>
 
                       <input
+                        ref={registerPetFieldRef("customBreed")}
+                        className={invalidClass(fieldErrors, "breed")}
                         required
                         maxLength={80}
                         value={form.customBreed}
@@ -1567,6 +1619,7 @@ export default function PetManagementModule({
                           )
                         }
                       />
+                      {fieldErrors.breed && <span className="field-error-text">{fieldErrors.breed}</span>}
                     </label>
                   )}
 
@@ -1635,11 +1688,12 @@ export default function PetManagementModule({
                   <label>
                     <span>
                       Weight (kg)
-                      <span className="required-mark"> *</span>
+                      <span className="optional-mark"> (Optional)</span>
                     </span>
 
                     <input
-                      required
+                      ref={registerPetFieldRef("weight")}
+                      className={invalidClass(fieldErrors, "weight")}
                       type="number"
                       min="0"
                       step="0.01"
@@ -1652,6 +1706,7 @@ export default function PetManagementModule({
                         )
                       }
                     />
+                    {fieldErrors.weight && <span className="field-error-text">{fieldErrors.weight}</span>}
                   </label>
                 </div>
               </div>

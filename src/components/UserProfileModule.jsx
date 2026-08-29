@@ -4,7 +4,53 @@ import AppShell from "./AppShell";
 import OtpModal from "./OtpModal";
 import { confirmPasswordChange, confirmProfileEmailChange, getProfile, requestPasswordChange, requestProfileUpdate, updateProfile, uploadProfileAvatar } from "../services/profileService";
 import PasswordChecklist from "./PasswordChecklist";
-import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, validateImageFile, validateRequiredName, validatePassword, validatePasswordsMatch } from "../utils/validators";
+import {
+  isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, validateImageFile, validatePassword, validatePasswordsMatch,
+  FIRST_NAME_REQUIRED_MESSAGE, LAST_NAME_REQUIRED_MESSAGE,
+} from "../utils/validators";
+import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
+
+function validateProfileField(name, value, isOwner) {
+  switch (name) {
+    case "firstName":
+      return String(value || "").trim() ? "" : FIRST_NAME_REQUIRED_MESSAGE;
+    case "lastName":
+      return String(value || "").trim() ? "" : LAST_NAME_REQUIRED_MESSAGE;
+    case "username":
+      return String(value || "").trim() ? "" : "Username is required.";
+    case "email": {
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "Email is required.";
+      if (!/^\S+@\S+\.\S+$/.test(trimmed)) return "Please enter a valid email address.";
+      return "";
+    }
+    case "phone": {
+      if (!isOwner) return "";
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "Contact number is required.";
+      return isValidPhMobile(trimmed) ? "" : INVALID_PH_MOBILE_MESSAGE;
+    }
+    default:
+      return "";
+  }
+}
+
+function validatePasswordField(name, passwords) {
+  switch (name) {
+    case "current":
+      return String(passwords.current || "") ? "" : "Current password is required.";
+    case "next": {
+      if (!String(passwords.next || "")) return "New password is required.";
+      try { validatePassword(passwords.next); return ""; } catch (error) { return error.message; }
+    }
+    case "confirm": {
+      if (!String(passwords.confirm || "")) return "Please confirm your new password.";
+      try { validatePasswordsMatch(passwords.next, passwords.confirm); return ""; } catch (error) { return error.message; }
+    }
+    default:
+      return "";
+  }
+}
 
 function splitFullName(fullName) {
   const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
@@ -27,7 +73,13 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState({ type: "", text: "" });
   const [otpModal, setOtpModal] = useState({ open: false, email: "", purpose: "", title: "" });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [passwordFieldErrors, setPasswordFieldErrors] = useState({});
   const passwordSectionRef = useRef(null);
+  const detailFieldRefs = useRef({}).current;
+  const passwordFieldRefs = useRef({}).current;
+  const registerDetailFieldRef = (name) => (el) => { detailFieldRefs[name] = el; };
+  const registerPasswordFieldRef = (name) => (el) => { passwordFieldRefs[name] = el; };
   const forcePasswordChange = !!profile?.must_change_password;
   const isOwner = profile?.role === "pet_owner";
 
@@ -52,20 +104,30 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
     return () => { active = false; };
   }, [profile?.id]);
 
-  function field(name, value) { setForm((current) => ({ ...current, [name]: value })); }
+  function field(name, value) {
+    setForm((current) => ({ ...current, [name]: value }));
+    if (fieldErrors[name]) {
+      setFieldErrors((current) => ({ ...current, [name]: validateProfileField(name, value, isOwner) }));
+    }
+  }
 
   async function saveDetails(event) {
     event.preventDefault(); setMessage({ type: "", text: "" });
-    try {
-      validateRequiredName(form.firstName, form.lastName);
-    } catch (validationError) {
-      return setMessage({ type: "error", text: validationError.message });
+
+    const errors = {};
+    ["firstName", "lastName", "username", "email", "phone"].forEach((name) => {
+      const errorMessage = validateProfileField(name, form[name], isOwner);
+      if (errorMessage) errors[name] = errorMessage;
+    });
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setMessage({ type: "error", text: "Please fix the highlighted field(s) before continuing." });
+      focusFirstInvalidField(detailFieldRefs, errors);
+      return;
     }
-    if (isOwner) {
-      const trimmedPhone = form.phone.trim();
-      if (!trimmedPhone) return setMessage({ type: "error", text: "Contact number is required." });
-      if (!isValidPhMobile(trimmedPhone)) return setMessage({ type: "error", text: INVALID_PH_MOBILE_MESSAGE });
-    }
+
     setSaving(true);
     try {
       const result = await requestProfileUpdate(profile.id, { ...form, full_name: joinFullName(form) }, profile.role);
@@ -101,12 +163,21 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
 
   async function savePassword(event) {
     event.preventDefault(); setMessage({ type: "", text: "" });
-    try {
-      validatePassword(passwords.next);
-      validatePasswordsMatch(passwords.next, passwords.confirm);
-    } catch (validationError) {
-      return setMessage({ type: "error", text: validationError.message });
+
+    const errors = {};
+    ["current", "next", "confirm"].forEach((name) => {
+      const errorMessage = validatePasswordField(name, passwords);
+      if (errorMessage) errors[name] = errorMessage;
+    });
+
+    setPasswordFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setMessage({ type: "error", text: "Please fix the highlighted field(s) before continuing." });
+      focusFirstInvalidField(passwordFieldRefs, errors);
+      return;
     }
+
     setSaving(true);
     try {
       const result = await requestPasswordChange(profile.id, passwords.current, passwords.next);
@@ -125,12 +196,44 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
     } else if (otpModal.purpose === "change_password") {
       await confirmPasswordChange(code);
       setPasswords({ current: "", next: "", confirm: "" });
+      setPasswordFieldErrors({});
       setMessage({ type: "success", text: "Password changed successfully." });
     }
     setOtpModal({ open: false, email: "", purpose: "", title: "" });
   }
 
-  const PasswordField = ({ name, label }) => <label><span>{label}<span className="required-mark"> *</span></span><div className="passwordBox"><input type={show[name] ? "text" : "password"} value={passwords[name]} onChange={(e)=>setPasswords((p)=>({...p,[name]:e.target.value}))} required/><button type="button" onClick={()=>setShow((s)=>({...s,[name]:!s[name]}))}>{show[name]?<EyeOff size={18}/>:<Eye size={18}/>}</button></div></label>;
+  function passwordField(name, value) {
+    setPasswords((current) => {
+      const next = { ...current, [name]: value };
+      if (passwordFieldErrors[name] || (name === "next" && passwordFieldErrors.confirm)) {
+        setPasswordFieldErrors((currentErrors) => {
+          const nextErrors = { ...currentErrors, [name]: validatePasswordField(name, next) };
+          if (name === "next" && currentErrors.confirm) {
+            nextErrors.confirm = validatePasswordField("confirm", next);
+          }
+          return nextErrors;
+        });
+      }
+      return next;
+    });
+  }
+
+  const PasswordField = ({ name, label }) => (
+    <label>
+      <span>{label}<span className="required-mark"> *</span></span>
+      <div className={`passwordBox${passwordFieldErrors[name] ? " field-invalid" : ""}`}>
+        <input
+          ref={registerPasswordFieldRef(name)}
+          type={show[name] ? "text" : "password"}
+          value={passwords[name]}
+          onChange={(e) => passwordField(name, e.target.value)}
+          required
+        />
+        <button type="button" onClick={()=>setShow((s)=>({...s,[name]:!s[name]}))}>{show[name]?<EyeOff size={18}/>:<Eye size={18}/>}</button>
+      </div>
+      {passwordFieldErrors[name] && <span className="field-error-text">{passwordFieldErrors[name]}</span>}
+    </label>
+  );
 
   return <AppShell profile={profile} title={title}><div className="profilePage">
     {forcePasswordChange && <div className="warn">You're using a temporary password. Please set a new password below to continue.</div>}
@@ -144,11 +247,17 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
     </section>
     {loading ? <div className="card">Loading profile...</div> : <div className="columns">
       <form className="card form" onSubmit={saveDetails}><h3><UserCircle size={20}/> Personal Information</h3>
-        <div className="pair"><label><span>First name<span className="required-mark"> *</span></span><input value={form.firstName} onChange={(e)=>field("firstName",e.target.value)} required/></label><label><span>Last name<span className="required-mark"> *</span></span><input value={form.lastName} onChange={(e)=>field("lastName",e.target.value)} required/></label></div>
+        <div className="pair">
+          <label><span>First name<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("firstName")} className={invalidClass(fieldErrors, "firstName")} value={form.firstName} onChange={(e)=>field("firstName",e.target.value)} required/>{fieldErrors.firstName && <span className="field-error-text">{fieldErrors.firstName}</span>}</label>
+          <label><span>Last name<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("lastName")} className={invalidClass(fieldErrors, "lastName")} value={form.lastName} onChange={(e)=>field("lastName",e.target.value)} required/>{fieldErrors.lastName && <span className="field-error-text">{fieldErrors.lastName}</span>}</label>
+        </div>
         <label><span>Middle name<span className="optional-mark"> (Optional)</span></span><input value={form.middleName} onChange={(e)=>field("middleName",e.target.value)}/></label>
-        <div className="pair"><label><span>Username<span className="required-mark"> *</span></span><input value={form.username} onChange={(e)=>field("username",e.target.value)} required/></label><label><span>Email<span className="required-mark"> *</span></span><input type="email" value={form.email} onChange={(e)=>field("email",e.target.value)} required/></label></div>
+        <div className="pair">
+          <label><span>Username<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("username")} className={invalidClass(fieldErrors, "username")} value={form.username} onChange={(e)=>field("username",e.target.value)} required/>{fieldErrors.username && <span className="field-error-text">{fieldErrors.username}</span>}</label>
+          <label><span>Email<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("email")} className={invalidClass(fieldErrors, "email")} type="email" value={form.email} onChange={(e)=>field("email",e.target.value)} required/>{fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}</label>
+        </div>
         {isOwner
-          ? <label><span>Contact number<span className="required-mark"> *</span></span><input value={form.phone} onChange={(e)=>field("phone",e.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" required/></label>
+          ? <label><span>Contact number<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} value={form.phone} onChange={(e)=>field("phone",e.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" required/>{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>
           : <label><span>Phone number<span className="optional-mark"> (Optional)</span></span><input value={form.phone} onChange={(e)=>field("phone",e.target.value)}/></label>}
         <label><span>Address<span className="optional-mark"> (Optional)</span></span><textarea value={form.address} onChange={(e)=>field("address",e.target.value)}/></label>
         <button disabled={saving}><Save size={17}/>{saving?"Saving...":"Save Profile"}</button>

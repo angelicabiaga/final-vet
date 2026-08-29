@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from "react";
-import { supabase } from "../config/supabaseClient";
 import {
   MessageCircle,
   Paperclip,
@@ -115,7 +114,7 @@ export default function MessagingModule({ profile }) {
   useEffect(() => {
     if (!profile?.id) return undefined;
     let active = true;
-    const channel = subscribeToMessagingOverview(profile.id, () => {
+    const unsubscribe = subscribeToMessagingOverview(profile.id, () => {
       if (active) loadConversations();
     });
     const fallbackTimer = setInterval(() => {
@@ -124,7 +123,7 @@ export default function MessagingModule({ profile }) {
     return () => {
       active = false;
       clearInterval(fallbackTimer);
-      if (channel) supabase.removeChannel(channel);
+      unsubscribe?.();
     };
   }, [profile?.id]);
 

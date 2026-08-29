@@ -386,6 +386,16 @@ const PetOwnerMyPetsEdit = ({ navigation, route }) => {
       return;
     }
 
+    // Weight is optional -- only checked when a value was actually
+    // entered, and an explicit 0 (or anything non-positive) is rejected
+    // rather than silently saved.
+    const trimmedWeight = String(draftPet?.weight ?? '').trim();
+
+    if (trimmedWeight && (!/^\d+(\.\d+)?$/.test(trimmedWeight) || Number(trimmedWeight) <= 0)) {
+      Alert.alert('Invalid weight', 'Enter a valid weight greater than 0.');
+      return;
+    }
+
     if (!hasStaffOwnerAssignment()) {
       Alert.alert(
         'Assign pet owner',

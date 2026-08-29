@@ -74,6 +74,7 @@ export async function getQueue({ ownerId, veterinarianId, date = todayLocal() } 
   });
 }
 
+let mobileQueueChannelSeq = 0;
 export function subscribeToQueue(callback, { ownerId, veterinarianId } = {}) {
   const filter = ownerId
     ? `owner_id=eq.${ownerId}`
@@ -84,8 +85,14 @@ export function subscribeToQueue(callback, { ownerId, veterinarianId } = {}) {
   const config = { event: '*', schema: 'public', table: 'queue_entries' };
   if (filter) config.filter = filter;
 
+  // The counter guarantees a unique channel name even when two callers for
+  // the same owner/veterinarian mount in the same tick (e.g. VetShell's
+  // header badges and a screen's own subscribeToQueue call both mounting
+  // together) -- Date.now() alone is only millisecond-precision, and
+  // supabase-js reuses a channel by name, which throws if a second .on()
+  // lands on a channel the first caller already .subscribe()'d.
   const channel = supabase
-    .channel(`mobile-queue-${ownerId || veterinarianId || 'live'}-${Date.now()}`)
+    .channel(`mobile-queue-${ownerId || veterinarianId || 'live'}-${Date.now()}-${++mobileQueueChannelSeq}`)
     .on('postgres_changes', config, () => callback?.())
     .subscribe();
 

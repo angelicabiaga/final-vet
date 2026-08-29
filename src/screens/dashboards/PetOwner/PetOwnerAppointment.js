@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -28,6 +28,8 @@ import {
 } from '../../../api/mobileAppointmentService';
 import { supabase } from '../../../config/supabaseClient';
 import { formatDateTime12h } from '../../../utils/timeFormat';
+import { scrollAndFocusFirstInvalidField } from '../../shared/formValidation';
+import { usePetOwnerBadgeCounts, badgeLabel } from '../../shared/usePetOwnerBadgeCounts';
 
 const DATE_WINDOW_DAYS = 60;
 
@@ -50,6 +52,7 @@ export default function PetOwnerAppointment({ navigation, route }) {
   const user = route?.params?.user || {};
   const ownerId = getOwnerId(user);
   const ownerName = user?.full_name || user?.fullName || user?.name || user?.username || 'Pet Owner';
+  const navBadgeCounts = usePetOwnerBadgeCounts(ownerId);
 
   const [pets, setPets] = useState([]);
   const [vets, setVets] = useState([]);
@@ -69,6 +72,9 @@ export default function PetOwnerAppointment({ navigation, route }) {
     visitReason: '',
     notes: '',
   });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const scrollViewRef = useRef(null);
+  const fieldPositions = useRef({});
 
   useEffect(() => {
     if (!message || !message.toLowerCase().includes('successfully')) return undefined;
@@ -183,9 +189,23 @@ export default function PetOwnerAppointment({ navigation, route }) {
     setEditing(null);
     setForm({ petId: '', veterinarianId: '', appointmentDate: todayLocal(), startTime: '', visitReason: '', notes: '' });
     setSlots([]);
+    setFieldErrors({});
   };
 
   const saveAppointment = async () => {
+    const errors = {};
+    if (!form.petId) errors.petId = 'Select your registered pet.';
+    if (!form.veterinarianId) errors.veterinarianId = 'Select a veterinarian.';
+    if (!form.appointmentDate) errors.appointmentDate = 'Select an appointment date.';
+    if (!form.startTime) errors.startTime = 'Select an available time.';
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      scrollAndFocusFirstInvalidField({ scrollViewRef, fieldPositions, fieldRefs: {}, errors });
+      return;
+    }
+
     try {
       setMessage('');
       setSaving(true);
@@ -216,6 +236,7 @@ export default function PetOwnerAppointment({ navigation, route }) {
       visitReason: appointment.visit_reason || '',
       notes: appointment.notes || '',
     });
+    setFieldErrors({});
   };
 
   const confirmCancel = (appointment) => {
@@ -323,6 +344,8 @@ export default function PetOwnerAppointment({ navigation, route }) {
             <View style={styles.headerMenuPanel}>
               {sidebarItems.map((item) => {
                 const active = item.key === 'appointment';
+                const badgeKey = item.key === 'appointment' ? 'appointments' : item.key === 'queue' ? 'queue' : item.key === 'messages' ? 'messages' : null;
+                const badgeCount = badgeKey ? (navBadgeCounts[badgeKey] || 0) : 0;
                 return (
                   <TouchableOpacity
                     key={item.key}
@@ -332,6 +355,11 @@ export default function PetOwnerAppointment({ navigation, route }) {
                   >
                     <View style={[styles.headerMenuItemIconWrap, active && styles.headerMenuItemIconWrapActive]}>
                       <Image source={item.icon} style={styles.headerMenuItemIcon} resizeMode="contain" />
+                      {badgeCount > 0 ? (
+                        <View style={styles.menuBadge}>
+                          <Text style={styles.menuBadgeText}>{badgeLabel(badgeCount)}</Text>
+                        </View>
+                      ) : null}
                     </View>
                     <Text style={styles.headerMenuItemLabel}>{item.label}</Text>
                   </TouchableOpacity>
@@ -341,7 +369,7 @@ export default function PetOwnerAppointment({ navigation, route }) {
           ) : null}
         </LinearGradient>
 
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView ref={scrollViewRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <LinearGradient colors={['#63B6C5', '#63B6C5', '#63B6C5']} style={styles.heroCard}>
             <Text style={styles.eyebrow}>GENERAL CONSULTATION</Text>
             <Text style={styles.title}>{editing ? 'Reschedule Appointment' : 'Book an Appointment'}</Text>
@@ -350,42 +378,54 @@ export default function PetOwnerAppointment({ navigation, route }) {
 
 
           <View style={styles.card}>
-            <FieldLabel text="Pet" />
-            <Dropdown
-              style={styles.dropdown}
-              data={pets.map((pet) => ({ value: pet.id, label: `${pet.pet_name} — ${pet.species}${pet.breed ? ` / ${pet.breed}` : ''}` }))}
-              labelField="label" valueField="value" value={form.petId}
-              placeholder={pets.length ? 'Select your registered pet' : 'No registered pets found'}
-              onChange={(item) => setForm((current) => ({ ...current, petId: item.value }))}
-            />
+            <View onLayout={(e) => { fieldPositions.current.petId = e.nativeEvent.layout.y; }}>
+              <FieldLabel text="Pet" />
+              <Dropdown
+                style={[styles.dropdown, fieldErrors.petId && styles.dropdownInvalid]}
+                data={pets.map((pet) => ({ value: pet.id, label: `${pet.pet_name} — ${pet.species}${pet.breed ? ` / ${pet.breed}` : ''}` }))}
+                labelField="label" valueField="value" value={form.petId}
+                placeholder={pets.length ? 'Select your registered pet' : 'No registered pets found'}
+                onChange={(item) => { setForm((current) => ({ ...current, petId: item.value })); if (fieldErrors.petId) setFieldErrors((current) => ({ ...current, petId: '' })); }}
+              />
+              {!!fieldErrors.petId && <Text style={styles.fieldErrorText}>{fieldErrors.petId}</Text>}
+            </View>
 
-            <FieldLabel text="Veterinarian" />
-            <Dropdown
-              style={styles.dropdown}
-              data={vets.map((vet) => ({ value: vet.id, label: vet.full_name }))}
-              labelField="label" valueField="value" value={form.veterinarianId}
-              placeholder="Select veterinarian"
-              onChange={(item) => setForm((current) => ({ ...current, veterinarianId: item.value }))}
-            />
+            <View onLayout={(e) => { fieldPositions.current.veterinarianId = e.nativeEvent.layout.y; }}>
+              <FieldLabel text="Veterinarian" />
+              <Dropdown
+                style={[styles.dropdown, fieldErrors.veterinarianId && styles.dropdownInvalid]}
+                data={vets.map((vet) => ({ value: vet.id, label: vet.full_name }))}
+                labelField="label" valueField="value" value={form.veterinarianId}
+                placeholder="Select veterinarian"
+                onChange={(item) => { setForm((current) => ({ ...current, veterinarianId: item.value })); if (fieldErrors.veterinarianId) setFieldErrors((current) => ({ ...current, veterinarianId: '' })); }}
+              />
+              {!!fieldErrors.veterinarianId && <Text style={styles.fieldErrorText}>{fieldErrors.veterinarianId}</Text>}
+            </View>
 
-            <FieldLabel text="Appointment Date" />
-            <Dropdown
-              style={styles.dropdown}
-              data={dateOptions}
-              labelField="label" valueField="value" value={form.appointmentDate}
-              placeholder="Select date"
-              onChange={(item) => setForm((current) => ({ ...current, appointmentDate: item.value }))}
-            />
+            <View onLayout={(e) => { fieldPositions.current.appointmentDate = e.nativeEvent.layout.y; }}>
+              <FieldLabel text="Appointment Date" />
+              <Dropdown
+                style={[styles.dropdown, fieldErrors.appointmentDate && styles.dropdownInvalid]}
+                data={dateOptions}
+                labelField="label" valueField="value" value={form.appointmentDate}
+                placeholder="Select date"
+                onChange={(item) => { setForm((current) => ({ ...current, appointmentDate: item.value })); if (fieldErrors.appointmentDate) setFieldErrors((current) => ({ ...current, appointmentDate: '' })); }}
+              />
+              {!!fieldErrors.appointmentDate && <Text style={styles.fieldErrorText}>{fieldErrors.appointmentDate}</Text>}
+            </View>
 
-            <FieldLabel text="Available Time" />
-            <Dropdown
-              style={styles.dropdown}
+            <View onLayout={(e) => { fieldPositions.current.startTime = e.nativeEvent.layout.y; }}>
+              <FieldLabel text="Available Time" />
+              <Dropdown
+              style={[styles.dropdown, fieldErrors.startTime && styles.dropdownInvalid]}
               data={slots.map((slot) => ({ value: slot, label: `${formatTime(slot)} – ${formatTime(addTenMinutes(slot))}` }))}
               labelField="label" valueField="value" value={form.startTime}
               placeholder={slotLoading ? 'Loading available times...' : slots.length ? 'Select available time' : 'No available slots'}
               disable={slotLoading || !form.veterinarianId || !slots.length}
-              onChange={(item) => setForm((current) => ({ ...current, startTime: item.value }))}
-            />
+              onChange={(item) => { setForm((current) => ({ ...current, startTime: item.value })); if (fieldErrors.startTime) setFieldErrors((current) => ({ ...current, startTime: '' })); }}
+              />
+              {!!fieldErrors.startTime && <Text style={styles.fieldErrorText}>{fieldErrors.startTime}</Text>}
+            </View>
 
             <FieldLabel text="Notes" optional />
             <TextInput style={[styles.input, styles.notes]} value={form.notes} onChangeText={(value) => setForm((current) => ({ ...current, notes: value }))} placeholder="Additional information for the clinic" multiline maxLength={500} />
@@ -542,6 +582,12 @@ const styles = StyleSheet.create({
   headerMenuItemIconWrapActive: { backgroundColor: 'rgba(38,96,126,0.82)' },
   headerMenuItemIcon: { width: 20, height: 20, tintColor: '#ffffff' },
   headerMenuItemLabel: { flex: 1, fontSize: 14, fontWeight: '800', color: '#ffffff' },
+  menuBadge: {
+    position: 'absolute', top: -4, right: -4, minWidth: 17, height: 17, paddingHorizontal: 3,
+    borderRadius: 9, backgroundColor: '#e53935', justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#ffffff',
+  },
+  menuBadgeText: { color: '#ffffff', fontSize: 10, fontWeight: '800', lineHeight: 12 },
 
   content: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 120 },
   heroCard: {
@@ -592,6 +638,8 @@ const styles = StyleSheet.create({
   label: { color: '#24566d', fontSize: 14, fontWeight: '800', marginBottom: 7, marginTop: 12 },
   optional: { color: '#78909b', fontWeight: '600' },
   dropdown: { minHeight: 52, borderWidth: 1, borderColor: '#cee2e9', borderRadius: 16, paddingHorizontal: 14, backgroundColor: '#fbfdfe' },
+  dropdownInvalid: { borderColor: '#d9534f', borderWidth: 1.5 },
+  fieldErrorText: { color: '#a51d2d', fontSize: 12, fontWeight: '700', marginTop: 4 },
   input: { minHeight: 52, borderWidth: 1, borderColor: '#cee2e9', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 11, color: '#294b5d', backgroundColor: '#fbfdfe', fontWeight: '600', fontSize: 14 },
   notes: { minHeight: 96, textAlignVertical: 'top' },
   sectionTitle: { color: '#24566d', fontSize: 20, fontWeight: '900', marginBottom: 5 },

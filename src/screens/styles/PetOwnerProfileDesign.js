@@ -601,6 +601,19 @@ export const styles = StyleSheet.create({
     color: '#24566d',
   },
 
+  inputInvalid: {
+    borderColor: '#d9534f',
+    borderWidth: 1.5,
+  },
+
+  fieldErrorText: {
+    color: '#a51d2d',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
+    marginBottom: 4,
+  },
+
   disabledInputField: {
     backgroundColor: '#eef3f7',
     borderColor: '#d8e3ec',

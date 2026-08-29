@@ -8,8 +8,33 @@ import {
 } from "../services/appointmentService";
 import { savePet } from "../services/petService";
 import { supabase } from "../config/supabaseClient";
+import DataPrivacyConsent, { focusConsentBlock } from "./DataPrivacyConsent";
+import { CONSENT_REQUIRED_ERROR } from "../constants/privacyNotice";
+import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
+import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 
 const EMPTY_PET_FORM = { petName: "", species: "", breed: "", sex: "Unknown", dateOfBirth: "", weight: "" };
+
+function validateGuestField(name, value) {
+  switch (name) {
+    case "firstName":
+      return String(value || "").trim() ? "" : "First name is required.";
+    case "lastName":
+      return String(value || "").trim() ? "" : "Last name is required.";
+    case "phone":
+      return isValidPhMobile(value) ? "" : INVALID_PH_MOBILE_MESSAGE;
+    case "email": {
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "Email is required.";
+      if (!/^\S+@\S+\.\S+$/.test(trimmed)) return "Please enter a valid email address.";
+      return "";
+    }
+    case "address":
+      return String(value || "").trim() ? "" : "Address is required.";
+    default:
+      return "";
+  }
+}
 
 export default function AppointmentForm({ profile, mode = "owner", guestOwner = false, onCreated }) {
   const isStaff = mode === "staff";
@@ -28,9 +53,20 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const [ownerDropdownOpen, setOwnerDropdownOpen] = useState(false);
   const [ownerRecord, setOwnerRecord] = useState(null);
   const [guestForm, setGuestForm] = useState({ firstName: "", lastName: "", phone: "", email: "", address: "" });
+  const [serviceConsent, setServiceConsent] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
+  const [consentError, setConsentError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const consentRef = useRef(null);
   const submittingRef = useRef(false);
   const petModalSavingRef = useRef(false);
   const guestOwnerPromiseRef = useRef(null);
+  const guestFieldRefs = useRef({}).current;
+  const registerGuestFieldRef = (name) => (el) => { guestFieldRefs[name] = el; };
+  const ownerSearchRef = useRef(null);
+  const appointmentDateFieldRef = useRef(null);
+  const startTimeFieldRef = useRef(null);
+  const veterinarianFieldRef = useRef(null);
   const [petDropdownOpen, setPetDropdownOpen] = useState(false);
   const petSelectRef = useRef(null);
   const [petModalOpen, setPetModalOpen] = useState(false);
@@ -151,6 +187,28 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   function updateForm(patch) {
     setForm(current => ({ ...current, ...patch }));
     setMessage({ type: "", text: "" });
+    setFieldErrors(current => {
+      const relevant = Object.keys(patch).filter((name) => current[name]);
+      if (!relevant.length) return current;
+      const next = { ...current };
+      relevant.forEach((name) => {
+        const value = patch[name];
+        if (name === "petIds") next.petIds = value.length ? "" : current.petIds;
+        else if (name === "appointmentDate") next.appointmentDate = value ? "" : current.appointmentDate;
+        else if (name === "startTime") next.startTime = value ? "" : current.startTime;
+        else if (name === "veterinarianId") next.veterinarianId = value ? "" : current.veterinarianId;
+        else if (name === "ownerId") next.ownerId = value ? "" : current.ownerId;
+      });
+      return next;
+    });
+  }
+
+  function updateGuestField(name, value) {
+    setGuestForm(current => ({ ...current, [name]: value }));
+    if (message.text) setMessage({ type: "", text: "" });
+    setFieldErrors(current => (
+      current[name] ? { ...current, [name]: validateGuestField(name, value) } : current
+    ));
   }
 
   function onOwnerQueryChange(event) {
@@ -174,13 +232,33 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   async function ensureOwnerId() {
     if (form.ownerId) return form.ownerId;
     if (!guestOwner) throw new Error("Search for and select a pet owner first.");
+    // The single choke point for creating a new walk-in owner account --
+    // reached both from the main submit and from the "Add Pet" modal, so
+    // the consent gate has to live here rather than only in submit(), or
+    // a guest account could be created (via Add Pet) before consent was
+    // ever checked.
+    if (!serviceConsent) {
+      setConsentError(CONSENT_REQUIRED_ERROR);
+      focusConsentBlock(consentRef);
+      throw new Error(CONSENT_REQUIRED_ERROR);
+    }
     if (guestOwnerPromiseRef.current) return guestOwnerPromiseRef.current;
     const { firstName, lastName, phone, email, address } = guestForm;
     if (!firstName.trim() || !lastName.trim() || !phone.trim() || !email.trim() || !address.trim()) {
       throw new Error("Fill in the guest's first name, last name, phone, email, and address first.");
     }
+    // The profiles table requires every pet_owner account to have a
+    // correctly-formatted phone number (the pet_owner_phone_format check
+    // constraint) -- checked here so a bad format surfaces as a clear
+    // message instead of a raw database constraint error.
+    if (!isValidPhMobile(phone)) {
+      throw new Error(INVALID_PH_MOBILE_MESSAGE);
+    }
     const fullName = `${firstName.trim()} ${lastName.trim()}`;
-    guestOwnerPromiseRef.current = createGuestOwner({ fullName, phone, email, address })
+    guestOwnerPromiseRef.current = createGuestOwner({
+      fullName, phone, email, address,
+      marketingConsent, recordedBy: profile?.id, sourceContext: "Walk-in Registration",
+    })
       .then(owner => {
         setOwnerRecord(owner);
         updateForm({ ownerId: owner.id });
@@ -199,6 +277,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       petIds: current.petIds.includes(id) ? current.petIds.filter(item => item !== id) : [...current.petIds, id]
     }));
     setMessage({ type: "", text: "" });
+    setFieldErrors(current => (current.petIds ? { ...current, petIds: "" } : current));
   }
 
   function removePet(id) {
@@ -212,7 +291,9 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       setPetModalMessage("");
       setPetModalOpen(true);
       setPetDropdownOpen(false);
-    } catch (error) { setMessage({ type: "error", text: error.message }); }
+    } catch (error) {
+      if (error.message !== CONSENT_REQUIRED_ERROR) setMessage({ type: "error", text: error.message });
+    }
   }
 
   async function submitPetModal(event) {
@@ -238,8 +319,52 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   async function submit(event) {
     event.preventDefault();
     if (submittingRef.current) return;
-    if (!form.petIds.length) { setMessage({ type: "error", text: "Select at least one pet." }); return; }
-    if (!form.veterinarianId) { setMessage({ type: "error", text: "Select a veterinarian." }); return; }
+
+    const errors = {};
+    const allFieldRefs = {};
+
+    if (isStaff && guestOwner && !ownerRecord) {
+      ["firstName", "lastName", "phone", "email", "address"].forEach((name) => {
+        const errorMessage = validateGuestField(name, guestForm[name]);
+        if (errorMessage) errors[name] = errorMessage;
+        if (guestFieldRefs[name]) allFieldRefs[name] = guestFieldRefs[name];
+      });
+    } else if (isStaff && !guestOwner && !form.ownerId) {
+      errors.ownerId = "Search for and select a pet owner.";
+      if (ownerSearchRef.current) allFieldRefs.ownerId = ownerSearchRef.current;
+    }
+
+    if (!form.petIds.length) {
+      errors.petIds = "Select at least one pet.";
+      if (petSelectRef.current) allFieldRefs.petIds = petSelectRef.current;
+    }
+
+    if (!form.appointmentDate) {
+      errors.appointmentDate = "Select an appointment date.";
+      if (appointmentDateFieldRef.current) allFieldRefs.appointmentDate = appointmentDateFieldRef.current;
+    }
+
+    if (!form.startTime) {
+      errors.startTime = "Select an available time.";
+      if (startTimeFieldRef.current) allFieldRefs.startTime = startTimeFieldRef.current;
+    }
+
+    if (!form.veterinarianId) {
+      errors.veterinarianId = "Select a veterinarian.";
+      if (veterinarianFieldRef.current) allFieldRefs.veterinarianId = veterinarianFieldRef.current;
+    }
+
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setMessage({ type: "error", text: "Please fix the highlighted field(s) before continuing." });
+      focusFirstInvalidField(allFieldRefs, errors);
+      return;
+    }
+
+    // A scheduling-capacity constraint, not a field-emptiness case -- the
+    // fields involved (time/pet count) are already individually valid, so
+    // this stays a summary-only message rather than pointing at one field.
     if (consecutiveSlots.length < form.petIds.length) {
       setMessage({ type: "error", text: `Only ${consecutiveSlots.length} consecutive slot(s) available from the selected time for ${form.petIds.length} pet(s). Choose an earlier time or fewer pets.` });
       return;
@@ -331,7 +456,12 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
       setForm(current => ({ ...current, petIds: [], startTime: "", notes: "" }));
       onCreated?.();
-    } catch (error) { setMessage({ type: "error", text: error.message }); }
+    } catch (error) {
+      // The consent-required case already shows its own message directly
+      // below the consent checkbox (and scrolls/highlights it) -- avoid
+      // showing the exact same text a second time in the general banner.
+      if (error.message !== CONSENT_REQUIRED_ERROR) setMessage({ type: "error", text: error.message });
+    }
     finally { setSubmitting(false); submittingRef.current = false; }
   }
 
@@ -416,14 +546,14 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         {isStaff && (guestOwner ? (
           <>
             <div className="two-cols">
-              <label>First Name<span className="required-mark"> *</span><input required value={guestForm.firstName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, firstName: event.target.value }))} placeholder="Enter first name" /></label>
-              <label>Last Name<span className="required-mark"> *</span><input required value={guestForm.lastName} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, lastName: event.target.value }))} placeholder="Enter last name" /></label>
+              <label>First Name<span className="required-mark"> *</span><input ref={registerGuestFieldRef("firstName")} className={invalidClass(fieldErrors, "firstName")} required value={guestForm.firstName} disabled={!!ownerRecord} onChange={event => updateGuestField("firstName", event.target.value)} placeholder="Enter first name" />{fieldErrors.firstName && <span className="field-error-text">{fieldErrors.firstName}</span>}</label>
+              <label>Last Name<span className="required-mark"> *</span><input ref={registerGuestFieldRef("lastName")} className={invalidClass(fieldErrors, "lastName")} required value={guestForm.lastName} disabled={!!ownerRecord} onChange={event => updateGuestField("lastName", event.target.value)} placeholder="Enter last name" />{fieldErrors.lastName && <span className="field-error-text">{fieldErrors.lastName}</span>}</label>
             </div>
             <div className="two-cols">
-              <label>Phone Number<span className="required-mark"> *</span><input required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, phone: event.target.value }))} placeholder="Enter phone number" /></label>
-              <label>Email<span className="required-mark"> *</span><input required type="email" value={guestForm.email} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, email: event.target.value }))} placeholder="Enter email address" /></label>
+              <label>Phone Number<span className="required-mark"> *</span><input ref={registerGuestFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => updateGuestField("phone", event.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" />{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>
+              <label>Email<span className="required-mark"> *</span><input ref={registerGuestFieldRef("email")} className={invalidClass(fieldErrors, "email")} required type="email" value={guestForm.email} disabled={!!ownerRecord} onChange={event => updateGuestField("email", event.target.value)} placeholder="Enter email address" />{fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}</label>
             </div>
-            <label>Address<span className="required-mark"> *</span><input required value={guestForm.address} disabled={!!ownerRecord} onChange={event => setGuestForm(value => ({ ...value, address: event.target.value }))} placeholder="Enter home address" /></label>
+            <label>Address<span className="required-mark"> *</span><input ref={registerGuestFieldRef("address")} className={invalidClass(fieldErrors, "address")} required value={guestForm.address} disabled={!!ownerRecord} onChange={event => updateGuestField("address", event.target.value)} placeholder="Enter home address" />{fieldErrors.address && <span className="field-error-text">{fieldErrors.address}</span>}</label>
             {ownerRecord && (
               <p className="help">
                 Registered as a new pet owner account for {ownerRecord.full_name}. <button type="button" className="appt-linklike" onClick={() => { guestOwnerPromiseRef.current = null; setOwnerRecord(null); updateForm({ ownerId: "" }); }}>Not them? Start over</button>
@@ -434,6 +564,8 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
           <label>Pet Owner<span className="required-mark"> *</span>
             <div className="appt-owner-select">
               <input
+                ref={ownerSearchRef}
+                className={invalidClass(fieldErrors, "ownerId")}
                 type="text"
                 role="combobox"
                 aria-expanded={ownerDropdownOpen}
@@ -456,11 +588,12 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
                 </div>
               )}
             </div>
+            {fieldErrors.ownerId && <span className="field-error-text">{fieldErrors.ownerId}</span>}
           </label>
         ))}
 
         <label>Pet Selection<span className="required-mark"> *</span>
-          <div className="appt-pet-select" ref={petSelectRef}>
+          <div className={invalidClass(fieldErrors, "petIds", "appt-pet-select")} ref={petSelectRef} tabIndex={-1}>
             <div className="appt-pet-controls">
               <button type="button" className="appt-pet-trigger" disabled={isStaff && !form.ownerId} onClick={() => setPetDropdownOpen(open => !open)}>
                 {form.petIds.length ? `${form.petIds.length} pet${form.petIds.length > 1 ? "s" : ""} selected` : (pets.length ? "Select pet(s)" : "No registered pets found")}
@@ -492,26 +625,40 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
               </div>
             )}
           </div>
+          {fieldErrors.petIds && <span className="field-error-text">{fieldErrors.petIds}</span>}
         </label>
 
         <div className="two-cols">
-          <label>Appointment Date<span className="required-mark"> *</span><input type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required /></label>
-          <label>Available Time<span className="required-mark"> *</span><select value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={availabilityLoading || !availableTimes.length}>
+          <label>Appointment Date<span className="required-mark"> *</span><input ref={appointmentDateFieldRef} className={invalidClass(fieldErrors, "appointmentDate")} type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required />{fieldErrors.appointmentDate && <span className="field-error-text">{fieldErrors.appointmentDate}</span>}</label>
+          <label>Available Time<span className="required-mark"> *</span><select ref={startTimeFieldRef} className={invalidClass(fieldErrors, "startTime")} value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={availabilityLoading || !availableTimes.length}>
             <option value="">{availabilityLoading ? "Loading…" : availableTimes.length ? "Select time" : "No available slots"}</option>
             {availableTimes.map(slot => <option key={slot} value={slot}>{formatTime(slot)}</option>)}
-          </select></label>
+          </select>{fieldErrors.startTime && <span className="field-error-text">{fieldErrors.startTime}</span>}</label>
         </div>
 
         <label>Veterinarian<span className="required-mark"> *</span>
-          <select value={form.veterinarianId} onChange={event => updateForm({ veterinarianId: event.target.value })} required disabled={!form.startTime}>
+          <select ref={veterinarianFieldRef} className={invalidClass(fieldErrors, "veterinarianId")} value={form.veterinarianId} onChange={event => updateForm({ veterinarianId: event.target.value })} required disabled={!form.startTime}>
             <option value="">{!form.startTime ? "Select a time first" : eligibleVets.length ? "Select veterinarian" : "No veterinarian available at this time"}</option>
             {eligibleVets.map(vet => <option key={vet.id} value={vet.id}>{vet.full_name}</option>)}
           </select>
+          {fieldErrors.veterinarianId && <span className="field-error-text">{fieldErrors.veterinarianId}</span>}
         </label>
 
         {notEnoughSlots && <p className="notice error">Only {consecutiveSlots.length} consecutive slot(s) available from this time for {form.petIds.length} pets. Choose an earlier time or fewer pets.</p>}
 
         <label>Notes<span className="optional-mark"> (Optional)</span><textarea value={form.notes} onChange={event => updateForm({ notes: event.target.value })} maxLength="500" rows="4" placeholder="Additional information for the clinic" /></label>
+
+        {isStaff && guestOwner && !ownerRecord && (
+          <DataPrivacyConsent
+            ref={consentRef}
+            serviceConsent={serviceConsent}
+            onServiceConsentChange={(checked) => { setServiceConsent(checked); if (checked) setConsentError(""); }}
+            marketingConsent={marketingConsent}
+            onMarketingConsentChange={setMarketingConsent}
+            error={consentError}
+          />
+        )}
+
         <button className="book-button" disabled={submitting || notEnoughSlots}>{submitting ? "Saving…" : isStaff ? "Register Walk-In" : "Book Appointment"}</button>
       </form>
 
@@ -588,6 +735,8 @@ const styles = `
 .appt-dropdown-item:hover{background:#eaf8fd}.appt-dropdown-item strong{color:#20313B;font-size:14px;font-weight:700}.appt-dropdown-item span{color:#7c8c94;font-size:12px;font-weight:400}
 .appt-pet-select{position:relative;display:grid;gap:10px}.appt-pet-controls{display:flex;gap:8px}
 .appt-pet-trigger{flex:1;display:flex;align-items:center;justify-content:space-between;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;background:#fbfeff;color:#20313B;font:inherit;font-weight:400;cursor:pointer}
+.appt-pet-select.field-invalid{border-color:transparent!important;box-shadow:none!important}
+.appt-pet-select.field-invalid .appt-pet-trigger{border-color:#d9534f!important;box-shadow:0 0 0 1px #d9534f!important}
 .appt-pet-trigger:disabled{opacity:.6;cursor:not-allowed}
 .appt-addpet-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #a9dff0;border-radius:12px;padding:12px 14px;background:#eaf8fd;color:#267da3;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap}
 .appt-addpet-btn:hover{background:#dcf1fa}.appt-addpet-btn:disabled{opacity:.6;cursor:not-allowed}

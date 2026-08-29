@@ -261,6 +261,17 @@ export async function getInventoryItemsByIds(ids = []) {
   return data || [];
 }
 
+let inventoryChannelSeq = 0;
+/** Mirrors subscribeToTransactions/subscribeToQueue's pattern -- used by
+ * the sidebar's Inventory alert badge to refresh its count in real time. */
+export function subscribeToInventoryChanges(callback) {
+  const channel = supabase.channel(`inventory-${Date.now()}-${++inventoryChannelSeq}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "inventory_items" }, callback)
+    .on("postgres_changes", { event: "*", schema: "public", table: "inventory_batches" }, callback)
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
+}
+
 export async function getInventorySummary() {
   const {
     data,
