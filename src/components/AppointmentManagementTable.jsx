@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { PawPrint, RefreshCw, Search, X } from "lucide-react";
+import { PawPrint, Search, X } from "lucide-react";
 import { APPOINTMENT_STATUSES, formatTime, getAppointments, updateAppointmentStatus, getVeterinarianAvailability, rescheduleAppointment, todayLocal } from "../services/appointmentService";
 import { supabase } from "../config/supabaseClient";
+import { formatDateLong } from "../utils/timeFormat";
 
 const PAGE_SIZE = 10;
 const STATUS_FILTER_OPTIONS = APPOINTMENT_STATUSES.filter(s => s !== "Confirmed");
@@ -43,6 +44,15 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
   }, [date, profile?.id, status, veterinarianOnly]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Resets the search box and both filters back to their defaults --
+  // status/date changes already re-trigger `load` via its own dependency
+  // array, so clearing them refetches the unfiltered list on its own.
+  function clearFilters() {
+    setSearch("");
+    setStatus("");
+    setDate("");
+  }
 
   useEffect(() => {
     if (!notesModal && !rebookModal) return;
@@ -172,13 +182,13 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       <div className="search-box"><Search size={16}/><input type="text" placeholder="Search pet, owner, veterinarian, or notes" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       <select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{STATUS_FILTER_OPTIONS.map(s=><option key={s}>{s}</option>)}</select>
       <input type="date" value={date} onChange={e=>setDate(e.target.value)}/>
-      <button onClick={load}><RefreshCw size={16}/>Refresh</button>
+      <button onClick={clearFilters}><X size={16}/>Clear</button>
     </div>
     {message&&<div className="manage-message">{message}</div>}
     <div className="table-wrap"><table><thead><tr><th>Date/Time</th><th>Pet / Owner</th><th>Veterinarian</th><th>Source</th><th>Notes</th><th>Action</th></tr></thead><tbody>{loading?<tr><td colSpan="6">Loading…</td></tr>:pageRows.length===0?<tr><td colSpan="6">No appointments found.</td></tr>:pageRows.map(row=>{
       const action=rowAction(row);
       return <tr key={row.id}>
-        <td>{row.appointment_date}<br/><small>{formatTime(row.start_time)}</small></td>
+        <td>{formatDateLong(row.appointment_date)}<br/><small>{formatTime(row.start_time)}</small></td>
         <td><div className="appt-pet-cell">{row.pet?.photo_url?<img className="appt-pet-photo" src={row.pet.photo_url} alt={row.pet?.pet_name||"Pet"}/>:<div className="appt-pet-photo appt-pet-photo-fallback"><PawPrint size={15}/></div>}<div><b>{row.pet?.pet_name}</b>{row.visit_group_id&&<small className="visit-badge">Part of a multi-pet visit</small>}<br/><small>{row.owner?.full_name}</small></div></div></td>
         <td>{row.veterinarian?.full_name}</td>
         <td>{row.appointment_source}</td>
@@ -203,7 +213,7 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       <div className="notes-modal" onClick={e=>e.stopPropagation()}>
         <button type="button" className="notes-close" aria-label="Close" onClick={()=>setNotesModal(null)}><X size={16}/></button>
         <h3>Notes</h3>
-        <p className="notes-context">{notesModal.pet?.pet_name} · {notesModal.owner?.full_name} · {notesModal.appointment_date}</p>
+        <p className="notes-context">{notesModal.pet?.pet_name} · {notesModal.owner?.full_name} · {formatDateLong(notesModal.appointment_date)}</p>
         <div className="notes-body">{notesModal.notes}</div>
         <button type="button" className="notes-back" onClick={()=>setNotesModal(null)}>Back</button>
       </div>

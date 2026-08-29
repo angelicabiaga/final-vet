@@ -1,5 +1,5 @@
 import jsPDF from "jspdf";
-import { formatDateTime12h } from "./timeFormat";
+import { formatDateTime12h, formatDateLong } from "./timeFormat";
 import pawLogo from "../assets/reference/paw.png";
 
 function money(value) {
@@ -518,7 +518,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   fieldRow("Pet Name", pet.pet_name);
   fieldRow("Species / Breed", [pet.species, pet.breed].filter(Boolean).join(" / "));
   fieldRow("Sex", pet.sex);
-  fieldRow("Date of Birth / Age", [pet.date_of_birth, meta.petAge].filter(Boolean).join(" · "));
+  fieldRow("Date of Birth / Age", [pet.date_of_birth ? formatDateLong(pet.date_of_birth) : "", meta.petAge].filter(Boolean).join(" · "));
   fieldRow("Weight on File (kg)", pet.weight);
   fieldRow("Color / Markings", pet.color);
   fieldRow("Microchip Number", pet.microchip_number);
@@ -603,7 +603,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   paragraph("Notes", record.veterinarian_notes);
 
   sectionTitle("Follow-up");
-  fieldRow("Follow-up Date", record.follow_up_date);
+  fieldRow("Follow-up Date", record.follow_up_date ? formatDateLong(record.follow_up_date) : "");
 
   sectionTitle("Consultation Status");
   fieldRow("Status", record.record_status === "Finalized" ? "Finalized / Completed" : record.record_status);

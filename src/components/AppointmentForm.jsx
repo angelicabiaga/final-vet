@@ -520,7 +520,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         <Summary icon={<PawPrint />} label={selectedPets.length > 1 ? "Pets" : "Pet"} value={selectedPets.length ? selectedPets.map(pet => pet.pet_name).join(", ") : "Not selected"} />
         {isStaff && <Summary icon={<PawPrint />} label="Owner" value={selectedOwner?.full_name || ownerRecord?.full_name || "Not selected"} />}
         <Summary icon={<Stethoscope />} label="Veterinarian" value={selectedVet?.full_name || "Not selected"} />
-        <Summary icon={<CalendarDays />} label="Date" value={form.appointmentDate || "Not selected"} />
+        <Summary icon={<CalendarDays />} label="Date" value={form.appointmentDate ? formatAppointmentDate(form.appointmentDate) : "Not selected"} />
         <Summary icon={<Clock3 />} label="Time" value={form.startTime ? `${formatTime(form.startTime)} – ${formatTime(nextTime(form.startTime))}${form.petIds.length > 1 ? ` (+${form.petIds.length - 1} more slot${form.petIds.length > 2 ? "s" : ""})` : ""}` : "Not selected"} />
         <div className="summary-type"><strong>Consultation Type</strong><span>General Consultation</span></div>
         <p className="help">Clinic booking hours: Monday–Sunday, 9:00 AM–7:00 PM. Slots are 10 minutes each; the last slot is 6:50 PM–7:00 PM. A time disappears as soon as it is booked for the selected veterinarian.</p>

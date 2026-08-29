@@ -314,7 +314,7 @@ export async function getOutstandingPrescriptions() {
     .from("prescriptions")
     .select("id,queue_entry_id,pet_id,owner_id,veterinarian_id,inventory_item_id,item_name,unit_price,prescribed_quantity,total_quantity_purchased,fulfillment_status,created_at")
     .in("fulfillment_status", ["Not Purchased", "Partially Purchased"])
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: false });
   if (error) throw new Error(`Unable to load outstanding prescriptions: ${error.message}`);
 
   const rows = data || [];

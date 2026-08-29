@@ -47,6 +47,47 @@ export function formatDateTime12h(value, options) {
   });
 }
 
+function manilaYmd(date) {
+  // en-CA locale reliably gives "YYYY-MM-DD" regardless of the runtime's
+  // own default locale, which is all that's needed to pull the Manila-local
+  // calendar date back out of a real timestamp.
+  return date.toLocaleDateString("en-CA", { timeZone: MANILA_TIME_ZONE }).split("-").map(Number);
+}
+
+// Formats a date as "August 27, 2026" -- accepts either a plain "YYYY-MM-DD"
+// date-only string (an appointment/expiry/birth date with no time
+// component, parsed from its own y/m/d digits so it never shifts a day off
+// from timezone conversion) or a real Date/ISO timestamp (converted to its
+// Asia/Manila calendar date first). Use this instead of ever rendering a
+// raw ISO date string to a user.
+export function formatDateLong(value) {
+  if (!value) return "—";
+  const str = String(value);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}/.test(str);
+  const [y, m, d] = isDateOnly
+    ? str.slice(0, 10).split("-").map(Number)
+    : manilaYmd(value instanceof Date ? value : new Date(value));
+  if (!y || !m || !d || Number.isNaN(y)) return "—";
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+// Formats a date as "8-27-26" -- same input handling as formatDateLong, for
+// dense table cells where the long form doesn't fit.
+export function formatDateShort(value) {
+  if (!value) return "—";
+  const str = String(value);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}/.test(str);
+  const [y, m, d] = isDateOnly
+    ? str.slice(0, 10).split("-").map(Number)
+    : manilaYmd(value instanceof Date ? value : new Date(value));
+  if (!y || !m || !d || Number.isNaN(y)) return "—";
+  return `${m}-${d}-${String(y).slice(-2)}`;
+}
+
 // Splits a 24h "HH:MM"/"HH:MM:SS" string into 12-hour picker parts, for
 // building custom hour/minute/AM-PM select inputs.
 export function to12HourParts(time) {

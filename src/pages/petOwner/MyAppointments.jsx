@@ -3,6 +3,7 @@ import { CalendarDays, RefreshCw, XCircle } from "lucide-react";
 import AppShell from "../../components/AppShell";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { cancelAppointment, formatTime, getAppointments, todayLocal } from "../../services/appointmentService";
+import { formatDateLong } from "../../utils/timeFormat";
 
 export default function MyAppointments({ profile }) {
   const [rows, setRows] = useState([]);
@@ -35,7 +36,7 @@ export default function MyAppointments({ profile }) {
       {notice && <div className={`notice ${notice.type}`}>{notice.text}</div>}
       {loading ? <div className="card">Loading appointments…</div> : rows.length === 0 ? <div className="card empty"><CalendarDays/>No appointments yet.</div> : <div className="cards">{rows.map(row => <article className="appointment" key={row.id}>
         <div><span className={`status ${row.status.replaceAll(" ","-").toLowerCase()}`}>{row.status}</span><h3>{row.pet?.pet_name}</h3><p>{row.pet?.species} · General Consultation</p></div>
-        <div className="details"><span><b>Date:</b> {row.appointment_date}</span><span><b>Time:</b> {formatTime(row.start_time)} – {formatTime(row.end_time)}</span><span><b>Veterinarian:</b> {row.veterinarian?.full_name}</span><span><b>Source:</b> {row.appointment_source}</span>{row.visit_reason && <span><b>Reason:</b> {row.visit_reason}</span>}</div>
+        <div className="details"><span><b>Date:</b> {formatDateLong(row.appointment_date)}</span><span><b>Time:</b> {formatTime(row.start_time)} – {formatTime(row.end_time)}</span><span><b>Veterinarian:</b> {row.veterinarian?.full_name}</span><span><b>Source:</b> {row.appointment_source}</span>{row.visit_reason && <span><b>Reason:</b> {row.visit_reason}</span>}</div>
         {row.appointment_date >= todayLocal() && row.status === "Confirmed" && <button className="cancel" onClick={() => setPendingCancel(row)}><XCircle size={16}/> Cancel</button>}
       </article>)}</div>}
     </div>
@@ -44,7 +45,7 @@ export default function MyAppointments({ profile }) {
       open={!!pendingCancel}
       tone="danger"
       title="Cancel Appointment?"
-      description={pendingCancel ? `Cancel ${pendingCancel.pet?.pet_name || "this pet"}'s appointment on ${pendingCancel.appointment_date} at ${formatTime(pendingCancel.start_time)}? This cannot be undone.` : ""}
+      description={pendingCancel ? `Cancel ${pendingCancel.pet?.pet_name || "this pet"}'s appointment on ${formatDateLong(pendingCancel.appointment_date)} at ${formatTime(pendingCancel.start_time)}? This cannot be undone.` : ""}
       confirmLabel="Yes, Cancel Appointment"
       cancelLabel="Keep Appointment"
       busy={cancelling}

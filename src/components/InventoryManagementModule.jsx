@@ -51,7 +51,7 @@ import {
   updateInventoryBatch,
 } from "../services/inventoryService";
 
-import { formatDateTime12h } from "../utils/timeFormat";
+import { formatDateTime12h, formatDateShort } from "../utils/timeFormat";
 import ConfirmDialog from "./ConfirmDialog";
 import InventoryForecastReport from "./InventoryForecastReport";
 
@@ -106,11 +106,7 @@ const statuses = [
 ];
 
 function formatDate(date) {
-  if (!date) return "—";
-
-  return new Date(
-    `${date}T00:00:00`
-  ).toLocaleDateString();
+  return formatDateShort(date);
 }
 
 /**

@@ -246,6 +246,8 @@ export function resolveLoginDestination(profile, fallback) {
   const role = profile?.role;
   const rolePath = role === "pet_owner" ? "pet-owner" : role;
   if (profile?.must_change_password) return `/${rolePath}/profile?forcePasswordChange=1`;
+  // A veterinarian's day starts at their live queue, not a dashboard.
+  if (role === "veterinarian") return fallback || "/veterinarian/queue";
   return fallback || `/${rolePath}/dashboard`;
 }
 

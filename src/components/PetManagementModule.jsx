@@ -41,6 +41,7 @@ import {
   uploadPetPhoto,
 } from "../services/petService";
 import { validateImageFile } from "../utils/validators";
+import { formatDateLong } from "../utils/timeFormat";
 import { generateConsultationHealthInsight, generatePredictiveHealthAnalysis, getActiveVeterinarians, getMedicalRecords, getPreviousMedicalRecordsForAi } from "../services/medicalRecordService";
 import { computeRiskLevel, daysUntil, keywordSet, parseAiReport, parseConsultationInsight, sharesKeyword, toListItems } from "../utils/predictiveHealthParsing";
 import { downloadInvoicePdf, downloadPrescriptionPadPdf, printMedicalRecordDocument, viewPrescriptionPadPdf } from "../utils/invoicePdf";
@@ -2626,7 +2627,7 @@ export default function PetManagementModule({
 
                               {record.follow_up_date && (
                                 <div className="consultation-followup">
-                                  <History size={14} /> Next visit: {record.follow_up_date}
+                                  <History size={14} /> Next visit: {formatDateLong(record.follow_up_date)}
                                 </div>
                               )}
 

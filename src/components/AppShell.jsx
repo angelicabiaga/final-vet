@@ -87,7 +87,7 @@ export default function AppShell({ profile, title, children }) {
       { label: "Veterinarian Schedules", to: "/staff/veterinarian-schedules", type: "schedule" },
       { label: "Animal Patients", to: "/staff/patients", type: "pet" },
       { label: "Inventory", to: "/staff/inventory", type: "inventory" },
-      { label: "Transaction", to: "/staff/transactions", type: "payment" },
+      { label: "POS", to: "/staff/transactions", type: "payment" },
       { label: "Messages", to: "/staff/messages", type: "message" },
 
     ],

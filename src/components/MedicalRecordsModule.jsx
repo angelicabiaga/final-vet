@@ -13,12 +13,16 @@ import {
 } from "../constants/medicalRecordTemplates";
 
 import {
+  BrainCircuit,
   Check,
+  Eye,
   FileDown,
+  PawPrint,
   Plus,
   Printer,
   Search,
   Upload,
+  UserCircle,
   X,
 } from "lucide-react";
 
@@ -38,11 +42,13 @@ import {
   uploadMedicalAttachment,
 } from "../services/medicalRecordService";
 
-import { formatTime12h } from "../utils/timeFormat";
+import { formatDateLong, formatTime12h } from "../utils/timeFormat";
+import { parseConsultationInsight } from "../utils/predictiveHealthParsing";
 
 import { getInventoryItems } from "../services/inventoryService";
 import { printMedicalRecordDocument } from "../utils/invoicePdf";
 import ConfirmDialog from "./ConfirmDialog";
+import ConsultationHealthInsight from "./ConsultationHealthInsight";
 
 import { markConsultationReadyForBilling } from "../services/queueService";
 
@@ -298,6 +304,16 @@ export default function MedicalRecordsModule({
     setExpandedHistoryId,
   ] = useState(null);
 
+  // The History column scrolls on its own (see .mrp-history), so expanding
+  // a card doesn't guarantee its action buttons land inside the visible
+  // area -- scroll the whole card (buttons included) into view every time
+  // a different one opens.
+  useEffect(() => {
+    if (!expandedHistoryId) return;
+    const card = document.getElementById(`mrp-history-card-${expandedHistoryId}`);
+    card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [expandedHistoryId]);
+
   const [
     pendingTemplateSwitch,
     setPendingTemplateSwitch,
@@ -307,6 +323,11 @@ export default function MedicalRecordsModule({
     showDrafts,
     setShowDrafts,
   ] = useState(false);
+
+  const [showOwnerProfile, setShowOwnerProfile] = useState(false);
+  const [showPetProfile, setShowPetProfile] = useState(false);
+  const [openHistoryInsightId, setOpenHistoryInsightId] = useState(null);
+  const [historyInsights, setHistoryInsights] = useState({});
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -790,6 +811,65 @@ export default function MedicalRecordsModule({
       .catch(() => {});
   }
 
+  // History panel's "View AI Insight" -- opens in a modal (the History
+  // column is too narrow for the insight's own 2-column layout to read
+  // comfortably inline). Completing a consultation already generates and
+  // persists this via triggerInsightPersistence above, so the common case
+  // here is just reading the cached template_data.aiHealthInsight back out
+  // -- this only calls the AI live as a fallback for the rare case that
+  // background generation didn't run (e.g. no Groq key configured at the
+  // time, or an older record).
+  function openHistoryInsight(record) {
+    setOpenHistoryInsightId(record.id);
+    if (historyInsights[record.id]) return;
+    loadHistoryInsight(record);
+  }
+
+  async function loadHistoryInsight(record) {
+    const cachedInsight = record.template_data?.aiHealthInsight;
+    if (cachedInsight) {
+      setHistoryInsights((current) => ({
+        ...current,
+        [record.id]: {
+          text: cachedInsight,
+          loading: false,
+          error: "",
+          riskLevel: parseConsultationInsight(cachedInsight).riskLevel,
+        },
+      }));
+      return;
+    }
+
+    setHistoryInsights((current) => ({
+      ...current,
+      [record.id]: { ...current[record.id], loading: true, error: "" },
+    }));
+
+    try {
+      const previousRecords = historyRecords.filter(
+        (item) =>
+          item.id !== record.id &&
+          new Date(item.consultation_date || 0) < new Date(record.consultation_date || 0)
+      );
+      const text = await generateConsultationHealthInsight({ ...record, pet: selectedPet }, previousRecords);
+      const { riskLevel } = parseConsultationInsight(text);
+      setHistoryInsights((current) => ({
+        ...current,
+        [record.id]: { text, loading: false, error: "", riskLevel },
+      }));
+    } catch (insightError) {
+      setHistoryInsights((current) => ({
+        ...current,
+        [record.id]: {
+          text: "",
+          loading: false,
+          error: insightError.message || "Unable to generate the AI health insight.",
+          riskLevel: null,
+        },
+      }));
+    }
+  }
+
   async function retryQueueCompletion() {
     if (
       !queueContext ||
@@ -1198,87 +1278,117 @@ export default function MedicalRecordsModule({
               <label>
                 Pet Owner<span className="required-mark"> *</span>
 
-                <select
-                  required
-                  disabled={!!queueContext}
-                  value={
-                    form.ownerId
-                  }
-                  onChange={(e) =>
-                    chooseOwner(
-                      e.target
-                        .value
-                    )
-                  }
-                >
-                  <option value="">
-                    Select pet owner
-                  </option>
+                {queueContext ? (
+                  <button
+                    type="button"
+                    className="mrp-locked-field-btn"
+                    disabled={!selectedPet?.owner}
+                    onClick={() => setShowOwnerProfile(true)}
+                  >
+                    <span>
+                      {selectedPet?.owner?.full_name ||
+                        ownerOptions.find((owner) => owner.id === form.ownerId)?.full_name ||
+                        "—"}
+                    </span>
+                    <Eye size={15} />
+                  </button>
+                ) : (
+                  <select
+                    required
+                    value={
+                      form.ownerId
+                    }
+                    onChange={(e) =>
+                      chooseOwner(
+                        e.target
+                          .value
+                      )
+                    }
+                  >
+                    <option value="">
+                      Select pet owner
+                    </option>
 
-                  {ownerOptions.map(
-                    (owner) => (
-                      <option
-                        key={
-                          owner.id
-                        }
-                        value={
-                          owner.id
-                        }
-                      >
-                        {
-                          owner.full_name
-                        }
-                      </option>
-                    )
-                  )}
-                </select>
+                    {ownerOptions.map(
+                      (owner) => (
+                        <option
+                          key={
+                            owner.id
+                          }
+                          value={
+                            owner.id
+                          }
+                        >
+                          {
+                            owner.full_name
+                          }
+                        </option>
+                      )
+                    )}
+                  </select>
+                )}
               </label>
 
               <label>
                 Pet<span className="required-mark"> *</span>
 
-                <select
-                  required
-                  disabled={
-                    !!queueContext ||
-                    !form.ownerId
-                  }
-                  value={
-                    form.petId
-                  }
-                  onChange={(e) =>
-                    choosePet(
-                      e.target
-                        .value
-                    )
-                  }
-                >
-                  <option value="">
-                    {form.ownerId
-                      ? "Select pet"
-                      : "Select pet owner first"}
-                  </option>
+                {queueContext ? (
+                  <button
+                    type="button"
+                    className="mrp-locked-field-btn"
+                    disabled={!selectedPet}
+                    onClick={() => setShowPetProfile(true)}
+                  >
+                    <span>
+                      {selectedPet
+                        ? `${selectedPet.pet_name}${selectedPet.species ? ` — ${selectedPet.species}` : ""}`
+                        : "—"}
+                    </span>
+                    <Eye size={15} />
+                  </button>
+                ) : (
+                  <select
+                    required
+                    disabled={
+                      !form.ownerId
+                    }
+                    value={
+                      form.petId
+                    }
+                    onChange={(e) =>
+                      choosePet(
+                        e.target
+                          .value
+                      )
+                    }
+                  >
+                    <option value="">
+                      {form.ownerId
+                        ? "Select pet"
+                        : "Select pet owner first"}
+                    </option>
 
-                  {petOptionsForOwner.map(
-                    (pet) => (
-                      <option
-                        key={
-                          pet.id
-                        }
-                        value={
-                          pet.id
-                        }
-                      >
-                        {
-                          pet.pet_name
-                        }
-                        {pet.species
-                          ? ` — ${pet.species}`
-                          : ""}
-                      </option>
-                    )
-                  )}
-                </select>
+                    {petOptionsForOwner.map(
+                      (pet) => (
+                        <option
+                          key={
+                            pet.id
+                          }
+                          value={
+                            pet.id
+                          }
+                        >
+                          {
+                            pet.pet_name
+                          }
+                          {pet.species
+                            ? ` — ${pet.species}`
+                            : ""}
+                        </option>
+                      )
+                    )}
+                  </select>
+                )}
               </label>
 
               <label>
@@ -1360,7 +1470,7 @@ export default function MedicalRecordsModule({
                         }
                       >
                         {
-                          appointment.appointment_date
+                          formatDateLong(appointment.appointment_date)
                         }{" "}
                         {
                           formatTime12h(appointment.start_time)
@@ -1392,22 +1502,6 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
-              {queueContext && (
-                <label>
-                  Consultation Fee (₱)
-
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    disabled={!canEdit}
-                    readOnly
-                    value={
-                      form.consultationFee
-                    }
-                  />
-                </label>
-              )}
             </div>
 
             <div className="mrp-grid">
@@ -2319,7 +2413,7 @@ export default function MedicalRecordsModule({
                     const template = getMedicalRecordTemplate(record.record_template);
 
                     return (
-                      <div className={`mrp-history-card${expanded ? " expanded" : ""}`} key={record.id}>
+                      <div id={`mrp-history-card-${record.id}`} className={`mrp-history-card${expanded ? " expanded" : ""}`} key={record.id}>
                         <button
                           type="button"
                           className="mrp-history-summary"
@@ -2333,33 +2427,46 @@ export default function MedicalRecordsModule({
 
                         {expanded && (
                           <div className="mrp-history-details">
-                            {record.symptoms && <p><b>Symptoms:</b> {record.symptoms}</p>}
-                            {record.diagnosis && <p><b>Diagnosis:</b> {record.diagnosis}</p>}
-                            {record.treatment && <p><b>Treatment:</b> {record.treatment}</p>}
-                            {record.veterinarian_notes && <p><b>Notes:</b> {record.veterinarian_notes}</p>}
-                            {!record.symptoms && !record.diagnosis && !record.treatment && !record.veterinarian_notes && (
-                              <p>No additional details recorded.</p>
-                            )}
+                            <p className="mrp-history-hint">Download the PDF for the full record, or view the AI health insight below.</p>
 
-                            <button
-                              type="button"
-                              className="mrp-history-pdf-btn"
-                              onClick={async (event) => {
-                                event.stopPropagation();
-                                try {
-                                  await printMedicalRecordDocument(record, selectedPet, {
-                                    veterinarianName: record.veterinarian?.full_name || "",
-                                    veterinarianPhone: record.veterinarian?.phone || "",
-                                    visitDateTime: record.consultation_date ? formatHistoryDate(record.consultation_date) : "",
-                                    petAge: formatPetAge(selectedPet?.date_of_birth),
-                                  });
-                                } catch (pdfError) {
-                                  setError(pdfError.message || "Unable to generate this record's PDF.");
-                                }
-                              }}
-                            >
-                              <Printer size={13} /> Download PDF
-                            </button>
+                            <div className="mrp-history-actions">
+                              <button
+                                type="button"
+                                className="mrp-history-pdf-btn"
+                                onClick={async (event) => {
+                                  event.stopPropagation();
+                                  try {
+                                    await printMedicalRecordDocument(record, selectedPet, {
+                                      veterinarianName: record.veterinarian?.full_name || "",
+                                      veterinarianPhone: record.veterinarian?.phone || "",
+                                      visitDateTime: record.consultation_date ? formatHistoryDate(record.consultation_date) : "",
+                                      petAge: formatPetAge(selectedPet?.date_of_birth),
+                                    });
+                                  } catch (pdfError) {
+                                    setError(pdfError.message || "Unable to generate this record's PDF.");
+                                  }
+                                }}
+                              >
+                                <Printer size={13} /> PDF
+                              </button>
+
+                              <button
+                                type="button"
+                                className="mrp-history-insight-btn"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openHistoryInsight(record);
+                                }}
+                              >
+                                <BrainCircuit size={13} /> AI Insight
+                              </button>
+                            </div>
+
+                            {historyInsights[record.id]?.riskLevel && (
+                              <span className={`consultation-risk-badge mrp-history-risk-badge risk-${historyInsights[record.id].riskLevel.toLowerCase()}`}>
+                                {historyInsights[record.id].riskLevel} Risk
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -2440,6 +2547,89 @@ export default function MedicalRecordsModule({
         onConfirm={confirmTemplateSwitch}
         onCancel={() => setPendingTemplateSwitch(null)}
       />
+
+      {showOwnerProfile && selectedPet?.owner && (
+        <div className="mrp-profile-modal-backdrop" onClick={() => setShowOwnerProfile(false)}>
+          <div className="mrp-profile-modal" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="mrp-profile-modal-close" aria-label="Close" onClick={() => setShowOwnerProfile(false)}><X size={18} /></button>
+            <div className="mrp-profile-modal-head">
+              {selectedPet.owner.avatar_url ? (
+                <img className="mrp-profile-avatar" src={selectedPet.owner.avatar_url} alt={selectedPet.owner.full_name || "Pet owner"} />
+              ) : (
+                <UserCircle size={40} className="mrp-profile-avatar-fallback" />
+              )}
+              <div>
+                <p className="mrp-profile-eyebrow">Pet Owner Profile</p>
+                <h3>{selectedPet.owner.full_name || "—"}</h3>
+              </div>
+            </div>
+            <dl className="mrp-profile-fields">
+              <div><dt>Phone</dt><dd>{selectedPet.owner.phone || "—"}</dd></div>
+              <div><dt>Email</dt><dd>{selectedPet.owner.email || "—"}</dd></div>
+              <div className="mrp-profile-field-wide"><dt>Address</dt><dd>{selectedPet.owner.address || "—"}</dd></div>
+            </dl>
+          </div>
+        </div>
+      )}
+
+      {showPetProfile && selectedPet && (
+        <div className="mrp-profile-modal-backdrop" onClick={() => setShowPetProfile(false)}>
+          <div className="mrp-profile-modal" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="mrp-profile-modal-close" aria-label="Close" onClick={() => setShowPetProfile(false)}><X size={18} /></button>
+            <div className="mrp-profile-modal-head">
+              {selectedPet.photo_url ? (
+                <img className="mrp-profile-avatar" src={selectedPet.photo_url} alt={selectedPet.pet_name || "Pet"} />
+              ) : (
+                <PawPrint size={36} className="mrp-profile-avatar-fallback" />
+              )}
+              <div>
+                <p className="mrp-profile-eyebrow">Pet Profile</p>
+                <h3>{selectedPet.pet_name || "—"}</h3>
+              </div>
+            </div>
+            <dl className="mrp-profile-fields">
+              <div><dt>Species</dt><dd>{selectedPet.species || "—"}</dd></div>
+              <div><dt>Breed</dt><dd>{selectedPet.breed || "—"}</dd></div>
+              <div><dt>Sex</dt><dd>{selectedPet.sex || "—"}</dd></div>
+              <div><dt>Date of Birth</dt><dd>{selectedPet.date_of_birth ? formatDateLong(selectedPet.date_of_birth) : "—"}</dd></div>
+              <div><dt>Age</dt><dd>{formatPetAge(selectedPet.date_of_birth) || "—"}</dd></div>
+              <div><dt>Weight</dt><dd>{selectedPet.weight ? `${selectedPet.weight} kg` : "—"}</dd></div>
+              <div><dt>Color / Markings</dt><dd>{selectedPet.color || "—"}</dd></div>
+              <div><dt>Microchip No.</dt><dd>{selectedPet.microchip_number || "—"}</dd></div>
+              {selectedPet.allergies && <div className="mrp-profile-field-wide"><dt>Allergies</dt><dd>{selectedPet.allergies}</dd></div>}
+              {selectedPet.existing_conditions && <div className="mrp-profile-field-wide"><dt>Existing Conditions</dt><dd>{selectedPet.existing_conditions}</dd></div>}
+              {selectedPet.notes && <div className="mrp-profile-field-wide"><dt>Notes</dt><dd>{selectedPet.notes}</dd></div>}
+            </dl>
+          </div>
+        </div>
+      )}
+
+      {openHistoryInsightId && (() => {
+        const insightRecord = historyRecords.find((record) => record.id === openHistoryInsightId);
+        if (!insightRecord) return null;
+        const insightTemplate = getMedicalRecordTemplate(insightRecord.record_template);
+        return (
+          <div className="mrp-profile-modal-backdrop" onClick={() => setOpenHistoryInsightId(null)}>
+            <div className="mrp-profile-modal mrp-insight-modal" onClick={(event) => event.stopPropagation()}>
+              <button type="button" className="mrp-profile-modal-close" aria-label="Close" onClick={() => setOpenHistoryInsightId(null)}><X size={18} /></button>
+              <div className="mrp-profile-modal-head">
+                <BrainCircuit size={30} className="mrp-profile-avatar-fallback" />
+                <div>
+                  <p className="mrp-profile-eyebrow">AI Health Insight — {insightTemplate.label}</p>
+                  <h3>{formatHistoryDate(insightRecord.consultation_date)}</h3>
+                </div>
+              </div>
+              <ConsultationHealthInsight
+                isFinalized={insightRecord.record_status === "Finalized"}
+                insightText={historyInsights[insightRecord.id]?.text}
+                loading={historyInsights[insightRecord.id]?.loading}
+                error={historyInsights[insightRecord.id]?.error}
+                onRetry={() => loadHistoryInsight(insightRecord)}
+              />
+            </div>
+          </div>
+        );
+      })()}
 
       <style>{`
         .mr {
@@ -2746,23 +2936,240 @@ export default function MedicalRecordsModule({
           color: #294653;
         }
 
-        .mrp-history-pdf-btn {
+        .mrp-history-hint {
+          margin: 0;
+          color: #8496a0;
+          font-size: 12px;
+        }
+
+        .mrp-history-actions {
+          display: flex;
+          gap: 6px;
+          margin-top: 6px;
+        }
+
+        .mrp-history-pdf-btn,
+        .mrp-history-insight-btn {
+          flex: 1;
           display: inline-flex;
           align-items: center;
-          gap: 6px;
-          margin-top: 4px;
+          justify-content: center;
+          gap: 5px;
           border: 1px solid #cfe2ea;
           background: #fff;
           border-radius: 9px;
-          padding: 8px 11px;
-          color: #257fa9;
+          padding: 8px 6px;
           font-weight: 700;
-          font-size: 12px;
+          font-size: 11.5px;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .mrp-history-pdf-btn {
+          color: #257fa9;
+        }
+
+        .mrp-history-insight-btn {
+          color: #17445a;
+        }
+
+        .mrp-history-pdf-btn:hover,
+        .mrp-history-insight-btn:hover {
+          background: #f2f9fc;
+        }
+
+        .mrp-history-risk-badge {
+          display: inline-block;
+          margin: 6px 0 0;
+        }
+
+        .consultation-risk-badge {
+          margin-left: auto;
+          padding: 4px 10px;
+          border-radius: 999px;
+          font-size: 10.5px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .risk-low {
+          background: #e5f4ea;
+          color: #2f8f5b;
+        }
+
+        .risk-moderate {
+          background: #fdf1dc;
+          color: #a5680b;
+        }
+
+        .risk-high {
+          background: #fbe6e4;
+          color: #c0392b;
+        }
+
+        .consultation-chevron {
+          color: #93a4ac;
+          transition: transform 0.15s ease;
+          flex-shrink: 0;
+        }
+
+        .consultation-chevron.open {
+          transform: rotate(180deg);
+        }
+
+        .mrp-locked-field-btn {
+          width: 100%;
+          height: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 12px 13px;
+          border: 1px solid #cfe2ea;
+          border-radius: 10px;
+          background: #fff;
+          color: #17445a;
+          font: inherit;
+          font-weight: 700;
           cursor: pointer;
         }
 
-        .mrp-history-pdf-btn:hover {
-          background: #f2f9fc;
+        .mrp-locked-field-btn span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          text-align: left;
+        }
+
+        .mrp-locked-field-btn svg {
+          flex-shrink: 0;
+          color: #4da8da;
+        }
+
+        .mrp-locked-field-btn:hover:not(:disabled) {
+          background: #f4fbfe;
+          border-color: #a9dff0;
+        }
+
+        .mrp-locked-field-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .mrp-profile-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(24, 47, 59, 0.45);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          padding: 20px;
+        }
+
+        .mrp-profile-modal {
+          position: relative;
+          width: min(480px, 100%);
+          max-height: 85vh;
+          overflow-y: auto;
+          background: #fff;
+          border-radius: 16px;
+          padding: 26px;
+          box-shadow: 0 20px 48px rgba(17, 48, 63, 0.28);
+        }
+
+        .mrp-insight-modal {
+          width: min(780px, 100%);
+        }
+
+        .mrp-profile-modal-close {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          border: 0;
+          background: #eef7fa;
+          color: #183642;
+          border-radius: 50%;
+          width: 32px;
+          height: 32px;
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+        }
+
+        .mrp-profile-modal-head {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          margin-bottom: 18px;
+          padding-right: 30px;
+        }
+
+        .mrp-profile-avatar {
+          width: 52px;
+          height: 52px;
+          border-radius: 50%;
+          object-fit: cover;
+          flex-shrink: 0;
+        }
+
+        .mrp-profile-avatar-fallback {
+          width: 52px;
+          height: 52px;
+          border-radius: 50%;
+          background: #eaf6fb;
+          color: #4da8da;
+          display: grid;
+          place-items: center;
+          flex-shrink: 0;
+        }
+
+        .mrp-profile-eyebrow {
+          margin: 0 0 2px;
+          color: #6f8792;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .05em;
+        }
+
+        .mrp-profile-modal-head h3 {
+          margin: 0;
+          color: #17445a;
+          font-size: 19px;
+        }
+
+        .mrp-profile-fields {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 14px 18px;
+          margin: 0;
+        }
+
+        .mrp-profile-field-wide {
+          grid-column: 1 / -1;
+        }
+
+        .mrp-profile-fields dt {
+          color: #6f8792;
+          font-size: 11.5px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .03em;
+          margin-bottom: 3px;
+        }
+
+        .mrp-profile-fields dd {
+          margin: 0;
+          color: #20313b;
+          font-size: 14px;
+          line-height: 1.5;
+        }
+
+        @media (max-width: 520px) {
+          .mrp-profile-fields {
+            grid-template-columns: 1fr;
+          }
         }
 
         .mrp-actions {
