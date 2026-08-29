@@ -424,6 +424,20 @@ export async function requeueToNextAvailable(id,profile){
   return run[0];
 }
 
+// Maps queue_entry_id -> billing_status for a batch of ids -- used by the
+// veterinarian's My Queue > History tab to show whether Staff POS has
+// already billed a finalized consultation, without pulling in the rest of
+// getQueue's live-queue-only shape (History spans well past today).
+export async function getBillingStatusesByEntryIds(queueEntryIds){
+  const ids=uniq(queueEntryIds||[]);
+  if(!ids.length)return {};
+  const {data,error}=await supabase.from("queue_entries").select("id,billing_status").in("id",ids);
+  if(error)throw new Error("Unable to load billing status for these consultations.");
+  const map={};
+  (data||[]).forEach(row=>{map[row.id]=row.billing_status;});
+  return map;
+}
+
 export async function getQueueStatusForAppointments(appointmentIds){
   const ids=uniq(appointmentIds||[]);
   if(!ids.length)return {};

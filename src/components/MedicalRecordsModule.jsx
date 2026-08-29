@@ -18,6 +18,7 @@ import {
   Eye,
   FileDown,
   PawPrint,
+  Pill,
   Plus,
   Printer,
   Search,
@@ -46,11 +47,12 @@ import { formatDateLong, formatTime12h } from "../utils/timeFormat";
 import { parseConsultationInsight } from "../utils/predictiveHealthParsing";
 
 import { getInventoryItems } from "../services/inventoryService";
-import { printMedicalRecordDocument } from "../utils/invoicePdf";
+import { printMedicalRecordDocument, downloadPrescriptionPadPdf } from "../utils/invoicePdf";
 import ConfirmDialog from "./ConfirmDialog";
 import ConsultationHealthInsight from "./ConsultationHealthInsight";
 
 import { markConsultationReadyForBilling } from "../services/queueService";
+import { getPrescriptionsForConsultation } from "../services/billingService";
 
 const blank = {
   id: "",
@@ -70,10 +72,12 @@ const blank = {
   diagnosis: "",
   treatment: "",
   treatmentPlan: "",
+  medicationEnabled: false,
   medication: "",
   dosage: "",
   frequency: "",
   duration: "",
+  labEnabled: false,
   laboratoryRequest: "",
   laboratoryResult: "",
   vaccination: "",
@@ -82,6 +86,7 @@ const blank = {
   vaccinationRecords: [],
   recordTemplate: DEFAULT_MEDICAL_RECORD_TEMPLATE,
   templateData: {},
+  followUpEnabled: false,
   followUpDate: "",
   veterinarianNotes: "",
   attachmentUrl: "",
@@ -94,6 +99,21 @@ const blank = {
 // reopening an already-finalized consultation (so re-completing it updates
 // the same row instead of inserting a duplicate).
 function recordToFormValues(record) {
+  const savedMedications = record.template_data?.medications;
+  const medicationRows =
+    Array.isArray(savedMedications) && savedMedications.length
+      ? savedMedications
+      : record.medication || record.dosage || record.frequency || record.duration
+        ? [
+            {
+              medication: record.medication || "",
+              dosage: record.dosage || "",
+              frequency: record.frequency || "",
+              duration: record.duration || "",
+            },
+          ]
+        : [];
+
   return {
     id: record.id,
     petId: record.pet_id,
@@ -109,10 +129,14 @@ function recordToFormValues(record) {
     diagnosis: record.diagnosis || "",
     treatment: record.treatment || "",
     treatmentPlan: record.treatment_plan || "",
+    medicationEnabled: Boolean(
+      record.medication || record.dosage || record.frequency || record.duration
+    ),
     medication: record.medication || "",
     dosage: record.dosage || "",
     frequency: record.frequency || "",
     duration: record.duration || "",
+    labEnabled: Boolean(record.laboratory_request || record.laboratory_result),
     laboratoryRequest: record.laboratory_request || "",
     laboratoryResult: record.laboratory_result || "",
     vaccination: record.vaccination || "",
@@ -120,7 +144,8 @@ function recordToFormValues(record) {
     heartwormTests: record.heartworm_tests || [],
     vaccinationRecords: record.vaccination_records || [],
     recordTemplate: record.record_template || DEFAULT_MEDICAL_RECORD_TEMPLATE,
-    templateData: record.template_data || {},
+    templateData: { ...(record.template_data || {}), medications: medicationRows },
+    followUpEnabled: Boolean(record.follow_up_date),
     followUpDate: record.follow_up_date || "",
     veterinarianNotes: record.veterinarian_notes || "",
     attachmentUrl: record.attachment_url || "",
@@ -304,6 +329,8 @@ export default function MedicalRecordsModule({
     setExpandedHistoryId,
   ] = useState(null);
 
+  const [historyPrescriptions, setHistoryPrescriptions] = useState({});
+
   // The History column scrolls on its own (see .mrp-history), so expanding
   // a card doesn't guarantee its action buttons land inside the visible
   // area -- scroll the whole card (buttons included) into view every time
@@ -313,6 +340,32 @@ export default function MedicalRecordsModule({
     const card = document.getElementById(`mrp-history-card-${expandedHistoryId}`);
     card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [expandedHistoryId]);
+
+  // Lazy-loads the dispensed prescriptions for whichever history card is
+  // expanded, so the "Prescribed PDF" action knows whether to offer a real
+  // download or show "No Prescription" -- fetched once per record and
+  // cached, same pattern as the AI insight cache below.
+  useEffect(() => {
+    if (!expandedHistoryId) return;
+    if (historyPrescriptions[expandedHistoryId]) return;
+    const record = historyRecords.find((item) => item.id === expandedHistoryId);
+    if (!record?.queue_entry_id) {
+      setHistoryPrescriptions((current) => ({ ...current, [expandedHistoryId]: { loading: false, data: [] } }));
+      return;
+    }
+    setHistoryPrescriptions((current) => ({ ...current, [expandedHistoryId]: { loading: true, data: [] } }));
+    getPrescriptionsForConsultation(record.queue_entry_id)
+      .then((rows) => {
+        const scoped = rows.filter((rx) => !rx.medical_record_id || rx.medical_record_id === record.id);
+        setHistoryPrescriptions((current) => ({ ...current, [record.id]: { loading: false, data: scoped } }));
+      })
+      .catch((prescriptionError) => {
+        setHistoryPrescriptions((current) => ({
+          ...current,
+          [record.id]: { loading: false, data: [], error: prescriptionError.message },
+        }));
+      });
+  }, [expandedHistoryId, historyRecords, historyPrescriptions]);
 
   const [
     pendingTemplateSwitch,
@@ -328,6 +381,24 @@ export default function MedicalRecordsModule({
   const [showPetProfile, setShowPetProfile] = useState(false);
   const [openHistoryInsightId, setOpenHistoryInsightId] = useState(null);
   const [historyInsights, setHistoryInsights] = useState({});
+  const [showCurrentInsight, setShowCurrentInsight] = useState(false);
+  const [currentInsight, setCurrentInsight] = useState(null);
+
+  // Quick-pick popover for the Medication / Laboratory Request fields --
+  // { type: "medication", index } targets one prescription line, { type:
+  // "lab" } targets the Laboratory Request field. Kept separate from the
+  // shared inventorySearch/tab state used by the "Test / Medicine / Vaccine
+  // Given" billing picker below so opening one never disturbs the other,
+  // even though this one reuses the exact same tabbed picker UI.
+  const [fieldPicker, setFieldPicker] = useState(null);
+  const [fieldPickerSearch, setFieldPickerSearch] = useState("");
+  const [fieldPickerCategoryTab, setFieldPickerCategoryTab] = useState("Medicine");
+
+  function openFieldPicker(type, index = null) {
+    setFieldPicker({ type, index });
+    setFieldPickerSearch("");
+    setFieldPickerCategoryTab(type === "medication" ? "Medicine" : "Test");
+  }
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -432,6 +503,54 @@ export default function MedicalRecordsModule({
             .includes(keyword)
       );
   }, [inventoryOptions, inventorySearch, inventoryCategoryTab, form.templateData]);
+
+  // The medication picker only ever needs two buckets (its own category,
+  // plus an "Others" catch-all for anything misclassified/not Medicine) --
+  // the lab picker only ever needs Test, so it gets no tab bar at all.
+  const fieldPickerTabs = fieldPicker?.type === "medication" ? ["Medicine", "Others"] : ["Test"];
+
+  const fieldPickerOptions = useMemo(() => {
+    if (!fieldPicker) return [];
+    const keyword = fieldPickerSearch.trim().toLowerCase();
+    return inventoryOptions
+      .filter((option) => {
+        const category = classifyPickerCategory(option.category);
+        if (fieldPicker.type === "lab") return category === "Test";
+        return fieldPickerCategoryTab === "Others" ? category !== "Medicine" : category === "Medicine";
+      })
+      .filter(
+        (option) =>
+          !keyword ||
+          `${option.item_name} ${option.category}`.toLowerCase().includes(keyword)
+      );
+  }, [inventoryOptions, fieldPickerSearch, fieldPickerCategoryTab, fieldPicker]);
+
+  // Selecting an item from the Medication/Laboratory Request quick-pick
+  // both fills the text field (so the vet doesn't have to type the product
+  // name) and adds it to the billing basket below (pickInventoryItem
+  // already de-dupes there), so it's charged and deducted from stock
+  // without a second manual step. A medication line is one medicine each,
+  // so picking there just sets that line's name outright; the lab field can
+  // still hold several tests, so picking there appends to the list instead.
+  // Either way, the picker's job is done once something is chosen, so the
+  // modal closes right after instead of waiting for an explicit Close.
+  function pickFieldInventoryItem(option) {
+    if (fieldPicker?.type === "medication" && fieldPicker.index != null) {
+      updateMedicationLine(fieldPicker.index, { medication: option.item_name });
+    } else if (fieldPicker?.type === "lab") {
+      setForm((current) => {
+        const existingNames = String(current.laboratoryRequest || "")
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean);
+        if (existingNames.includes(option.item_name)) return current;
+        const nextValue = [...existingNames, option.item_name].join(", ");
+        return { ...current, laboratoryRequest: nextValue };
+      });
+    }
+    pickInventoryItem(option.id);
+    setFieldPicker(null);
+  }
 
   // Staff and pet owners get a read-only view; only the veterinarian who
   // treats the pet (or an admin) can create or edit a medical record.
@@ -762,6 +881,75 @@ export default function MedicalRecordsModule({
     updateTemplateData({
       inventoryItems: (form.templateData?.inventoryItems || []).map((entry) =>
         entry.id === id ? { ...entry, quantity: value } : entry
+      ),
+    });
+  }
+
+  // "Medication prescribed" supports multiple prescription lines, each with
+  // its own Medication/Dosage/Frequency/Duration, stored under
+  // templateData.medications (a plain JSON array, so no schema change is
+  // needed). The medical_records table itself only has single text columns
+  // for these four fields, so every mutation here also re-joins the rows
+  // into those columns ("; "-separated) -- this keeps the AI insight prompt
+  // and the printed medical record PDF (which both read the flat columns)
+  // showing every line without needing any changes themselves.
+  function summarizeMedicationRows(rows) {
+    const nonEmpty = rows.filter(
+      (row) => row.medication?.trim() || row.dosage?.trim() || row.frequency?.trim() || row.duration?.trim()
+    );
+    return {
+      medication: nonEmpty.map((row) => row.medication || "").join("; "),
+      dosage: nonEmpty.map((row) => row.dosage || "").join("; "),
+      frequency: nonEmpty.map((row) => row.frequency || "").join("; "),
+      duration: nonEmpty.map((row) => row.duration || "").join("; "),
+    };
+  }
+
+  function updateMedicationLine(index, patch) {
+    setForm((current) => {
+      const rows = [...(current.templateData?.medications || [])];
+      rows[index] = { ...rows[index], ...patch };
+      return {
+        ...current,
+        ...summarizeMedicationRows(rows),
+        templateData: { ...(current.templateData || {}), medications: rows },
+      };
+    });
+  }
+
+  function addMedicationLine() {
+    setForm((current) => ({
+      ...current,
+      templateData: {
+        ...(current.templateData || {}),
+        medications: [
+          ...(current.templateData?.medications || []),
+          { medication: "", dosage: "", frequency: "", duration: "" },
+        ],
+      },
+    }));
+  }
+
+  function removeMedicationLine(index) {
+    setForm((current) => {
+      const rows = (current.templateData?.medications || []).filter((_, i) => i !== index);
+      return {
+        ...current,
+        ...summarizeMedicationRows(rows),
+        templateData: { ...(current.templateData || {}), medications: rows },
+      };
+    });
+  }
+
+  // "Sig" (from the Latin "signa") is the pharmacy term for a medication's
+  // directions for use -- how the owner should actually give it (frequency,
+  // route, duration). It's per medicine line, typed by the vet, and flows
+  // through to the prescriptions table (via syncPrescriptions at staff
+  // checkout) and onto the printed Rx PDF -- never calculated or pre-filled.
+  function updateInventoryItemSig(id, value) {
+    updateTemplateData({
+      inventoryItems: (form.templateData?.inventoryItems || []).map((entry) =>
+        entry.id === id ? { ...entry, sig: value } : entry
       ),
     });
   }
@@ -1204,6 +1392,55 @@ export default function MedicalRecordsModule({
   function resumeDraft(draft) {
     setShowDrafts(false);
     selectTemplate(draft.record_template);
+  }
+
+  // "AI Insight" button in the actions bar -- generates an insight straight
+  // from whatever is currently typed into the form, without requiring a
+  // save first. Builds a record-shaped object from the live form values
+  // (same field mapping saveMedicalRecord uses) and calls the AI service
+  // directly, so it always reflects the latest unsaved edits.
+  function buildLiveRecordForInsight() {
+    return {
+      consultation_date: form.consultationDate || new Date().toISOString().slice(0, 10),
+      chief_complaint: form.chiefComplaint?.trim() || null,
+      symptoms: form.symptoms?.trim() || null,
+      vital_signs: form.vitalSigns?.trim() || null,
+      weight: form.weight === "" || form.weight == null ? null : Number(form.weight),
+      temperature: form.temperature === "" || form.temperature == null ? null : Number(form.temperature),
+      diagnosis: form.diagnosis?.trim() || null,
+      treatment: form.treatment?.trim() || null,
+      treatment_plan: form.treatmentPlan?.trim() || null,
+      medication: form.medication?.trim() || null,
+      dosage: form.dosage?.trim() || null,
+      frequency: form.frequency?.trim() || null,
+      duration: form.duration?.trim() || null,
+      laboratory_request: form.laboratoryRequest?.trim() || null,
+      laboratory_result: form.laboratoryResult?.trim() || null,
+      vaccination: form.vaccination?.trim() || null,
+      follow_up_date: form.followUpDate || null,
+      veterinarian_notes: form.veterinarianNotes?.trim() || null,
+      record_status: form.recordStatus || "Draft",
+      record_template: form.recordTemplate,
+      pet: selectedPet,
+    };
+  }
+
+  async function openCurrentInsight() {
+    setShowCurrentInsight(true);
+    setCurrentInsight((current) => ({ text: current?.text || "", loading: true, error: "", riskLevel: current?.riskLevel || null }));
+    try {
+      const liveRecord = buildLiveRecordForInsight();
+      const text = await generateConsultationHealthInsight(liveRecord, historyRecords);
+      const { riskLevel } = parseConsultationInsight(text);
+      setCurrentInsight({ text, loading: false, error: "", riskLevel });
+    } catch (insightError) {
+      setCurrentInsight({
+        text: "",
+        loading: false,
+        error: insightError.message || "Unable to generate the AI health insight.",
+        riskLevel: null,
+      });
+    }
   }
 
   return (
@@ -1713,80 +1950,122 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
-              <label>
-                Medication
-
+              <label className="wide checkbox-field">
                 <input
-                  value={
-                    form.medication
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      medication:
-                        e.target
-                          .value,
-                    })
-                  }
+                  type="checkbox"
+                  checked={form.medicationEnabled}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setForm((current) => {
+                      const rows = current.templateData?.medications || [];
+                      return {
+                        ...current,
+                        medicationEnabled: checked,
+                        ...(checked
+                          ? {}
+                          : { medication: "", dosage: "", frequency: "", duration: "" }),
+                        templateData: {
+                          ...(current.templateData || {}),
+                          medications: checked
+                            ? rows.length
+                              ? rows
+                              : [{ medication: "", dosage: "", frequency: "", duration: "" }]
+                            : [],
+                        },
+                      };
+                    });
+                  }}
                 />
+                Medication prescribed
               </label>
 
-              <label>
-                Dosage
+              {form.medicationEnabled && (
+                <div className="wide record-section">
+                  {(form.templateData?.medications || []).map((row, index) => (
+                    <div className="vaccine-card med-line" key={index}>
+                      {(form.templateData?.medications || []).length > 1 && (
+                        <button
+                          type="button"
+                          className="remove-row"
+                          aria-label="Remove medication"
+                          onClick={() => removeMedicationLine(index)}
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                      <div className="med-line-grid">
+                        <div className="med-input-with-picker">
+                          <input
+                            placeholder="Medication"
+                            value={row.medication}
+                            onChange={(e) => updateMedicationLine(index, { medication: e.target.value })}
+                          />
+                          <button
+                            type="button"
+                            className="mrp-field-picker-btn"
+                            title="Search inventory for medicine"
+                            onClick={() => openFieldPicker("medication", index)}
+                          >
+                            <Search size={13} /> Search
+                          </button>
+                        </div>
+                        <input
+                          placeholder="Dosage"
+                          value={row.dosage}
+                          onChange={(e) => updateMedicationLine(index, { dosage: e.target.value })}
+                        />
+                        <input
+                          placeholder="Frequency"
+                          value={row.frequency}
+                          onChange={(e) => updateMedicationLine(index, { frequency: e.target.value })}
+                        />
+                        <input
+                          placeholder="Duration"
+                          value={row.duration}
+                          onChange={(e) => updateMedicationLine(index, { duration: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  ))}
 
+                  <button type="button" className="add-row" onClick={addMedicationLine}>
+                    <Plus size={14} /> Add Prescription
+                  </button>
+                </div>
+              )}
+
+              <label className="wide checkbox-field">
                 <input
-                  value={
-                    form.dosage
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      dosage:
-                        e.target
-                          .value,
-                    })
-                  }
+                  type="checkbox"
+                  checked={form.labEnabled}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setForm((current) => ({
+                      ...current,
+                      labEnabled: checked,
+                      ...(checked
+                        ? {}
+                        : { laboratoryRequest: "", laboratoryResult: "" }),
+                    }));
+                  }}
                 />
+                Laboratory test requested
               </label>
 
-              <label>
-                Frequency
-
-                <input
-                  value={
-                    form.frequency
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      frequency:
-                        e.target
-                          .value,
-                    })
-                  }
-                />
-              </label>
-
-              <label>
-                Duration
-
-                <input
-                  value={
-                    form.duration
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      duration:
-                        e.target
-                          .value,
-                    })
-                  }
-                />
-              </label>
-
+              {form.labEnabled && (
+                <>
               <label className="wide">
-                Laboratory Request
+                <span className="mrp-field-label-row">
+                  Laboratory Request
+                  <button
+                    type="button"
+                    className="mrp-field-picker-btn"
+                    title="Search inventory for lab tests"
+                    onClick={() => openFieldPicker("lab")}
+                  >
+                    <Search size={13} /> Search
+                  </button>
+                </span>
 
                 <textarea
                   value={
@@ -1820,6 +2099,8 @@ export default function MedicalRecordsModule({
                   }
                 />
               </label>
+                </>
+              )}
 
                 </>
               )}
@@ -2182,6 +2463,23 @@ export default function MedicalRecordsModule({
                 </>
               )}
 
+              <label className="wide checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={form.followUpEnabled}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setForm((current) => ({
+                      ...current,
+                      followUpEnabled: checked,
+                      ...(checked ? {} : { followUpDate: "" }),
+                    }));
+                  }}
+                />
+                Follow-up needed
+              </label>
+
+              {form.followUpEnabled && (
               <label>
                 Follow-up Date
 
@@ -2200,6 +2498,7 @@ export default function MedicalRecordsModule({
                   }
                 />
               </label>
+              )}
 
               <label className="wide">
                 Veterinarian Notes
@@ -2391,6 +2690,22 @@ export default function MedicalRecordsModule({
                               </button>
                             )}
                           </div>
+
+                          {!entry.isNA && classifyPickerCategory(entry.category) === "Medicine" && (
+                            <label className="chosen-item-sig">
+                              <span>Sig (directions for use)<span className="required-mark"> *</span></span>
+                              <input
+                                type="text"
+                                value={entry.sig || ""}
+                                required
+                                disabled={!canEdit}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) => updateInventoryItemSig(entry.id, event.target.value)}
+                                placeholder="e.g., Give 1 tablet by mouth every 12 hours for 7 days"
+                                aria-label={`Sig for ${entry.item_name}`}
+                              />
+                            </label>
+                          )}
                         </div>
                       );
                     })}
@@ -2460,6 +2775,38 @@ export default function MedicalRecordsModule({
                               >
                                 <BrainCircuit size={13} /> AI Insight
                               </button>
+
+                              {historyPrescriptions[record.id]?.loading ? (
+                                <span className="mrp-history-rx-status">Checking…</span>
+                              ) : (historyPrescriptions[record.id]?.data || []).length > 0 ? (
+                                <button
+                                  type="button"
+                                  className="mrp-history-pdf-btn"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    try {
+                                      downloadPrescriptionPadPdf(historyPrescriptions[record.id].data, {
+                                        veterinarianName: record.veterinarian?.full_name ? `Dr. ${record.veterinarian.full_name}` : "",
+                                        veterinarianPhone: record.veterinarian?.phone || "",
+                                        veterinarianLicense: record.veterinarian?.license_number || "",
+                                        ownerName: selectedPet?.owner?.full_name,
+                                        ownerAddress: selectedPet?.owner?.address,
+                                        petName: selectedPet?.pet_name,
+                                        petSpecies: selectedPet?.species,
+                                        petBreed: selectedPet?.breed,
+                                        petAge: formatPetAge(selectedPet?.date_of_birth),
+                                        date: record.consultation_date ? formatHistoryDate(record.consultation_date) : "",
+                                      });
+                                    } catch (pdfError) {
+                                      setError(pdfError.message || "Unable to generate the prescription PDF.");
+                                    }
+                                  }}
+                                >
+                                  <Pill size={13} /> Rx PDF
+                                </button>
+                              ) : (
+                                <span className="mrp-history-rx-status mrp-history-rx-none">No Prescription Given</span>
+                              )}
                             </div>
 
                             {historyInsights[record.id]?.riskLevel && (
@@ -2489,6 +2836,15 @@ export default function MedicalRecordsModule({
                       Save as Draft
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    className="ai-insight"
+                    disabled={saving}
+                    onClick={openCurrentInsight}
+                  >
+                    <BrainCircuit size={16} /> AI Insight
+                  </button>
 
                   <button
                     type="submit"
@@ -2630,6 +2986,107 @@ export default function MedicalRecordsModule({
           </div>
         );
       })()}
+
+      {showCurrentInsight && (
+        <div className="mrp-profile-modal-backdrop" onClick={() => setShowCurrentInsight(false)}>
+          <div className="mrp-profile-modal mrp-insight-modal" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="mrp-profile-modal-close" aria-label="Close" onClick={() => setShowCurrentInsight(false)}><X size={18} /></button>
+            <div className="mrp-profile-modal-head">
+              <BrainCircuit size={30} className="mrp-profile-avatar-fallback" />
+              <div>
+                <p className="mrp-profile-eyebrow">AI Health Insight — {activeTemplate.label}</p>
+                <h3>Based on what's entered so far</h3>
+              </div>
+            </div>
+            <ConsultationHealthInsight
+              isFinalized
+              insightText={currentInsight?.text}
+              loading={currentInsight?.loading}
+              error={currentInsight?.error}
+              onRetry={openCurrentInsight}
+            />
+          </div>
+        </div>
+      )}
+
+      {fieldPicker && (
+        <div className="mrp-profile-modal-backdrop" onClick={() => setFieldPicker(null)}>
+          <div className="mrp-profile-modal mrp-field-picker-modal" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="mrp-profile-modal-close" aria-label="Close" onClick={() => setFieldPicker(null)}><X size={18} /></button>
+            <div className="mrp-profile-modal-head">
+              <Search size={26} className="mrp-profile-avatar-fallback" />
+              <div>
+                <p className="mrp-profile-eyebrow">Search Inventory</p>
+                <h3>{fieldPicker.type === "medication" ? "Medicine" : "Lab Test"}</h3>
+              </div>
+            </div>
+
+            <div className="inventory-picker">
+              {fieldPicker.type === "medication" && (
+                <div className="inventory-category-tabs" role="tablist" aria-label="Filter by item type">
+                  <div
+                    className="inventory-category-tabs-slider"
+                    style={{
+                      width: `${100 / fieldPickerTabs.length}%`,
+                      left: `${(fieldPickerTabs.indexOf(fieldPickerCategoryTab) * 100) / fieldPickerTabs.length}%`,
+                    }}
+                  />
+                  {fieldPickerTabs.map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      role="tab"
+                      aria-selected={fieldPickerCategoryTab === tab}
+                      className={`inventory-category-tab${fieldPickerCategoryTab === tab ? " active" : ""}`}
+                      onClick={() => setFieldPickerCategoryTab(tab)}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="inventory-picker-search">
+                <Search size={15} />
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Search inventory by name or category…"
+                  value={fieldPickerSearch}
+                  onChange={(e) => setFieldPickerSearch(e.target.value)}
+                />
+              </div>
+
+              <div className="inventory-picker-list">
+                {fieldPickerOptions.length === 0 ? (
+                  <div className="inventory-picker-empty">
+                    No matching items found in inventory.
+                  </div>
+                ) : (
+                  fieldPickerOptions.map((option) => (
+                    <button
+                      type="button"
+                      key={option.id}
+                      className="inventory-picker-item"
+                      onClick={() => pickFieldInventoryItem(option)}
+                    >
+                      <span className="inventory-picker-item-name">{option.item_name}</span>
+                      <span className="inventory-picker-item-meta">
+                        {option.category} · ₱{Number(option.unit_price || 0).toFixed(2)}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <p className="mrp-field-picker-hint">
+              Picking an item fills the field above and adds it to the billing list below so it's charged and deducted from stock.
+              Not in inventory? Close this and type it directly in the field instead.
+            </p>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .mr {
@@ -2943,14 +3400,22 @@ export default function MedicalRecordsModule({
         }
 
         .mrp-history-actions {
-          display: flex;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
           gap: 6px;
           margin-top: 6px;
         }
 
+        /* The third action (Rx PDF / "No Prescription Given") is the widest
+           label of the three -- rather than squeezing all three into one
+           row (which let long text visually bleed into its neighbor), it
+           gets the full-width second row to itself. */
+        .mrp-history-actions > :last-child {
+          grid-column: 1 / -1;
+        }
+
         .mrp-history-pdf-btn,
         .mrp-history-insight-btn {
-          flex: 1;
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -2976,6 +3441,26 @@ export default function MedicalRecordsModule({
         .mrp-history-pdf-btn:hover,
         .mrp-history-insight-btn:hover {
           background: #f2f9fc;
+        }
+
+        .mrp-history-rx-status {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          border: 1px dashed #d8e2e6;
+          border-radius: 9px;
+          padding: 8px 6px;
+          font-weight: 700;
+          font-size: 11.5px;
+          white-space: nowrap;
+          color: #8496a0;
+        }
+
+        .mrp-history-rx-none {
+          border: 1px solid #f2dfa0;
+          background: #fff6e0;
+          color: #8a6d00;
         }
 
         .mrp-history-risk-badge {
@@ -3080,6 +3565,185 @@ export default function MedicalRecordsModule({
 
         .mrp-insight-modal {
           width: min(780px, 100%);
+        }
+
+        .mrp-field-label-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .mrp-field-picker-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          height: 32px;
+          padding: 0 12px;
+          border: 1px solid #a9dff0;
+          border-radius: 8px;
+          background: #eaf8fd;
+          color: #267da3;
+          font-weight: 700;
+          font-size: 12px;
+          cursor: pointer;
+          flex-shrink: 0;
+          white-space: nowrap;
+        }
+
+        .mrp-field-picker-btn:hover {
+          background: #d9eef6;
+        }
+
+        .mrp-field-picker-modal .inventory-picker {
+          margin-top: 16px;
+          border: 1px solid #cfe2ea;
+          border-radius: 12px;
+          background: #fff;
+          overflow: hidden;
+        }
+
+        .inventory-category-tabs {
+          position: relative;
+          display: flex;
+          margin: 10px 10px 0;
+          padding: 3px;
+          border-radius: 10px;
+          background: #eaf3f7;
+        }
+
+        .inventory-category-tabs-slider {
+          position: absolute;
+          top: 3px;
+          bottom: 3px;
+          border-radius: 8px;
+          background: #fff;
+          box-shadow: 0 2px 6px rgba(33, 105, 127, .18);
+          transition: left .22s ease;
+        }
+
+        .inventory-category-tab {
+          position: relative;
+          z-index: 1;
+          flex: 1;
+          border: 0;
+          background: none;
+          padding: 8px 6px;
+          font-size: 12.5px;
+          font-weight: 700;
+          color: #6f8792;
+          cursor: pointer;
+          border-radius: 8px;
+        }
+
+        .inventory-category-tab.active {
+          color: #21697f;
+        }
+
+        .inventory-picker-search {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 0 13px;
+          border-bottom: 1px solid #e6f1f5;
+          background: #f8fcfe;
+          color: #7c8c94;
+        }
+
+        .inventory-picker-search input {
+          width: 100%;
+          height: 44px;
+          border: 0 !important;
+          padding: 0 !important;
+          background: transparent !important;
+          color: #20313b;
+          font: inherit;
+          outline: none;
+        }
+
+        .inventory-picker-list {
+          max-height: 260px;
+          overflow-y: auto;
+          padding: 6px;
+        }
+
+        .inventory-picker-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          width: 100%;
+          border: 0;
+          border-radius: 9px;
+          padding: 10px 11px;
+          background: none;
+          text-align: left;
+          font: inherit;
+          font-weight: 600;
+          color: #20313b;
+          cursor: pointer;
+        }
+
+        .inventory-picker-item:hover {
+          background: #eaf6fb;
+        }
+
+        .inventory-picker-item-name {
+          color: #20313b;
+        }
+
+        .inventory-picker-item-meta {
+          flex-shrink: 0;
+          color: #7c8c94;
+          font-weight: 500;
+          font-size: 12px;
+        }
+
+        .inventory-picker-empty {
+          padding: 16px 11px;
+          color: #8496a0;
+          font-size: 13px;
+          font-weight: 400;
+          text-align: center;
+        }
+
+        .mrp-field-picker-hint {
+          margin: 14px 0 0;
+          font-size: 11.5px;
+          color: #93a4ac;
+          font-style: italic;
+        }
+
+        .mr-panel .med-line {
+          position: relative;
+        }
+
+        .mr-panel .med-line-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .mr-panel .med-line-grid input {
+          width: 100%;
+          height: 46px;
+          padding: 10px 13px;
+          border: 1px solid #cfe2ea;
+          border-radius: 9px;
+          font: inherit;
+          font-size: 14px;
+          box-sizing: border-box;
+        }
+
+        .med-input-with-picker {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .med-input-with-picker input {
+          flex: 1;
+          min-width: 0;
         }
 
         .mrp-profile-modal-close {
@@ -3202,8 +3866,25 @@ export default function MedicalRecordsModule({
           cursor: pointer;
         }
 
+        .mrp-actions .ai-insight {
+          flex: 1;
+          min-height: 50px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          border: 1px solid #cfe2ea;
+          border-radius: 11px;
+          background: #f4fbfe;
+          color: #17445a;
+          font-weight: 800;
+          font-size: 14px;
+          cursor: pointer;
+        }
+
         .mrp-actions .save:disabled,
-        .mrp-actions .save-draft:disabled {
+        .mrp-actions .save-draft:disabled,
+        .mrp-actions .ai-insight:disabled {
           opacity: .65;
           cursor: not-allowed;
         }
@@ -3302,6 +3983,27 @@ export default function MedicalRecordsModule({
           grid-column: 1 / -1;
         }
 
+        .mr-panel .fields .checkbox-field {
+          display: flex !important;
+          flex-direction: row;
+          align-items: center;
+          gap: 10px;
+          padding: 12px 14px;
+          border: 1px solid #d7eaf2;
+          border-radius: 10px;
+          background: #f4fbfe;
+          color: #21697f;
+          cursor: pointer;
+        }
+
+        .mr-panel .fields .checkbox-field input[type="checkbox"] {
+          width: 17px;
+          height: 17px;
+          flex-shrink: 0;
+          accent-color: #318fbe;
+          cursor: pointer;
+        }
+
         .mr-panel .field-hint {
           font-weight: 500;
           font-size: 12px;
@@ -3322,6 +4024,7 @@ export default function MedicalRecordsModule({
 
         .mr-panel .chosen-item-box {
           display: flex;
+          flex-wrap: wrap;
           align-items: center;
           justify-content: space-between;
           gap: 10px;
@@ -3329,6 +4032,41 @@ export default function MedicalRecordsModule({
           border-radius: 12px;
           border: 1px solid #cfe2ea;
           background: #f5fbfd;
+        }
+
+        .mr-panel .chosen-item-sig {
+          display: grid;
+          gap: 4px;
+          flex: 1 1 100%;
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px dashed #cfe2ea;
+          font-weight: 700;
+          font-size: 11.5px;
+          color: #6f8792;
+        }
+
+        .mr-panel .chosen-item-sig input {
+          width: 100%;
+          padding: 8px 10px;
+          border: 1px solid #cfe2ea;
+          border-radius: 8px;
+          background: #fff;
+          color: #20313b;
+          font-size: 12.5px;
+          font-weight: 500;
+          box-sizing: border-box;
+        }
+
+        .mr-panel .chosen-item-sig input:focus {
+          border-color: #4da8da;
+          box-shadow: 0 0 0 3px rgba(77, 168, 218, .12);
+        }
+
+        .mr-panel .chosen-item-sig input:disabled {
+          background: #f4f7f9;
+          color: #7c8c94;
+          cursor: not-allowed;
         }
 
         .mr-panel .chosen-item-box-main {
@@ -3826,7 +4564,8 @@ export default function MedicalRecordsModule({
           }
 
           .mr-panel .row-grid.two,
-          .mr-panel .row-grid.three {
+          .mr-panel .row-grid.three,
+          .mr-panel .med-line-grid {
             grid-template-columns: 1fr;
           }
 

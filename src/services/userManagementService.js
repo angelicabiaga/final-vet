@@ -1,5 +1,5 @@
 import { supabase } from "../config/supabaseClient";
-import { validatePassword } from "../utils/validators";
+import { validatePassword, isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
 
 export async function fetchUsers({ search = "", role = "", status = "" } = {}) {
   let query = supabase.from("profiles").select("*").order("created_at", { ascending: false });
@@ -22,6 +22,7 @@ export async function createManagedUser(values, actor) {
   const fullName = String(values.full_name || "").trim();
   if (fullName.split(/\s+/).filter(Boolean).length < 2) throw new Error("First name and last name are both required.");
   validatePassword(values.password);
+  if (values.phone?.trim() && !isValidPhMobile(values.phone)) throw new Error(INVALID_PH_MOBILE_MESSAGE);
   const payload = {
     auth_user_id: null,
     full_name: fullName,

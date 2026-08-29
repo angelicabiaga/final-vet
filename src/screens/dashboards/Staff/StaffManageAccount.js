@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { styles as dashboardStyles } from '../../styles/StaffDashboardDesign';
+import { isValidPhMobile, sanitizePhoneInput } from '../../../utils/validators';
 
 const DEFAULT_PROFILE_IMAGE = require('../../assets/Profile.png');
 const HEADER_MENU_ITEMS = [
@@ -62,7 +63,9 @@ const hasEmptyRequiredField = (accountForm) =>
   !accountForm?.username?.trim() ||
   !accountForm?.email?.trim() ||
   !accountForm?.contact?.trim() ||
+  !isValidPhMobile(accountForm?.contact) ||
   !accountForm?.emergencyContact?.trim() ||
+  !isValidPhMobile(accountForm?.emergencyContact) ||
   !accountForm?.address?.trim();
 const ACCOUNT_STATUS_OPTIONS = [
   {
@@ -481,11 +484,12 @@ const StaffManageAccount = ({ navigation, route }) => {
               <Text style={localStyles.fieldLabel}>Contact<Text style={localStyles.requiredMark}> *</Text></Text>
               <TextInput
                 value={accountForm.contact}
-                onChangeText={(value) => updateAccountForm('contact', value)}
+                onChangeText={(value) => updateAccountForm('contact', sanitizePhoneInput(value))}
                 style={localStyles.fieldInput}
-                placeholder="Enter contact number"
+                placeholder="09XXXXXXXXX"
                 placeholderTextColor="#8aa2b4"
-                keyboardType="phone-pad"
+                keyboardType="number-pad"
+                maxLength={11}
               />
             </View>
 
@@ -493,11 +497,12 @@ const StaffManageAccount = ({ navigation, route }) => {
               <Text style={localStyles.fieldLabel}>Emergency Contact<Text style={localStyles.requiredMark}> *</Text></Text>
               <TextInput
                 value={accountForm.emergencyContact}
-                onChangeText={(value) => updateAccountForm('emergencyContact', value)}
+                onChangeText={(value) => updateAccountForm('emergencyContact', sanitizePhoneInput(value))}
                 style={localStyles.fieldInput}
-                placeholder="Enter emergency contact"
+                placeholder="09XXXXXXXXX"
                 placeholderTextColor="#8aa2b4"
-                keyboardType="phone-pad"
+                keyboardType="number-pad"
+                maxLength={11}
               />
             </View>
 

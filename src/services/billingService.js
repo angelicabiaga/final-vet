@@ -208,6 +208,7 @@ export async function syncPrescriptions({ queueEntryId, medicalRecordId, petId, 
     item_name: item.item_name,
     unit_price: Number(item.unit_price || 0),
     prescribed_quantity: Math.max(1, Math.round(Number(item.quantity) || 1)),
+    sig: item.sig?.trim() || null,
     created_by: profile?.id || null,
   }));
 
@@ -223,11 +224,33 @@ export async function getPrescriptionsForConsultation(queueEntryId) {
   if (!queueEntryId) return [];
   const { data, error } = await supabase
     .from("prescriptions")
-    .select("id,queue_entry_id,medical_record_id,pet_id,owner_id,veterinarian_id,inventory_item_id,item_name,unit_price,prescribed_quantity,total_quantity_purchased,fulfillment_status,created_at,updated_at")
+    .select("id,queue_entry_id,medical_record_id,pet_id,owner_id,veterinarian_id,inventory_item_id,item_name,unit_price,prescribed_quantity,total_quantity_purchased,fulfillment_status,sig,created_at,updated_at")
     .eq("queue_entry_id", queueEntryId)
     .order("item_name", { ascending: true });
   if (error) throw new Error(`Unable to load prescriptions: ${error.message}`);
   return data || [];
+}
+
+/**
+ * Bulk lookup for a whole History table's worth of records at once (one
+ * query instead of one per row) -- keyed by medical_record_id so each row,
+ * which is one template of one visit, only sees its own prescriptions, not
+ * every template's from the same shared queue_entry_id.
+ */
+export async function getPrescriptionsByQueueEntryIds(queueEntryIds) {
+  const ids = uniq(queueEntryIds || []);
+  if (!ids.length) return {};
+  const { data, error } = await supabase
+    .from("prescriptions")
+    .select("id,queue_entry_id,medical_record_id,item_name,unit_price,prescribed_quantity,sig")
+    .in("queue_entry_id", ids);
+  if (error) throw new Error(`Unable to load prescriptions: ${error.message}`);
+  const byMedicalRecordId = {};
+  (data || []).forEach((rx) => {
+    const key = rx.medical_record_id || rx.queue_entry_id;
+    (byMedicalRecordId[key] ||= []).push(rx);
+  });
+  return byMedicalRecordId;
 }
 
 // Only allowed before any purchase has been recorded against the

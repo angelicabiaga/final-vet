@@ -39,10 +39,8 @@ function normalizeProfile(values, role) {
   if (payload.full_name.split(/\s+/).filter(Boolean).length < 2) throw new Error("First name and last name are both required.");
   if (!/^[a-z0-9_.-]{3,30}$/.test(payload.username)) throw new Error("Username must contain 3–30 letters, numbers, dots, dashes, or underscores.");
   if (!/^\S+@\S+\.\S+$/.test(payload.email)) throw new Error("Enter a valid email address.");
-  if (role === "pet_owner") {
-    if (!payload.phone) throw new Error("Contact number is required.");
-    if (!isValidPhMobile(payload.phone)) throw new Error(INVALID_PH_MOBILE_MESSAGE);
-  }
+  if (role === "pet_owner" && !payload.phone) throw new Error("Contact number is required.");
+  if (payload.phone && !isValidPhMobile(payload.phone)) throw new Error(INVALID_PH_MOBILE_MESSAGE);
   return payload;
 }
 

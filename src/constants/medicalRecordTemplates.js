@@ -24,11 +24,6 @@ export const MEDICAL_RECORD_TEMPLATES = [
     label: "Vaccination Record",
     description: "Vaccines administered, age, weight, and signature.",
   },
-  {
-    value: "pet-profile",
-    label: "Pet Health Profile",
-    description: "Pet and guardian details for the front Health Record page.",
-  },
 ];
 
 export const DEFAULT_MEDICAL_RECORD_TEMPLATE = "health-record";

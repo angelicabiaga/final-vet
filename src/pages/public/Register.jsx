@@ -16,7 +16,7 @@ import { registerPetOwner } from "../../services/authService";
 import { CONSENT_REQUIRED_ERROR } from "../../constants/privacyNotice";
 import {
   validatePassword, validatePasswordsMatch, isValidPhMobile, INVALID_PH_MOBILE_MESSAGE,
-  FIRST_NAME_REQUIRED_MESSAGE, LAST_NAME_REQUIRED_MESSAGE,
+  FIRST_NAME_REQUIRED_MESSAGE, LAST_NAME_REQUIRED_MESSAGE, sanitizePhoneInput,
 } from "../../utils/validators";
 import { focusFirstInvalidField, invalidClass } from "../../utils/formValidation";
 
@@ -1316,13 +1316,15 @@ export default function Register() {
                   ref={registerFieldRef("phone")}
                   className={invalidClass(fieldErrors, "phone")}
                   type="tel"
+                  inputMode="numeric"
                   name="phone"
-                  placeholder="09XXXXXXXXX or +639XXXXXXXXX"
+                  placeholder="09XXXXXXXXX"
                   autoComplete="tel"
+                  maxLength={11}
                   required
                   value={form.phone}
                   onChange={(e) =>
-                    updateField("phone", e.target.value)
+                    updateField("phone", sanitizePhoneInput(e.target.value))
                   }
                 />
                 {fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}

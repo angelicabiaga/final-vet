@@ -3,7 +3,7 @@ import { Plus, RefreshCw, Search, ShieldCheck, UserCheck, UserX, X } from "lucid
 import AppShell from "../../components/AppShell";
 import PasswordInput from "../../components/PasswordInput";
 import PasswordChecklist from "../../components/PasswordChecklist";
-import { validatePassword, validatePasswordsMatch, validateRequiredName } from "../../utils/validators";
+import { validatePassword, validatePasswordsMatch, validateRequiredName, isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, sanitizePhoneInput } from "../../utils/validators";
 import { createManagedUser, fetchUsers, updateUserAccount } from "../../services/userManagementService";
 import { getVerificationStatusesBulk } from "../../services/veterinarianVerificationService";
 import VeterinarianProfileDetail from "../../components/VeterinarianProfileDetail";
@@ -41,6 +41,7 @@ export default function UserManagement({ profile }) {
       validateRequiredName(form.firstName,form.lastName);
       validatePassword(form.password);
       validatePasswordsMatch(form.password,form.confirmPassword);
+      if(form.phone && !isValidPhMobile(form.phone)) throw new Error(INVALID_PH_MOBILE_MESSAGE);
     }catch(validationError){setError(validationError.message);return;}
     setSaving(true);
     try{
@@ -63,7 +64,7 @@ export default function UserManagement({ profile }) {
       <label><span>Email<span className="required-mark"> *</span></span><input required type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></label>
       <label><span>Password<span className="required-mark"> *</span></span><PasswordInput value={form.password} onChange={e=>setForm({...form,password:e.target.value})} minLength={8} required /><PasswordChecklist password={form.password}/></label>
       <label><span>Confirm Password<span className="required-mark"> *</span></span><PasswordInput value={form.confirmPassword} onChange={e=>setForm({...form,confirmPassword:e.target.value})} minLength={8} required /></label>
-      <label><span>Phone<span className="optional-mark"> (Optional)</span></span><input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label>
+      <label><span>Phone<span className="optional-mark"> (Optional)</span></span><input type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={e=>setForm({...form,phone:sanitizePhoneInput(e.target.value)})}/></label>
       <label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option value="staff">Staff</option><option value="veterinarian">Veterinarian</option><option value="admin">Admin</option></select></label>
       <label className="full"><span>Address<span className="optional-mark"> (Optional)</span></span><textarea value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></label>
     </div><button disabled={saving}>{saving?"Creating...":"Create Account"}</button></form></div>}

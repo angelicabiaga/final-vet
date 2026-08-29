@@ -967,6 +967,7 @@ export function NewTransaction({ profile }) {
               item_name: fresh?.item_name || entry.item_name,
               unit_price: Number((fresh?.unit_price ?? entry.unit_price) || 0),
               quantity: Number(entry.quantity || 1),
+              sig: entry.sig || "",
             })),
           }, profile);
           if (cancelled) return;

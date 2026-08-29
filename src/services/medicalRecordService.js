@@ -210,7 +210,7 @@ async function loadRelatedRecords(
       ? supabase
           .from("profiles")
           .select(
-            "id, full_name, username, email, phone, address, role, account_status"
+            "id, full_name, username, email, phone, address, role, account_status, avatar_url"
           )
           .in("id", profileIds)
       : Promise.resolve({
@@ -1456,8 +1456,8 @@ export async function generateConsultationHealthInsight(record, previousRecords 
     );
   }
 
-  if (!record?.id) {
-    throw new Error("A finalized consultation is required for an AI health insight.");
+  if (!record) {
+    throw new Error("A medical record is required for an AI health insight.");
   }
 
   const pet = record.pet || {};

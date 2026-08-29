@@ -418,6 +418,10 @@ export default function PetManagementModule({
   const [ownerDirectoryLoading, setOwnerDirectoryLoading] = useState(true);
   const [ownerListSearch, setOwnerListSearch] = useState("");
   const [browsingOwner, setBrowsingOwner] = useState(null);
+  // Staff/admin can browse either a flat list of every animal patient or
+  // the owner-centric directory -- pet owners never see this switch, they
+  // only ever have the one flat list of their own pets.
+  const [staffListTab, setStaffListTab] = useState("owners");
   const [latestVisitByPet, setLatestVisitByPet] = useState({});
   const [ownerPetsLoading, setOwnerPetsLoading] = useState(false);
 
@@ -720,14 +724,33 @@ export default function PetManagementModule({
   const visibleOwners = useMemo(() => {
     const keyword = ownerListSearch.trim().toLowerCase();
     return ownerDirectory
-      .map((owner) => ({ ...owner, petCount: ownerPetCounts[owner.id] || 0 }))
+      .map((owner) => {
+        // When the keyword matches one of this owner's pets by name, the
+        // "N pets" badge swaps to that pet's actual name instead -- an
+        // immediate visual confirmation of which pet the search found,
+        // without opening the owner's pet list.
+        const matchedPet = keyword
+          ? pets.find(
+              (pet) =>
+                pet.owner_id === owner.id &&
+                !pet.is_archived &&
+                String(pet.pet_name || "").toLowerCase().includes(keyword)
+            )
+          : null;
+        return {
+          ...owner,
+          petCount: ownerPetCounts[owner.id] || 0,
+          matchedPetName: matchedPet?.pet_name || null,
+        };
+      })
       .filter((owner) => {
         if (!keyword) return true;
+        if (owner.matchedPetName) return true;
         return [owner.full_name, owner.email, owner.phone, owner.address, owner.username].some(
           (value) => String(value || "").toLowerCase().includes(keyword)
         );
       });
-  }, [ownerDirectory, ownerPetCounts, ownerListSearch]);
+  }, [ownerDirectory, ownerPetCounts, pets, ownerListSearch]);
 
   const [showArchivedInOwnerView, setShowArchivedInOwnerView] = useState(false);
 
@@ -1879,7 +1902,26 @@ export default function PetManagementModule({
         </div>
       )}
 
-      {ownerOnly && (
+      {canManageAll && !browsingOwner && (
+        <div className="patients-tab-switch">
+          <button
+            type="button"
+            className={`patients-tab${staffListTab === "patients" ? " active" : ""}`}
+            onClick={() => setStaffListTab("patients")}
+          >
+            <PawPrint size={16} /> Animal Patients
+          </button>
+          <button
+            type="button"
+            className={`patients-tab${staffListTab === "owners" ? " active" : ""}`}
+            onClick={() => setStaffListTab("owners")}
+          >
+            <Users size={16} /> Pet Owners
+          </button>
+        </div>
+      )}
+
+      {(ownerOnly || (canManageAll && staffListTab === "patients" && !browsingOwner)) && (
       <section className="card list-card">
         <div className="toolbar">
           <div>
@@ -2214,7 +2256,7 @@ export default function PetManagementModule({
       </section>
       )}
 
-      {canManageAll && !browsingOwner && (
+      {canManageAll && staffListTab === "owners" && !browsingOwner && (
         <section className="card list-card">
           <div className="toolbar">
             <div>
@@ -2246,7 +2288,7 @@ export default function PetManagementModule({
                 <input
                   value={ownerListSearch}
                   onChange={(event) => setOwnerListSearch(event.target.value)}
-                  placeholder="Search owner by name, email, phone, or address"
+                  placeholder="Search by owner name, email, phone, address, or pet name"
                 />
 
                 {ownerListSearch && (
@@ -2315,8 +2357,8 @@ export default function PetManagementModule({
                       <td>{owner.email || "Not recorded"}</td>
                       <td>{owner.address || "Not recorded"}</td>
                       <td>
-                        <span className="pill active">
-                          {owner.petCount} pet{owner.petCount === 1 ? "" : "s"}
+                        <span className="pill active" title={owner.matchedPetName ? `Matched pet: ${owner.matchedPetName}` : undefined}>
+                          {owner.matchedPetName || `${owner.petCount} pet${owner.petCount === 1 ? "" : "s"}`}
                         </span>
                       </td>
                       <td>
@@ -2689,93 +2731,106 @@ export default function PetManagementModule({
                               {canViewBilling && record.queue_entry_id && (
                                 <div className="pet-billing-card">
                                   <div className="pet-billing-head">
-                                    <h4><CreditCard size={15} /> Billing &amp; Veterinarian Prescriptions</h4>
+                                    <h4><CreditCard size={15} /> Billing</h4>
                                     <button type="button" className="pet-billing-refresh" onClick={() => refreshBillingForRecord(record)} disabled={billingByRecordId[record.id]?.loading}>
                                       <RefreshCw size={13} className={billingByRecordId[record.id]?.loading ? "spin" : ""} /> Refresh
                                     </button>
                                   </div>
                                   {billingByRecordId[record.id]?.loading && <p className="pet-billing-loading">Loading billing…</p>}
-                                  {billingByRecordId[record.id]?.error && <p className="pet-billing-error">{billingByRecordId[record.id].error}</p>}
+                                  {billingByRecordId[record.id]?.error && <p className="pet-billing-error">Unable to load billing details for this visit right now.</p>}
                                   {billingByRecordId[record.id] && !billingByRecordId[record.id].loading && !billingByRecordId[record.id].error && (
-                                    <>
-                                      {billingByRecordId[record.id].invoices.length === 0 && billingByRecordId[record.id].prescriptions.length === 0 && (
-                                        <p className="pet-billing-empty">Staff hasn't processed billing for this visit yet.</p>
-                                      )}
-
-                                      {billingByRecordId[record.id].invoices.length > 0 && (
-                                        <div className="pet-billing-section">
-                                          <h4><CreditCard size={15} /> Invoices</h4>
-                                          {billingByRecordId[record.id].invoices.map((invoice) => (
-                                            <div className="pet-billing-row" key={invoice.id}>
-                                              <div>
-                                                <b>{invoice.or_number}</b>
-                                                <span>Total {money(invoice.total_amount)} · Paid {money(invoice.amount_paid)}{invoiceBalance(invoice) > 0 ? ` · ${money(invoiceBalance(invoice))} due` : ""}</span>
-                                                <span className={`pet-billing-status pet-billing-status-${invoice.payment_status.replaceAll(" ", "-").toLowerCase()}`}>{invoice.payment_status}</span>
-                                              </div>
-                                              <button type="button" className="pet-download-btn" onClick={() => downloadInvoicePdf(invoice)}>
-                                                <Download size={14} /> Download
-                                              </button>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-
-                                      {billingByRecordId[record.id].prescriptions.length > 0 && (
-                                        <div className="pet-billing-section">
-                                          <div className="pet-billing-head">
-                                            <h4><Pill size={15} /> Prescribed Medicine</h4>
-                                            <button
-                                              type="button"
-                                              className="pet-download-btn"
-                                              onClick={() => (ownerOnly ? viewPrescriptionPadPdf : downloadPrescriptionPadPdf)(billingByRecordId[record.id].prescriptions, {
-                                                veterinarianName: vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "",
-                                                veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
-                                                veterinarianLicense: vetsById[record.veterinarian_id]?.license_number || "",
-                                                ownerName: selectedPet.owner?.full_name,
-                                                ownerAddress: selectedPet.owner?.address,
-                                                petName: selectedPet.pet_name,
-                                                petSpecies: selectedPet.species,
-                                                petBreed: selectedPet.breed,
-                                                petAge: formatPetAge(selectedPet.date_of_birth),
-                                                date: formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime }),
-                                              })}
-                                            >
-                                              {ownerOnly ? <><Eye size={13} /> View</> : <><Download size={13} /> Download</>}
-                                            </button>
+                                    billingByRecordId[record.id].invoices.length === 0 ? (
+                                      <p className="pet-billing-empty">Staff hasn't processed billing for this visit yet.</p>
+                                    ) : (
+                                      billingByRecordId[record.id].invoices.map((invoice) => (
+                                        <div className="pet-billing-row" key={invoice.id}>
+                                          <div>
+                                            <b>{invoice.or_number}</b>
+                                            <span>Total {money(invoice.total_amount)} · Paid {money(invoice.amount_paid)}{invoiceBalance(invoice) > 0 ? ` · ${money(invoiceBalance(invoice))} due` : ""}</span>
+                                            <span className={`pet-billing-status pet-billing-status-${invoice.payment_status.replaceAll(" ", "-").toLowerCase()}`}>{invoice.payment_status}</span>
                                           </div>
-                                          {billingByRecordId[record.id].prescriptions.map((rx) => {
-                                            const remaining = Math.max(0, Number(rx.prescribed_quantity) - Number(rx.total_quantity_purchased));
-                                            const history = billingByRecordId[record.id].purchaseHistoryByRxId?.[rx.id] || [];
-                                            return (
-                                              <div className="pet-billing-row" key={rx.id}>
-                                                <div>
-                                                  <b>{rx.item_name}</b>
-                                                  <span>Prescribed {rx.prescribed_quantity} · Purchased {rx.total_quantity_purchased} · Remaining {remaining}</span>
-                                                  <span className={`pet-billing-status pet-billing-status-${rx.fulfillment_status.replaceAll(" ", "-").toLowerCase()}`}>{rx.fulfillment_status}</span>
-                                                  {history.length > 0 && (
-                                                    <ul className="pet-billing-rx-history">
-                                                      {history.map((entry) => (
-                                                        <li key={entry.id}>
-                                                          <span>{entry.quantity} purchased</span>
-                                                          <span>{formatPurchaseDateTime(entry.created_at)}</span>
-                                                        </li>
-                                                      ))}
-                                                    </ul>
-                                                  )}
-                                                </div>
-                                                {ownerOnly && ["Not Purchased", "Partially Purchased"].includes(rx.fulfillment_status) && (
-                                                  <div className="pet-billing-row-actions">
-                                                    <button type="button" className="pet-elsewhere-btn" disabled={rxBusyId === rx.id} onClick={() => handleBuyElsewhere(rx, record)}>
-                                                      {rxBusyId === rx.id ? "Saving…" : "I'll buy this elsewhere"}
-                                                    </button>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            );
-                                          })}
+                                          <button type="button" className="pet-download-btn" onClick={() => downloadInvoicePdf(invoice)}>
+                                            <Download size={14} /> Download
+                                          </button>
                                         </div>
+                                      ))
+                                    )
+                                  )}
+                                </div>
+                              )}
+
+                              {canViewBilling && record.queue_entry_id && (
+                                <div className="pet-billing-card">
+                                  <div className="pet-billing-head">
+                                    <h4><Pill size={15} /> Veterinarian Prescriptions</h4>
+                                    <div className="pet-billing-head-actions">
+                                      {billingByRecordId[record.id]?.prescriptions?.length > 0 && (
+                                        <button
+                                          type="button"
+                                          className="pet-download-btn"
+                                          onClick={() => (ownerOnly ? viewPrescriptionPadPdf : downloadPrescriptionPadPdf)(billingByRecordId[record.id].prescriptions, {
+                                            veterinarianName: vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "",
+                                            veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
+                                            veterinarianLicense: vetsById[record.veterinarian_id]?.license_number || "",
+                                            ownerName: selectedPet.owner?.full_name,
+                                            ownerAddress: selectedPet.owner?.address,
+                                            petName: selectedPet.pet_name,
+                                            petSpecies: selectedPet.species,
+                                            petBreed: selectedPet.breed,
+                                            petAge: formatPetAge(selectedPet.date_of_birth),
+                                            date: formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime }),
+                                          })}
+                                        >
+                                          {ownerOnly ? <><Eye size={13} /> View</> : <><Download size={13} /> Download</>}
+                                        </button>
                                       )}
-                                    </>
+                                      <button type="button" className="pet-billing-refresh" onClick={() => refreshBillingForRecord(record)} disabled={billingByRecordId[record.id]?.loading}>
+                                        <RefreshCw size={13} className={billingByRecordId[record.id]?.loading ? "spin" : ""} /> Refresh
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {billingByRecordId[record.id]?.loading && <p className="pet-billing-loading">Loading prescriptions…</p>}
+                                  {billingByRecordId[record.id]?.error && <p className="pet-billing-error">Unable to load prescription details for this visit right now.</p>}
+                                  {billingByRecordId[record.id] && !billingByRecordId[record.id].loading && !billingByRecordId[record.id].error && (
+                                    billingByRecordId[record.id].prescriptions.length === 0 ? (
+                                      billingByRecordId[record.id].invoices.length === 0 ? (
+                                        <p className="pet-billing-empty">Staff hasn't processed billing for this visit yet.</p>
+                                      ) : (
+                                        <p className="pet-billing-no-rx"><Pill size={14} /> No Prescription Given</p>
+                                      )
+                                    ) : (
+                                      billingByRecordId[record.id].prescriptions.map((rx) => {
+                                        const remaining = Math.max(0, Number(rx.prescribed_quantity) - Number(rx.total_quantity_purchased));
+                                        const history = billingByRecordId[record.id].purchaseHistoryByRxId?.[rx.id] || [];
+                                        return (
+                                          <div className="pet-billing-row" key={rx.id}>
+                                            <div>
+                                              <b>{rx.item_name}</b>
+                                              <span>Prescribed {rx.prescribed_quantity} · Purchased {rx.total_quantity_purchased} · Remaining {remaining}</span>
+                                              <span className="pet-billing-rx-sig">Sig: {rx.sig || "No directions for use recorded."}</span>
+                                              <span className={`pet-billing-status pet-billing-status-${rx.fulfillment_status.replaceAll(" ", "-").toLowerCase()}`}>{rx.fulfillment_status}</span>
+                                              {history.length > 0 && (
+                                                <ul className="pet-billing-rx-history">
+                                                  {history.map((entry) => (
+                                                    <li key={entry.id}>
+                                                      <span>{entry.quantity} purchased</span>
+                                                      <span>{formatPurchaseDateTime(entry.created_at)}</span>
+                                                    </li>
+                                                  ))}
+                                                </ul>
+                                              )}
+                                            </div>
+                                            {ownerOnly && ["Not Purchased", "Partially Purchased"].includes(rx.fulfillment_status) && (
+                                              <div className="pet-billing-row-actions">
+                                                <button type="button" className="pet-elsewhere-btn" disabled={rxBusyId === rx.id} onClick={() => handleBuyElsewhere(rx, record)}>
+                                                  {rxBusyId === rx.id ? "Saving…" : "I'll buy this elsewhere"}
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })
+                                    )
                                   )}
                                 </div>
                               )}
@@ -3763,6 +3818,35 @@ export default function PetManagementModule({
           flex-wrap: wrap;
         }
 
+        .patients-tab-switch {
+          display: inline-flex;
+          gap: 4px;
+          margin-bottom: 16px;
+          padding: 4px;
+          border-radius: 12px;
+          background: #eaf3f7;
+        }
+
+        .patients-tab {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          border: 0;
+          border-radius: 9px;
+          padding: 10px 16px;
+          background: none;
+          color: #6f8792;
+          font-weight: 700;
+          font-size: 13.5px;
+          cursor: pointer;
+        }
+
+        .patients-tab.active {
+          background: #fff;
+          color: #21697f;
+          box-shadow: 0 2px 6px rgba(33, 105, 127, .18);
+        }
+
         .register-pet-btn {
           display: inline-flex;
           align-items: center;
@@ -4217,24 +4301,28 @@ export default function PetManagementModule({
           color: #6f7f88;
           font-size: 13.5px;
         }
+        .pet-billing-no-rx {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          margin: 0;
+          padding: 10px 12px;
+          border-radius: 10px;
+          background: #fff6e0;
+          border: 1px solid #f2dfa0;
+          color: #8a6d00;
+          font-weight: 800;
+          font-size: 13px;
+        }
         .pet-billing-error {
           margin: 0;
           color: #b94b4b;
           font-size: 13.5px;
         }
-        .pet-billing-section h4 {
+        .pet-billing-head-actions {
           display: flex;
           align-items: center;
-          gap: 7px;
-          margin: 0 0 9px;
-          color: #213944;
-          font-size: 14px;
-        }
-        .pet-billing-section .pet-billing-head {
-          margin-bottom: 9px;
-        }
-        .pet-billing-section .pet-billing-head h4 {
-          margin: 0;
+          gap: 8px;
         }
         .pet-billing-row {
           display: flex;
@@ -4261,6 +4349,9 @@ export default function PetManagementModule({
         .pet-billing-row span {
           color: #6f7f88;
           font-size: 12.5px;
+        }
+        .pet-billing-rx-sig {
+          font-style: italic;
         }
         .pet-billing-status {
           display: inline-block;

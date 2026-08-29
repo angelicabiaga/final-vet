@@ -6,7 +6,7 @@ import { confirmPasswordChange, confirmProfileEmailChange, getProfile, requestPa
 import PasswordChecklist from "./PasswordChecklist";
 import {
   isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, validateImageFile, validatePassword, validatePasswordsMatch,
-  FIRST_NAME_REQUIRED_MESSAGE, LAST_NAME_REQUIRED_MESSAGE,
+  FIRST_NAME_REQUIRED_MESSAGE, LAST_NAME_REQUIRED_MESSAGE, sanitizePhoneInput,
 } from "../utils/validators";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 
@@ -25,9 +25,8 @@ function validateProfileField(name, value, isOwner) {
       return "";
     }
     case "phone": {
-      if (!isOwner) return "";
       const trimmed = String(value || "").trim();
-      if (!trimmed) return "Contact number is required.";
+      if (!trimmed) return isOwner ? "Contact number is required." : "";
       return isValidPhMobile(trimmed) ? "" : INVALID_PH_MOBILE_MESSAGE;
     }
     default:
@@ -257,8 +256,8 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
           <label><span>Email<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("email")} className={invalidClass(fieldErrors, "email")} type="email" value={form.email} onChange={(e)=>field("email",e.target.value)} required/>{fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}</label>
         </div>
         {isOwner
-          ? <label><span>Contact number<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} value={form.phone} onChange={(e)=>field("phone",e.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" required/>{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>
-          : <label><span>Phone number<span className="optional-mark"> (Optional)</span></span><input value={form.phone} onChange={(e)=>field("phone",e.target.value)}/></label>}
+          ? <label><span>Contact number<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={(e)=>field("phone",sanitizePhoneInput(e.target.value))} placeholder="09XXXXXXXXX" required/>{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>
+          : <label><span>Phone number<span className="optional-mark"> (Optional)</span></span><input ref={registerDetailFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={(e)=>field("phone",sanitizePhoneInput(e.target.value))} placeholder="09XXXXXXXXX"/>{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>}
         <label><span>Address<span className="optional-mark"> (Optional)</span></span><textarea value={form.address} onChange={(e)=>field("address",e.target.value)}/></label>
         <button disabled={saving}><Save size={17}/>{saving?"Saving...":"Save Profile"}</button>
       </form>

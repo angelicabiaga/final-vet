@@ -2,6 +2,7 @@ import { supabase } from "../config/supabaseClient";
 import { describeDbError } from "../utils/supabaseErrors";
 import { formatTime12h } from "../utils/timeFormat";
 import { PRIVACY_NOTICE_VERSION } from "../constants/privacyNotice";
+import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
 
 export const APPOINTMENT_STATUSES = ["Confirmed", "Completed", "Cancelled"];
 
@@ -32,7 +33,7 @@ export function formatTime(time) {
 
 export async function getOwners() {
   const { data, error } = await supabase.from("profiles")
-    .select("id, full_name, username, email")
+    .select("id, full_name, username, email, phone, address, avatar_url")
     .eq("role", "pet_owner").eq("account_status", "active").order("full_name");
   if (error) throw new Error("Unable to load pet owners.");
   return data || [];
@@ -292,6 +293,7 @@ export async function createGuestOwner({ fullName, phone, email, address, market
   }
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailPattern.test(trimmedEmail)) throw new Error("Enter a valid email address.");
+  if (!isValidPhMobile(trimmedPhone)) throw new Error(INVALID_PH_MOBILE_MESSAGE);
   const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16) || "guest";
   const username = `${slug}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const tempPassword = generateTempPassword();

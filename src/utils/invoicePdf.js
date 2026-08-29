@@ -318,10 +318,19 @@ function buildPrescriptionPadPdf(prescriptions, meta = {}) {
     listY += 9;
   } else {
     prescriptions.forEach((rx, index) => {
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(11.5);
       pdf.setTextColor(30, 49, 58);
       const qty = rx.prescribed_quantity != null ? `  —  Qty: ${rx.prescribed_quantity}` : "";
       pdf.text(`${index + 1}. ${rx.item_name}${qty}`, listX, listY);
-      listY += 9;
+      listY += 6;
+
+      pdf.setFont("helvetica", "italic");
+      pdf.setFontSize(9);
+      pdf.setTextColor(120, 135, 143);
+      const sigLines = pdf.splitTextToSize(`Sig: ${rx.sig || "No directions for use recorded."}`, right - listX);
+      pdf.text(sigLines, listX, listY);
+      listY += sigLines.length * 4.5 + 5;
     });
   }
 
@@ -385,6 +394,18 @@ function naText(value) {
   return text || "N/A";
 }
 
+// Uploaded pet/owner photos can be JPEG or PNG (unlike the app's own fixed
+// logo asset) -- jsPDF needs the right format passed to addImage or the
+// image silently fails to render, so this reads it straight off the data
+// URL's MIME type instead of assuming one.
+function imageFormatFromDataUrl(dataUrl) {
+  const match = /^data:image\/([a-zA-Z0-9.+-]+);base64,/.exec(dataUrl || "");
+  const type = (match?.[1] || "png").toLowerCase();
+  if (type === "jpg" || type === "jpeg") return "JPEG";
+  if (type === "webp") return "WEBP";
+  return "PNG";
+}
+
 /**
  * Client-generated, print-ready copy of ONE finalized medical consultation
  * -- the "Print Medical Record" action inside Animal Patients. Never
@@ -406,7 +427,52 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   const bottomLimit = 277;
   let y = 20;
 
-  const logoDataUrl = await loadImageDataUrl(pawLogo);
+  const [logoDataUrl, petPhotoDataUrl, ownerPhotoDataUrl] = await Promise.all([
+    loadImageDataUrl(pawLogo),
+    pet.photo_url ? loadImageDataUrl(pet.photo_url) : Promise.resolve(null),
+    pet.owner?.avatar_url ? loadImageDataUrl(pet.owner.avatar_url) : Promise.resolve(null),
+  ]);
+
+  // Draws one photo (or a clearly-labeled placeholder if there isn't one)
+  // at the top-right of the section about to start. Returns the x boundary
+  // field rows must wrap before (so text never runs under the photo) and
+  // the photo's own bottom edge, so the caller can guarantee the section
+  // doesn't visually end while the photo is still hanging past its last
+  // field row -- a short section (few fields, short values) could
+  // otherwise finish above the photo's bottom.
+  const PHOTO_SIZE = 22;
+  function drawSectionPhoto(dataUrl, fallbackLabel) {
+    const x = right - PHOTO_SIZE;
+    const photoY = y;
+    let drew = false;
+    if (dataUrl) {
+      try {
+        pdf.addImage(dataUrl, imageFormatFromDataUrl(dataUrl), x, photoY, PHOTO_SIZE, PHOTO_SIZE);
+        drew = true;
+      } catch {
+        // A photo that fails to decode just falls back to the placeholder
+        // box below -- never worth failing the whole printout over.
+      }
+    }
+    if (drew) {
+      pdf.setDrawColor(180, 205, 217);
+      pdf.setLineWidth(0.4);
+      pdf.rect(x, photoY, PHOTO_SIZE, PHOTO_SIZE);
+    } else {
+      // Deliberately high-contrast (filled gray, dark border, bold label)
+      // -- this must never be mistaken for "nothing rendered here" the way
+      // a faint hairline box could be.
+      pdf.setFillColor(230, 236, 240);
+      pdf.setDrawColor(150, 170, 180);
+      pdf.setLineWidth(0.5);
+      pdf.rect(x, photoY, PHOTO_SIZE, PHOTO_SIZE, "FD");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(110, 130, 140);
+      pdf.text(fallbackLabel, x + PHOTO_SIZE / 2, photoY + PHOTO_SIZE / 2, { align: "center", baseline: "middle" });
+    }
+    return { fieldRight: right - PHOTO_SIZE - 6, photoBottom: photoY + PHOTO_SIZE };
+  }
 
   function drawLetterhead() {
     if (logoDataUrl) {
@@ -465,7 +531,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
     y += 7.5;
   }
 
-  function fieldRow(label, value) {
+  function fieldRow(label, value, maxRight = right) {
     ensureSpace(7);
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(10);
@@ -473,7 +539,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
     pdf.text(label, left, y);
     pdf.setFont("helvetica", "bold");
     pdf.setTextColor(30, 49, 58);
-    const lines = pdf.splitTextToSize(naText(value), right - left - 55);
+    const lines = pdf.splitTextToSize(naText(value), maxRight - left - 55);
     pdf.text(lines, left + 55, y);
     y += Math.max(6.5, lines.length * 5);
   }
@@ -515,19 +581,23 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   fieldRow("Consultation Date & Time", meta.visitDateTime);
 
   sectionTitle("Animal Patient Information");
-  fieldRow("Pet Name", pet.pet_name);
-  fieldRow("Species / Breed", [pet.species, pet.breed].filter(Boolean).join(" / "));
-  fieldRow("Sex", pet.sex);
-  fieldRow("Date of Birth / Age", [pet.date_of_birth ? formatDateLong(pet.date_of_birth) : "", meta.petAge].filter(Boolean).join(" · "));
-  fieldRow("Weight on File (kg)", pet.weight);
-  fieldRow("Color / Markings", pet.color);
-  fieldRow("Microchip Number", pet.microchip_number);
+  const petPhoto = drawSectionPhoto(petPhotoDataUrl, "No Photo");
+  fieldRow("Pet Name", pet.pet_name, petPhoto.fieldRight);
+  fieldRow("Species / Breed", [pet.species, pet.breed].filter(Boolean).join(" / "), petPhoto.fieldRight);
+  fieldRow("Sex", pet.sex, petPhoto.fieldRight);
+  fieldRow("Date of Birth / Age", [pet.date_of_birth ? formatDateLong(pet.date_of_birth) : "", meta.petAge].filter(Boolean).join(" · "), petPhoto.fieldRight);
+  fieldRow("Weight on File (kg)", pet.weight, petPhoto.fieldRight);
+  fieldRow("Color / Markings", pet.color, petPhoto.fieldRight);
+  fieldRow("Microchip Number", pet.microchip_number, petPhoto.fieldRight);
+  y = Math.max(y, petPhoto.photoBottom + 3);
 
   sectionTitle("Pet Owner Information");
-  fieldRow("Full Name", pet.owner?.full_name);
-  fieldRow("Contact Number", pet.owner?.phone);
-  fieldRow("Email", pet.owner?.email);
-  fieldRow("Address", pet.owner?.address);
+  const ownerPhoto = drawSectionPhoto(ownerPhotoDataUrl, "No Photo");
+  fieldRow("Full Name", pet.owner?.full_name, ownerPhoto.fieldRight);
+  fieldRow("Contact Number", pet.owner?.phone, ownerPhoto.fieldRight);
+  fieldRow("Email", pet.owner?.email, ownerPhoto.fieldRight);
+  fieldRow("Address", pet.owner?.address, ownerPhoto.fieldRight);
+  y = Math.max(y, ownerPhoto.photoBottom + 3);
 
   sectionTitle("Attending Veterinarian");
   fieldRow("Attending Veterinarian", meta.veterinarianName ? `Dr. ${meta.veterinarianName}` : "");

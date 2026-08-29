@@ -30,6 +30,7 @@ import {
   validateImageFile,
   validatePassword,
   validatePasswordsMatch,
+  sanitizePhoneInput,
 } from "../utils/validators";
 
 function splitFullName(fullName) {
@@ -318,7 +319,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
             </div>
             <div className="vpd-pair">
               <label><span>Contact number<span className="required-mark"> *</span></span>
-                <input value={form.phone} onChange={(e) => field("phone", e.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" aria-invalid={!!errors.phone} required />
+                <input type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={(e) => field("phone", sanitizePhoneInput(e.target.value))} placeholder="09XXXXXXXXX" aria-invalid={!!errors.phone} required />
                 {errors.phone && <span className="vpd-fieldError">{errors.phone}</span>}
               </label>
               <label><span>Specialization<span className="required-mark"> *</span></span>

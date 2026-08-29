@@ -19,7 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { styles } from '../../styles/PetOwnerProfileDesign';
 import CustomModal from '../../../components/CustomModal';
 import { scrollAndFocusFirstInvalidField } from '../../shared/formValidation';
-import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from '../../../utils/validators';
+import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, sanitizePhoneInput } from '../../../utils/validators';
 
 const DEFAULT_PROFILE_IMAGE = require('../../assets/Profile.png');
 
@@ -159,7 +159,8 @@ const PetOwnerProfile = ({ navigation, route }) => {
       case 'contact':
         return isValidPhMobile(value) ? '' : INVALID_PH_MOBILE_MESSAGE;
       case 'emergencyContact':
-        return value?.trim() ? '' : 'Emergency contact is required.';
+        if (!value?.trim()) return 'Emergency contact is required.';
+        return isValidPhMobile(value) ? '' : INVALID_PH_MOBILE_MESSAGE;
       case 'address':
         return value?.trim() ? '' : 'Address is required.';
       default:
@@ -706,13 +707,13 @@ const PetOwnerProfile = ({ navigation, route }) => {
                     ref={(el) => { fieldRefs.current.contact = el; }}
                     value={draftProfile.contact}
                     onChangeText={(value) =>
-                      updateDraftField('contact', value.replace(/[^0-9+]/g, ''))
+                      updateDraftField('contact', sanitizePhoneInput(value))
                     }
                     style={[styles.inputField, fieldErrors.contact && styles.inputInvalid]}
-                    placeholder="09XXXXXXXXX or +639XXXXXXXXX"
+                    placeholder="09XXXXXXXXX"
                     placeholderTextColor="#87a0b1"
-                    keyboardType="phone-pad"
-                    maxLength={13}
+                    keyboardType="number-pad"
+                    maxLength={11}
                   />
                   {!!fieldErrors.contact && <Text style={styles.fieldErrorText}>{fieldErrors.contact}</Text>}
                 </View>
@@ -727,7 +728,7 @@ const PetOwnerProfile = ({ navigation, route }) => {
                     onChangeText={(value) =>
                       updateDraftField(
                         'emergencyContact',
-                        value.replace(/[^0-9]/g, '')
+                        sanitizePhoneInput(value)
                       )
                     }
                     style={[styles.inputField, fieldErrors.emergencyContact && styles.inputInvalid]}

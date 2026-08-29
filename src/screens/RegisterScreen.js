@@ -21,7 +21,7 @@ import {
 import CustomModal from "../components/CustomModal";
 import DataPrivacyConsent from "./shared/DataPrivacyConsent";
 import { CONSENT_REQUIRED_ERROR } from "../constants/privacyNotice";
-import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
+import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, sanitizePhoneInput } from "../utils/validators";
 import { scrollAndFocusFirstInvalidField } from "./shared/formValidation";
 
 const { width, height } = Dimensions.get("window");
@@ -284,11 +284,12 @@ const RegisterScreen = ({ navigation }) => {
                     <TextInput
                       ref={(el) => { fieldRefs.current.phone = el; }}
                       style={[styles.input, fieldErrors.phone && styles.inputInvalid]}
-                      placeholder="09XXXXXXXXX or +639XXXXXXXXX"
-                      keyboardType="phone-pad"
+                      placeholder="09XXXXXXXXX"
+                      keyboardType="number-pad"
+                      maxLength={11}
                       placeholderTextColor="#8d98a5"
                       value={formData.phone}
-                      onChangeText={(v) => handleChange("phone", v)}
+                      onChangeText={(v) => handleChange("phone", sanitizePhoneInput(v))}
                     />
                     {!!fieldErrors.phone && <Text style={styles.fieldErrorText}>{fieldErrors.phone}</Text>}
                   </View>

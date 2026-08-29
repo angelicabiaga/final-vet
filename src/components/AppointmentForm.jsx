@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, CalendarDays, Check, ChevronDown, Clock3, PawPrint, Plus, RotateCcw, Stethoscope, X } from "lucide-react";
+import { ArrowRight, CalendarDays, Check, ChevronDown, Clock3, PawPrint, Plus, RotateCcw, Search, Stethoscope, Users, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   createAppointment, getVeterinarianAvailability, getOwners, getPetsByOwner,
@@ -10,7 +10,7 @@ import { savePet } from "../services/petService";
 import { supabase } from "../config/supabaseClient";
 import DataPrivacyConsent, { focusConsentBlock } from "./DataPrivacyConsent";
 import { CONSENT_REQUIRED_ERROR } from "../constants/privacyNotice";
-import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
+import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, sanitizePhoneInput } from "../utils/validators";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 
 const EMPTY_PET_FORM = { petName: "", species: "", breed: "", sex: "Unknown", dateOfBirth: "", weight: "" };
@@ -36,7 +36,7 @@ function validateGuestField(name, value) {
   }
 }
 
-export default function AppointmentForm({ profile, mode = "owner", guestOwner = false, onCreated }) {
+export default function AppointmentForm({ profile, mode = "owner", guestOwner = false, presetOwner = null, lockOwnerSelection = false, onCreated }) {
   const isStaff = mode === "staff";
   const [owners, setOwners] = useState([]);
   const [pets, setPets] = useState([]);
@@ -50,8 +50,14 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const [walkInSuccess, setWalkInSuccess] = useState(null);
 
   const [ownerQuery, setOwnerQuery] = useState("");
-  const [ownerDropdownOpen, setOwnerDropdownOpen] = useState(false);
   const [ownerRecord, setOwnerRecord] = useState(null);
+  const [viewOwnerProfile, setViewOwnerProfile] = useState(null);
+  // Staff used to pick "Guest" or "Pet Owner" on a separate screen before
+  // ever reaching this form (guestOwner prop, fixed for the page's life).
+  // That's now a checkbox right on the form instead -- guestFlow is true
+  // whichever way it was set, so the rest of this component doesn't care.
+  const [noAccount, setNoAccount] = useState(false);
+  const guestFlow = guestOwner || noAccount;
   const [guestForm, setGuestForm] = useState({ firstName: "", lastName: "", phone: "", email: "", address: "" });
   const [serviceConsent, setServiceConsent] = useState(false);
   const [marketingConsent, setMarketingConsent] = useState(false);
@@ -75,7 +81,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const [petModalMessage, setPetModalMessage] = useState("");
 
   const [form, setForm] = useState({
-    ownerId: isStaff ? "" : profile?.id || "",
+    ownerId: isStaff ? presetOwner?.id || "" : profile?.id || "",
     petIds: [], veterinarianId: "", appointmentDate: todayLocal(), startTime: "", notes: ""
   });
 
@@ -83,13 +89,13 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
     async function loadBase() {
       try {
         setLoading(true);
-        if (isStaff && !guestOwner) setOwners(await getOwners());
+        if (isStaff && !guestFlow && !lockOwnerSelection) setOwners(await getOwners());
         else if (!isStaff && profile?.id) setPets(await getPetsByOwner(profile.id));
       } catch (error) { setMessage({ type: "error", text: error.message }); }
       finally { setLoading(false); }
     }
     loadBase();
-  }, [isStaff, guestOwner, profile?.id]);
+  }, [isStaff, guestFlow, profile?.id]);
 
   useEffect(() => {
     if (!isStaff) return;
@@ -163,7 +169,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const selectedPets = useMemo(() => pets.filter(pet => form.petIds.includes(pet.id)), [pets, form.petIds]);
   const eligibleVets = useMemo(() => vets.filter(vet => (slotMap[vet.id] || []).includes(form.startTime)), [vets, slotMap, form.startTime]);
   const selectedVet = useMemo(() => vets.find(item => item.id === form.veterinarianId), [vets, form.veterinarianId]);
-  const selectedOwner = useMemo(() => owners.find(item => item.id === form.ownerId), [owners, form.ownerId]);
+  const selectedOwner = useMemo(
+    () => presetOwner || owners.find(item => item.id === form.ownerId),
+    [owners, form.ownerId, presetOwner]
+  );
 
   const vetSlots = slotMap[form.veterinarianId] || [];
   const startIndex = vetSlots.indexOf(form.startTime);
@@ -181,7 +190,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const filteredOwners = useMemo(() => {
     const query = ownerQuery.trim().toLowerCase();
     if (!query) return owners;
-    return owners.filter(owner => `${owner.full_name || ""} ${owner.username || ""} ${owner.email || ""}`.toLowerCase().includes(query));
+    return owners.filter(owner => `${owner.full_name || ""} ${owner.username || ""} ${owner.email || ""} ${owner.phone || ""}`.toLowerCase().includes(query));
   }, [owners, ownerQuery]);
 
   function updateForm(patch) {
@@ -212,16 +221,11 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   }
 
   function onOwnerQueryChange(event) {
-    const value = event.target.value;
-    setOwnerQuery(value);
-    setOwnerDropdownOpen(true);
-    if (form.ownerId) updateForm({ ownerId: "" });
+    setOwnerQuery(event.target.value);
   }
 
   function selectOwner(owner) {
     updateForm({ ownerId: owner.id });
-    setOwnerQuery(`${owner.full_name}${owner.username ? ` (${owner.username})` : ""}`);
-    setOwnerDropdownOpen(false);
   }
 
   function clearOwner() {
@@ -231,7 +235,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
   async function ensureOwnerId() {
     if (form.ownerId) return form.ownerId;
-    if (!guestOwner) throw new Error("Search for and select a pet owner first.");
+    if (!guestFlow) throw new Error("Search for and select a pet owner first.");
     // The single choke point for creating a new walk-in owner account --
     // reached both from the main submit and from the "Add Pet" modal, so
     // the consent gate has to live here rather than only in submit(), or
@@ -323,13 +327,13 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
     const errors = {};
     const allFieldRefs = {};
 
-    if (isStaff && guestOwner && !ownerRecord) {
+    if (isStaff && guestFlow && !ownerRecord) {
       ["firstName", "lastName", "phone", "email", "address"].forEach((name) => {
         const errorMessage = validateGuestField(name, guestForm[name]);
         if (errorMessage) errors[name] = errorMessage;
         if (guestFieldRefs[name]) allFieldRefs[name] = guestFieldRefs[name];
       });
-    } else if (isStaff && !guestOwner && !form.ownerId) {
+    } else if (isStaff && !guestFlow && !form.ownerId) {
       errors.ownerId = "Search for and select a pet owner.";
       if (ownerSearchRef.current) allFieldRefs.ownerId = ownerSearchRef.current;
     }
@@ -409,7 +413,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       setAvailableTimes(refreshed.times);
 
       const emailFailures = [];
-      if (isStaff && guestOwner && ownerRecord?.email) {
+      if (isStaff && guestFlow && ownerRecord?.email) {
         try {
           await sendGuestBookingConfirmationEmail({
             email: ownerRecord.email,
@@ -446,7 +450,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
           date: form.appointmentDate,
           pets: bookings,
           queueNumber,
-          emailed: guestOwner && !!ownerRecord?.email && !emailFailures.length,
+          emailed: guestFlow && !!ownerRecord?.email && !emailFailures.length,
           hasAccount: !!ownerRecord?.tempPassword,
           emailError: emailWarning ? emailWarning.trim() : null
         });
@@ -540,17 +544,29 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   return (
     <div className="appointment-grid">
       <form className="appointment-card" onSubmit={submit}>
-        <div className="form-title"><CalendarDays /> <div><h2>{isStaff ? "Create Appointment / Walk-In" : "Book an Appointment"}</h2><p>General Consultation · 10-minute time slots</p></div></div>
+        <div className="form-title"><CalendarDays /> <div><h2>{isStaff ? "Create Appointment" : "Book an Appointment"}</h2><p>General Consultation · 10-minute time slots</p></div></div>
         {message.text && <div className={`notice ${message.type}`}>{message.text}</div>}
 
-        {isStaff && (guestOwner ? (
+        {isStaff && !lockOwnerSelection && (
+          <label className="appt-checkbox-field">
+            <input
+              type="checkbox"
+              checked={noAccount}
+              disabled={!!ownerRecord || !!form.ownerId}
+              onChange={(event) => setNoAccount(event.target.checked)}
+            />
+            No account yet — register as a new pet owner
+          </label>
+        )}
+
+        {isStaff && (guestFlow ? (
           <>
             <div className="two-cols">
               <label>First Name<span className="required-mark"> *</span><input ref={registerGuestFieldRef("firstName")} className={invalidClass(fieldErrors, "firstName")} required value={guestForm.firstName} disabled={!!ownerRecord} onChange={event => updateGuestField("firstName", event.target.value)} placeholder="Enter first name" />{fieldErrors.firstName && <span className="field-error-text">{fieldErrors.firstName}</span>}</label>
               <label>Last Name<span className="required-mark"> *</span><input ref={registerGuestFieldRef("lastName")} className={invalidClass(fieldErrors, "lastName")} required value={guestForm.lastName} disabled={!!ownerRecord} onChange={event => updateGuestField("lastName", event.target.value)} placeholder="Enter last name" />{fieldErrors.lastName && <span className="field-error-text">{fieldErrors.lastName}</span>}</label>
             </div>
             <div className="two-cols">
-              <label>Phone Number<span className="required-mark"> *</span><input ref={registerGuestFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => updateGuestField("phone", event.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" />{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>
+              <label>Phone Number<span className="required-mark"> *</span><input ref={registerGuestFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} type="tel" inputMode="numeric" maxLength={11} required value={guestForm.phone} disabled={!!ownerRecord} onChange={event => updateGuestField("phone", sanitizePhoneInput(event.target.value))} placeholder="09XXXXXXXXX" />{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>
               <label>Email<span className="required-mark"> *</span><input ref={registerGuestFieldRef("email")} className={invalidClass(fieldErrors, "email")} required type="email" value={guestForm.email} disabled={!!ownerRecord} onChange={event => updateGuestField("email", event.target.value)} placeholder="Enter email address" />{fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}</label>
             </div>
             <label>Address<span className="required-mark"> *</span><input ref={registerGuestFieldRef("address")} className={invalidClass(fieldErrors, "address")} required value={guestForm.address} disabled={!!ownerRecord} onChange={event => updateGuestField("address", event.target.value)} placeholder="Enter home address" />{fieldErrors.address && <span className="field-error-text">{fieldErrors.address}</span>}</label>
@@ -562,32 +578,90 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
           </>
         ) : (
           <label>Pet Owner<span className="required-mark"> *</span>
-            <div className="appt-owner-select">
-              <input
-                ref={ownerSearchRef}
-                className={invalidClass(fieldErrors, "ownerId")}
-                type="text"
-                role="combobox"
-                aria-expanded={ownerDropdownOpen}
-                placeholder="Search pet owner by name or username"
-                value={ownerQuery}
-                onChange={onOwnerQueryChange}
-                onFocus={() => setOwnerDropdownOpen(true)}
-                onBlur={() => window.setTimeout(() => setOwnerDropdownOpen(false), 120)}
-              />
-              {form.ownerId && <button type="button" className="appt-clear" aria-label="Clear pet owner" onClick={clearOwner}><X size={15} /></button>}
-              {ownerDropdownOpen && (
-                <div className="appt-owner-dropdown">
-                  {filteredOwners.length === 0 && <div className="appt-dropdown-empty">No matching pet owners</div>}
-                  {filteredOwners.map(owner => (
-                    <button type="button" key={owner.id} className="appt-dropdown-item" onMouseDown={() => selectOwner(owner)}>
-                      <strong>{owner.full_name}</strong>
-                      <span>{owner.username}</span>
-                    </button>
-                  ))}
+            {selectedOwner ? (
+              <div className="appt-owner-selected">
+                <div className="appt-owner-cell">
+                  {selectedOwner.avatar_url ? (
+                    <img className="appt-owner-avatar" src={selectedOwner.avatar_url} alt={selectedOwner.full_name || "Pet owner"} />
+                  ) : (
+                    <div className="appt-owner-avatar appt-owner-avatar-fallback">
+                      <Users size={16} />
+                    </div>
+                  )}
+                  <div>
+                    <strong>{selectedOwner.full_name}</strong>
+                    <span>@{selectedOwner.username} · {selectedOwner.phone || "No phone on file"} · {selectedOwner.email}</span>
+                  </div>
                 </div>
-              )}
-            </div>
+                {!lockOwnerSelection && (
+                  <button type="button" className="appt-clear" onClick={clearOwner}><X size={15} /> Change</button>
+                )}
+              </div>
+            ) : (
+              <div className={invalidClass(fieldErrors, "ownerId", "appt-owner-table-wrap")}>
+                <div className="appt-owner-search">
+                  <Search size={17} />
+                  <input
+                    ref={ownerSearchRef}
+                    type="text"
+                    placeholder="Search owner by name, username, phone, or email"
+                    value={ownerQuery}
+                    onChange={onOwnerQueryChange}
+                  />
+                  {ownerQuery && (
+                    <button type="button" className="appt-owner-clear-search" aria-label="Clear search" onClick={() => setOwnerQuery("")}>
+                      <X size={15} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="appt-owner-summary">
+                  Showing {filteredOwners.length} of {owners.length} pet owners
+                </div>
+
+                {filteredOwners.length === 0 ? (
+                  <div className="appt-dropdown-empty">No matching pet owners</div>
+                ) : (
+                  <div className="appt-owner-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Pet Owner</th>
+                          <th>Contact Number</th>
+                          <th>Email Address</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredOwners.map(owner => (
+                          <tr key={owner.id}>
+                            <td>
+                              <button type="button" className="appt-owner-cell" title="View profile" onClick={() => setViewOwnerProfile(owner)}>
+                                {owner.avatar_url ? (
+                                  <img className="appt-owner-avatar" src={owner.avatar_url} alt={owner.full_name || "Pet owner"} />
+                                ) : (
+                                  <div className="appt-owner-avatar appt-owner-avatar-fallback">
+                                    <Users size={16} />
+                                  </div>
+                                )}
+                                <span>{owner.full_name || "Unnamed Owner"}</span>
+                              </button>
+                            </td>
+                            <td>{owner.phone || "Not recorded"}</td>
+                            <td>{owner.email || "Not recorded"}</td>
+                            <td>
+                              <button type="button" className="appt-owner-select-btn" onClick={() => selectOwner(owner)}>
+                                <Check size={14} /> Select
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
             {fieldErrors.ownerId && <span className="field-error-text">{fieldErrors.ownerId}</span>}
           </label>
         ))}
@@ -599,7 +673,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
                 {form.petIds.length ? `${form.petIds.length} pet${form.petIds.length > 1 ? "s" : ""} selected` : (pets.length ? "Select pet(s)" : "No registered pets found")}
                 <ChevronDown size={16} />
               </button>
-              <button type="button" className="appt-addpet-btn" disabled={isStaff && !guestOwner && !form.ownerId} onClick={openPetModal}>
+              <button type="button" className="appt-addpet-btn" disabled={isStaff && !guestFlow && !form.ownerId} onClick={openPetModal}>
                 <Plus size={16} /> Add Pet
               </button>
             </div>
@@ -648,7 +722,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
         <label>Notes<span className="optional-mark"> (Optional)</span><textarea value={form.notes} onChange={event => updateForm({ notes: event.target.value })} maxLength="500" rows="4" placeholder="Additional information for the clinic" /></label>
 
-        {isStaff && guestOwner && !ownerRecord && (
+        {isStaff && guestFlow && !ownerRecord && (
           <DataPrivacyConsent
             ref={consentRef}
             serviceConsent={serviceConsent}
@@ -702,6 +776,40 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         </div>
       )}
 
+      {viewOwnerProfile && (
+        <div className="appt-modal-backdrop" onClick={() => setViewOwnerProfile(null)}>
+          <div className="appt-modal appt-profile-modal" onClick={event => event.stopPropagation()}>
+            <button type="button" className="appt-modal-close" aria-label="Close" onClick={() => setViewOwnerProfile(null)}><X /></button>
+            <div className="appt-profile-head">
+              {viewOwnerProfile.avatar_url ? (
+                <img className="appt-owner-avatar appt-owner-avatar-large" src={viewOwnerProfile.avatar_url} alt={viewOwnerProfile.full_name || "Pet owner"} />
+              ) : (
+                <div className="appt-owner-avatar appt-owner-avatar-fallback appt-owner-avatar-large">
+                  <Users size={22} />
+                </div>
+              )}
+              <div>
+                <p className="appt-profile-eyebrow">Pet Owner Profile</p>
+                <h3>{viewOwnerProfile.full_name || "Unnamed Owner"}</h3>
+              </div>
+            </div>
+            <dl className="appt-profile-fields">
+              <div><dt>Username</dt><dd>@{viewOwnerProfile.username}</dd></div>
+              <div><dt>Contact Number</dt><dd>{viewOwnerProfile.phone || "Not recorded"}</dd></div>
+              <div><dt>Email Address</dt><dd>{viewOwnerProfile.email || "Not recorded"}</dd></div>
+              <div><dt>Address</dt><dd>{viewOwnerProfile.address || "Not recorded"}</dd></div>
+            </dl>
+            <button
+              type="button"
+              className="book-button"
+              onClick={() => { selectOwner(viewOwnerProfile); setViewOwnerProfile(null); }}
+            >
+              <Check size={15} /> Select This Pet Owner
+            </button>
+          </div>
+        </div>
+      )}
+
       <style>{styles}</style>
     </div>
   );
@@ -724,15 +832,42 @@ function formatAppointmentDate(value) {
 }
 
 const styles = `
-.appointment-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:22px;align-items:start}.appointment-card{background:#fff;border-radius:20px;padding:24px;box-shadow:0 10px 30px rgba(55,126,158,.1)}.form-title{display:flex;gap:12px;align-items:center;margin-bottom:20px;color:#318fbe}.form-title h2{margin:0;color:#20313B}.form-title p{margin:3px 0;color:#6F7F88}.appointment-card label{display:grid;gap:7px;font-weight:700;margin-bottom:16px}.appointment-card label span{font-weight:400;color:#7c8c94}.appointment-card label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}.appointment-card input,.appointment-card select,.appointment-card textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;font:inherit;color:#20313B;background:#fbfeff}.appointment-card input:focus,.appointment-card select:focus,.appointment-card textarea:focus{outline:2px solid #a9dff0;border-color:#4DA8DA}.two-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}.book-button{width:100%;border:0;border-radius:13px;padding:14px;background:#4DA8DA;color:white;font-weight:800;font-size:15px;cursor:pointer}.book-button:disabled{opacity:.65;cursor:not-allowed}.notice{padding:12px 14px;border-radius:12px;margin-bottom:16px}.notice.success{background:#eaf8ef;color:#28774b}.notice.error{background:#fff0f0;color:#b34848}.summary{position:sticky;top:105px}.summary h3{margin-top:0}.summary-row{display:flex;gap:11px;padding:13px 0;border-bottom:1px solid #edf4f7}.summary-icon{width:36px;height:36px;background:#eaf8fd;color:#3998c5;border-radius:10px;display:grid;place-items:center;flex-shrink:0}.summary-icon svg{width:18px}.summary-row small,.summary-row strong{display:block}.summary-row small{color:#758891;margin-bottom:3px}.summary-row strong{word-break:break-word}.summary-type{margin-top:18px;padding:14px;background:#f2fafd;border-radius:12px;display:grid;gap:5px}.summary-type span{color:#318fbe}.help{font-size:12px;line-height:1.55;color:#6F7F88}
+.appointment-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:22px;align-items:start}.appointment-card{background:#fff;border-radius:20px;padding:24px;box-shadow:0 10px 30px rgba(55,126,158,.1)}.form-title{display:flex;gap:12px;align-items:center;margin-bottom:20px;color:#318fbe}.form-title h2{margin:0;color:#20313B}.form-title p{margin:3px 0;color:#6F7F88}.appointment-card label{display:grid;gap:7px;font-weight:700;margin-bottom:16px}.appointment-card label span{font-weight:400;color:#7c8c94}.appointment-card label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}.appointment-card input,.appointment-card select,.appointment-card textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;font:inherit;color:#20313B;background:#fbfeff}.appointment-card input:focus,.appointment-card select:focus,.appointment-card textarea:focus{outline:2px solid #a9dff0;border-color:#4DA8DA}.two-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}.appt-checkbox-field{display:flex!important;flex-direction:row;align-items:center;gap:10px;padding:12px 14px;border:1px solid #cfe4ed;border-radius:12px;background:#f2fafd;color:#21697f;cursor:pointer}.appt-checkbox-field input[type="checkbox"]{width:17px;height:17px;flex-shrink:0;accent-color:#4DA8DA;cursor:pointer}.appt-checkbox-field input[type="checkbox"]:disabled{cursor:not-allowed}.book-button{width:100%;border:0;border-radius:13px;padding:14px;background:#4DA8DA;color:white;font-weight:800;font-size:15px;cursor:pointer}.book-button:disabled{opacity:.65;cursor:not-allowed}.notice{padding:12px 14px;border-radius:12px;margin-bottom:16px}.notice.success{background:#eaf8ef;color:#28774b}.notice.error{background:#fff0f0;color:#b34848}.summary{position:sticky;top:105px}.summary h3{margin-top:0}.summary-row{display:flex;gap:11px;padding:13px 0;border-bottom:1px solid #edf4f7}.summary-icon{width:36px;height:36px;background:#eaf8fd;color:#3998c5;border-radius:10px;display:grid;place-items:center;flex-shrink:0}.summary-icon svg{width:18px}.summary-row small,.summary-row strong{display:block}.summary-row small{color:#758891;margin-bottom:3px}.summary-row strong{word-break:break-word}.summary-type{margin-top:18px;padding:14px;background:#f2fafd;border-radius:12px;display:grid;gap:5px}.summary-type span{color:#318fbe}.help{font-size:12px;line-height:1.55;color:#6F7F88}
 
-.appt-owner-select{position:relative}.appt-owner-select input{padding-right:36px}.appt-clear{position:absolute;right:8px;top:12px;border:0;background:#edf5f8;color:#5d7782;border-radius:7px;padding:5px;cursor:pointer;display:grid;place-items:center}
+.appt-owner-selected{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;background:#fbfeff}.appt-owner-selected .appt-owner-cell{cursor:default}.appt-owner-selected strong{color:#20313B;font-size:14px}.appt-owner-selected span{color:#7c8c94;font-size:12px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.appt-clear{flex-shrink:0;display:inline-flex;align-items:center;gap:5px;border:1px solid #cfe4ed;background:#edf5f8;color:#5d7782;border-radius:8px;padding:7px 11px;font-weight:700;font-size:12.5px;cursor:pointer}
 .appt-linklike{border:0;background:none;padding:0;color:#318fbe;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
-.appt-owner-dropdown{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;max-height:260px;overflow:auto;background:#fff;border:1px solid #cfe4ed;border-radius:12px;box-shadow:0 14px 30px rgba(45,111,143,.16);padding:6px}
+.appt-owner-table-wrap{display:grid;gap:0}
+.appt-owner-table-wrap.field-invalid{border-color:transparent!important;box-shadow:none!important}
+.appt-owner-table-wrap.field-invalid .appt-owner-search{border-color:#d9534f!important;box-shadow:0 0 0 1px #d9534f!important}
+.appt-owner-search{display:flex;align-items:center;gap:7px;min-height:43px;border:1px solid #cfe4ed;border-radius:11px;background:#fff;color:#4da8da;padding-left:11px}
+.appt-owner-search input{width:100%;min-width:0;border:0;padding:10px 4px;background:transparent;color:#20313b;font:inherit;outline:0}
+.appt-owner-clear-search{display:grid;place-items:center;margin-right:6px;border:0;border-radius:7px;padding:5px;background:#edf5f8;color:#5d7782;cursor:pointer}
+.appt-owner-summary{margin:10px 0;color:#6f7f88;font-size:12.5px}
 .appt-pet-dropdown{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;max-height:260px;overflow:auto;background:#fff;border:1px solid #cfe4ed;border-radius:12px;box-shadow:0 14px 30px rgba(45,111,143,.16);padding:6px;display:grid;gap:2px}
 .appt-dropdown-empty{padding:12px;color:#8496a0;font-size:13px;font-weight:400}
-.appt-dropdown-item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;font:inherit}
-.appt-dropdown-item:hover{background:#eaf8fd}.appt-dropdown-item strong{color:#20313B;font-size:14px;font-weight:700}.appt-dropdown-item span{color:#7c8c94;font-size:12px;font-weight:400}
+.appt-owner-table{overflow:auto;max-height:360px;border:1px solid #e3f2fb;border-radius:16px}
+.appt-owner-table table{width:100%;min-width:480px;border-collapse:collapse}
+.appt-owner-table th,.appt-owner-table td{padding:12px 14px;border-bottom:1px solid #e9f3f8;text-align:left;vertical-align:middle}
+.appt-owner-table thead th{position:sticky;top:0;background:#f4fafd;color:#55707d;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.appt-owner-table tbody tr:last-child td{border-bottom:0}
+.appt-owner-table tbody tr:hover{background:#f9fcfe}
+.appt-owner-table td{color:#334e5a;font-size:13px}
+.appt-owner-cell{display:flex;align-items:center;gap:11px;border:0;background:none;padding:0;font:inherit;font-weight:700;color:#20313b;text-align:left;cursor:pointer;width:100%}
+.appt-owner-cell:hover span{text-decoration:underline}
+.appt-owner-avatar{width:36px;height:36px;flex:0 0 auto;border-radius:50%;object-fit:cover;background:#eaf8fd;color:#4da8da}
+.appt-owner-avatar-fallback{display:grid;place-items:center}
+.appt-owner-select-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:9px;padding:8px 13px;background:#eaf8fd;color:#2b83ad;font-weight:700;font-size:12.5px;white-space:nowrap;cursor:pointer}
+.appt-owner-select-btn:hover{background:#dcf1fa}
+.appt-owner-avatar-large{width:58px;height:58px}
+.appt-profile-modal{width:min(440px,100%)}
+.appt-profile-head{display:flex;align-items:center;gap:14px;margin-bottom:18px;padding-right:20px}
+.appt-profile-eyebrow{margin:0 0 3px;color:#7c8c94;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.appt-profile-head h3{margin:0;color:#20313B;font-size:19px;padding-right:0}
+.appt-profile-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px;margin:0 0 20px}
+.appt-profile-fields dt{color:#7c8c94;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px}
+.appt-profile-fields dd{margin:0;color:#20313B;font-weight:700;word-break:break-word}
+.appt-profile-modal .book-button{display:inline-flex;align-items:center;justify-content:center;gap:8px}
 .appt-pet-select{position:relative;display:grid;gap:10px}.appt-pet-controls{display:flex;gap:8px}
 .appt-pet-trigger{flex:1;display:flex;align-items:center;justify-content:space-between;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;background:#fbfeff;color:#20313B;font:inherit;font-weight:400;cursor:pointer}
 .appt-pet-select.field-invalid{border-color:transparent!important;box-shadow:none!important}

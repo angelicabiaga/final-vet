@@ -11,11 +11,19 @@ export function validateImageFile(file) {
   if (file.size > MAX_IMAGE_BYTES) throw new Error(IMAGE_TOO_LARGE_MESSAGE);
 }
 
-export const PH_MOBILE_REGEX = /^(09\d{9}|\+639\d{9})$/;
-export const INVALID_PH_MOBILE_MESSAGE = "Enter a valid Philippine contact number (09XXXXXXXXX or +639XXXXXXXXX).";
+export const PH_MOBILE_REGEX = /^09\d{9}$/;
+export const INVALID_PH_MOBILE_MESSAGE = "Enter an 11-digit contact number (numbers only, e.g. 09XXXXXXXXX).";
 
 export function isValidPhMobile(value) {
   return PH_MOBILE_REGEX.test(String(value || "").trim());
+}
+
+// Strips everything but digits and caps at 11 characters -- shared by every
+// phone/contact-number input (web onChange and RN onChangeText) so typing,
+// pasting, or autofill can never leave letters, symbols, or extra digits in
+// the field.
+export function sanitizePhoneInput(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 11);
 }
 
 export const FIRST_NAME_REQUIRED_MESSAGE = "First name is required.";

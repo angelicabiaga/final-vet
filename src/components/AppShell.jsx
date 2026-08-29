@@ -196,7 +196,7 @@ export default function AppShell({ profile, title, children }) {
     staff: [
       { label: "Dashboard", to: "/staff/dashboard", type: "dashboard" },
       { label: "Appointments", to: "/staff/appointments", type: "appointment" },
-      { label: "Create / Walk-In", to: "/staff/walk-in", type: "pet" },
+      { label: "Pet Owners", to: "/staff/walk-in", type: "pet" },
       { label: "Queue Management", to: "/staff/queue", type: "queue" },
       { label: "Veterinarian Schedules", to: "/staff/veterinarian-schedules", type: "schedule" },
       { label: "Animal Patients", to: "/staff/patients", type: "pet" },
@@ -210,7 +210,6 @@ export default function AppShell({ profile, title, children }) {
       { label: "My Appointments", to: "/veterinarian/appointments", type: "appointment" },
       { label: "My Queue", to: "/veterinarian/queue", type: "queue" },
       { label: "Animal Patients", to: "/veterinarian/patients", type: "pet" },
-      { label: "Veterinarian Prescriptions", to: "/veterinarian/prescriptions", type: "medical" },
 
       { label: "Messages", to: "/veterinarian/messages", type: "message" },
 
@@ -218,7 +217,7 @@ export default function AppShell({ profile, title, children }) {
     admin: [
       { label: "Dashboard", to: "/admin/dashboard", type: "dashboard" },
       { label: "Appointments", to: "/staff/appointments", type: "appointment" },
-      { label: "Create / Walk-In", to: "/staff/walk-in", type: "pet" },
+      { label: "Pet Owners", to: "/staff/walk-in", type: "pet" },
       { label: "Queue Management", to: "/admin/queue", type: "queue" },
       { label: "Veterinarian Schedules", to: "/staff/veterinarian-schedules", type: "schedule" },
       { label: "Animal Patients", to: "/admin/pets", type: "pet" },

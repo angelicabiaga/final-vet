@@ -3,6 +3,7 @@ import { Animated, Image, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet
 import { LinearGradient } from 'expo-linear-gradient';
 import { styles as dashboardStyles } from '../../styles/AdminDashboardDesign';
 import { useLowerHeaderMotion } from './useLowerHeaderMotion';
+import { isValidPhMobile, sanitizePhoneInput } from '../../../utils/validators';
 
 const DEFAULT_PROFILE_IMAGE = require('../../assets/Profile.png');
 const HEADER_MENU_ITEMS = [
@@ -24,7 +25,7 @@ const buildAccountForm = () => ({
 });
 
 const getAdminName = (user) => user?.username || user?.fullName || user?.name || (user?.email ? String(user.email).split('@')[0] : 'Admin');
-const hasEmptyRequiredField = (form) => !form.fullName.trim() || !form.username.trim() || !form.email.trim() || !form.contactNumber.trim();
+const hasEmptyRequiredField = (form) => !form.fullName.trim() || !form.username.trim() || !form.email.trim() || !form.contactNumber.trim() || !isValidPhMobile(form.contactNumber);
 const getNextUserId = (accounts) => {
   const nextNumber = accounts.reduce((largest, account) => Math.max(largest, Number(String(account.userId || '').replace(/\D/g, '')) || 0), 0) + 1;
   return `USR-${String(nextNumber).padStart(4, '0')}`;
@@ -169,7 +170,7 @@ const AdminCreateAccount = ({ navigation, route }) => {
             <TextInput value={form.email} onChangeText={(value) => updateForm('email', value)} style={localStyles.fieldInput} placeholder="Enter email address" placeholderTextColor="#8aa2b4" autoCapitalize="none" keyboardType="email-address" />
 
             <Text style={localStyles.fieldLabel}>Contact Number<Text style={localStyles.requiredMark}> *</Text></Text>
-            <TextInput value={form.contactNumber} onChangeText={(value) => updateForm('contactNumber', value.replace(/[^0-9]/g, ''))} style={localStyles.fieldInput} placeholder="Enter contact number" placeholderTextColor="#8aa2b4" keyboardType="number-pad" />
+            <TextInput value={form.contactNumber} onChangeText={(value) => updateForm('contactNumber', sanitizePhoneInput(value))} style={localStyles.fieldInput} placeholder="09XXXXXXXXX" placeholderTextColor="#8aa2b4" keyboardType="number-pad" maxLength={11} />
 
             <Text style={localStyles.fieldLabel}>Registration Date</Text>
             <TextInput value={form.dateRegistered} onChangeText={(value) => updateForm('dateRegistered', value)} style={localStyles.fieldInput} placeholder="YYYY-MM-DD" placeholderTextColor="#8aa2b4" />

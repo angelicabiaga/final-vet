@@ -18,6 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { styles } from '../../styles/StaffProfileDesign';
 import CustomModal from '../../../components/CustomModal';
+import { isValidPhMobile, sanitizePhoneInput } from '../../../utils/validators';
 
 const DEFAULT_PROFILE_IMAGE = require('../../assets/Profile.png');
 
@@ -220,6 +221,7 @@ const StaffProfile = ({ navigation, route }) => {
     !profile?.lastName?.trim() ||
     !profile?.email?.trim() ||
     !profile?.contact?.trim() ||
+    !isValidPhMobile(profile?.contact) ||
     !profile?.address?.trim();
 
   const handleDonePress = () => {
@@ -744,10 +746,10 @@ const StaffProfile = ({ navigation, route }) => {
                 <TextInput
                   value={draftProfile.contact}
                   onChangeText={(value) =>
-                    updateDraftField('contact', value.replace(/[^0-9]/g, ''))
+                    updateDraftField('contact', sanitizePhoneInput(value))
                   }
                   style={styles.inputField}
-                  placeholder="Enter contact number"
+                  placeholder="09XXXXXXXXX"
                   placeholderTextColor="#87a0b1"
                   keyboardType="number-pad"
                   maxLength={11}
@@ -860,7 +862,7 @@ const StaffProfile = ({ navigation, route }) => {
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>Required Fields</Text>
               <Text style={styles.modalMessage}>
-                Please complete all required staff fields before saving your profile.
+                Please complete all required staff fields correctly before saving your profile. Contact number must be exactly 11 digits.
               </Text>
               <TouchableOpacity
                 style={styles.modalPrimaryButtonFull}

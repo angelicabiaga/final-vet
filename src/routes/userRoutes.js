@@ -11,5 +11,3 @@ export const registerUser = async (data) => {
     const res = await API.post("/users/register", data);
     return res.data;
 };
-
-export { attemptLogin as loginUser, registerUser } from "../src/api/authService";
