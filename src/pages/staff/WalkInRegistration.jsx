@@ -195,7 +195,7 @@ export default function WalkInRegistration({ profile }) {
       <section className="card wr-list-card">
         <div className="wr-toolbar">
           <div className="wr-toolbar-left">
-            <h2><Users /> Pet Owners</h2>
+            <h2><Users /> List of Pet Owners</h2>
             <p className="wr-list-description">
               Search registered pet owners, then create an appointment for one.
             </p>
@@ -244,7 +244,6 @@ export default function WalkInRegistration({ profile }) {
                 <col className="wr-col-owner" />
                 <col className="wr-col-contact" />
                 <col className="wr-col-email" />
-                <col className="wr-col-address" />
                 <col className="wr-col-pets" />
                 <col className="wr-col-actions" />
               </colgroup>
@@ -253,7 +252,6 @@ export default function WalkInRegistration({ profile }) {
                   <th>Pet Owner</th>
                   <th>Contact Number</th>
                   <th>Email Address</th>
-                  <th>Address</th>
                   <th>Registered Pets</th>
                   <th>Actions</th>
                 </tr>
@@ -278,14 +276,7 @@ export default function WalkInRegistration({ profile }) {
                     </td>
                     <td data-label="Email Address">
                       {owner.email ? (
-                        <span className="wr-cell-text wr-truncate" title={owner.email}>{owner.email}</span>
-                      ) : (
-                        <NotRecorded />
-                      )}
-                    </td>
-                    <td data-label="Address">
-                      {owner.address ? (
-                        <span className="wr-cell-text wr-truncate" title={owner.address}>{owner.address}</span>
+                        <span className="wr-cell-text wr-wrap">{owner.email}</span>
                       ) : (
                         <NotRecorded />
                       )}
@@ -552,16 +543,16 @@ const styles = `
    second decorative box inside the card's own border/shadow/radius (the
    table's own white background/rounded corners already come from the
    shared .shell table rule in css-reference-theme.css). table-layout:fixed
-   plus the wr-col-* widths below mean a column's content truncates
-   (.wr-truncate) instead of ever forcing the table wider than the card. */
+   plus the wr-col-* widths below keep columns from ever forcing the table
+   wider than the card; long unbroken text (email addresses) wraps onto
+   more lines instead of being cut off (.wr-wrap), rather than truncating. */
 .wr-table{overflow:auto}
 .wr-table table{width:100%;border-collapse:collapse;table-layout:fixed}
 .wr-table th,.wr-table td{padding:11px 14px;text-align:left;vertical-align:middle}
 .wr-col-owner{width:20%}
-.wr-col-contact{width:12%}
-.wr-col-email{width:16%}
-.wr-col-address{width:13%}
-.wr-col-pets{width:13%}
+.wr-col-contact{width:13%}
+.wr-col-email{width:29%}
+.wr-col-pets{width:12%}
 .wr-col-actions{width:26%}
 
 .wr-owner-cell{display:flex;align-items:center;gap:11px;font-weight:700;color:#20313b;width:100%}
@@ -573,7 +564,7 @@ const styles = `
 .wr-owner-avatar-large{width:58px;height:58px}
 
 .wr-cell-text{color:#334e5a}
-.wr-truncate{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wr-wrap{display:block;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 /* !important on the properties that ancestor rules could otherwise win on
    (e.g. .wr-profile-field span sets uppercase/bold for its own label
    spans, which -- being a more specific descendant selector -- would

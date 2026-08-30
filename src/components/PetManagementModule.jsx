@@ -47,6 +47,13 @@ import {
   markPrescriptionElsewhere,
 } from "../services/billingService";
 import { getTransactionsForQueueEntry } from "../services/transactionService";
+import {
+  SPECIES_GROUPS,
+  SPECIES_OPTIONS,
+  SEX_OPTIONS,
+  BREEDS_BY_SPECIES,
+  COLORS_BY_SPECIES,
+} from "../constants/petOptions";
 import AnimalPatientAIHealth from "./AnimalPatientAIHealth";
 import ConsultationHealthInsight from "./ConsultationHealthInsight";
 
@@ -130,227 +137,12 @@ const EMPTY_FORM = {
   dateOfBirth: "",
   weight: "",
   color: "",
+  customColor: "",
   microchipNumber: "",
   allergies: "",
   existingConditions: "",
   notes: "",
   photoUrl: "",
-};
-
-const SPECIES_GROUPS = [
-  {
-    label: "Common Household Pets",
-    options: [
-      "Dog",
-      "Cat",
-      "Rabbit",
-      "Guinea Pig",
-      "Hamster",
-      "Mouse",
-      "Rat",
-      "Gerbil",
-      "Ferret",
-      "Chinchilla",
-      "Hedgehog",
-      "Sugar Glider",
-    ],
-  },
-  {
-    label: "Birds",
-    options: [
-      "Parrot",
-      "Cockatiel",
-      "Budgerigar",
-      "Lovebird",
-      "Canary",
-      "Finch",
-      "Pigeon",
-      "Dove",
-      "Chicken",
-      "Duck",
-      "Goose",
-      "Turkey",
-      "Quail",
-    ],
-  },
-  {
-    label: "Fish",
-    options: [
-      "Goldfish",
-      "Betta Fish",
-      "Koi",
-      "Guppy",
-      "Molly",
-      "Platy",
-      "Swordtail",
-      "Tetra",
-      "Cichlid",
-      "Angelfish",
-      "Catfish",
-    ],
-  },
-  {
-    label: "Reptiles",
-    options: [
-      "Turtle",
-      "Tortoise",
-      "Gecko",
-      "Iguana",
-      "Chameleon",
-      "Bearded Dragon",
-      "Snake",
-    ],
-  },
-  {
-    label: "Amphibians",
-    options: [
-      "Frog",
-      "Toad",
-      "Salamander",
-      "Newt",
-      "Axolotl",
-    ],
-  },
-  {
-    label: "Farm and Companion Animals",
-    options: [
-      "Goat",
-      "Sheep",
-      "Pig",
-      "Horse",
-      "Pony",
-      "Donkey",
-      "Cow",
-      "Carabao",
-      "Llama",
-      "Alpaca",
-    ],
-  },
-  {
-    label: "Other",
-    options: ["Other"],
-  },
-];
-
-const SPECIES_OPTIONS = SPECIES_GROUPS.flatMap(
-  (group) => group.options
-);
-
-const SEX_OPTIONS = [
-  "Unknown",
-  "Male",
-  "Female",
-];
-
-const BREEDS_BY_SPECIES = {
-  Dog: [
-    "Aspin (Askal)",
-    "Labrador Retriever",
-    "Golden Retriever",
-    "German Shepherd",
-    "Poodle",
-    "Shih Tzu",
-    "Chihuahua",
-    "Beagle",
-    "Siberian Husky",
-    "Pomeranian",
-    "Rottweiler",
-    "Dachshund",
-    "Bulldog",
-    "French Bulldog",
-    "Shiba Inu",
-    "Corgi",
-    "Doberman Pinscher",
-    "Great Dane",
-    "Border Collie",
-    "Japanese Spitz",
-    "Mixed Breed",
-  ],
-  Cat: [
-    "Puspin (Domestic Shorthair)",
-    "Persian",
-    "Siamese",
-    "Maine Coon",
-    "British Shorthair",
-    "Ragdoll",
-    "Bengal",
-    "Scottish Fold",
-    "American Shorthair",
-    "Sphynx",
-    "Himalayan",
-    "Mixed Breed",
-  ],
-  Rabbit: [
-    "Holland Lop",
-    "Netherland Dwarf",
-    "Rex",
-    "Angora",
-    "Lionhead",
-    "Dutch",
-    "Flemish Giant",
-    "Mixed Breed",
-  ],
-  "Guinea Pig": [
-    "American",
-    "Abyssinian",
-    "Peruvian",
-    "Silkie",
-    "Teddy",
-    "Texel",
-  ],
-  Hamster: [
-    "Syrian",
-    "Dwarf Campbell Russian",
-    "Winter White",
-    "Roborovski",
-    "Chinese",
-  ],
-  Horse: [
-    "Philippine Native Pony",
-    "Arabian",
-    "Thoroughbred",
-    "Quarter Horse",
-    "Appaloosa",
-  ],
-  Pony: [
-    "Philippine Native Pony",
-    "Shetland Pony",
-    "Welsh Pony",
-  ],
-  Goat: [
-    "Native / Native Cross",
-    "Boer",
-    "Anglo-Nubian",
-    "Saanen",
-  ],
-  Cow: [
-    "Native",
-    "Holstein",
-    "Brahman",
-    "Sahiwal",
-  ],
-  Carabao: [
-    "Native Carabao",
-    "Murrah Buffalo",
-  ],
-  Pig: [
-    "Native",
-    "Landrace",
-    "Large White",
-    "Duroc",
-  ],
-  Chicken: [
-    "Native (Darag)",
-    "Rhode Island Red",
-    "Leghorn",
-    "Broiler",
-  ],
-  Duck: [
-    "Native (Itik)",
-    "Pekin",
-    "Muscovy",
-    "Khaki Campbell",
-  ],
 };
 
 export default function PetManagementModule({
@@ -595,6 +387,7 @@ export default function PetManagementModule({
   }, [speciesQuery]);
 
   const breedOptions = BREEDS_BY_SPECIES[form.species] || null;
+  const colorOptions = COLORS_BY_SPECIES[form.species] || null;
 
   const petAge = useMemo(
     () => formatPetAge(form.dateOfBirth),
@@ -816,6 +609,8 @@ export default function PetManagementModule({
         species === "Other" ? currentForm.customSpecies : "",
       breed: "",
       customBreed: "",
+      color: "",
+      customColor: "",
     }));
     setSpeciesQuery(species);
     setSpeciesDropdownOpen(false);
@@ -833,6 +628,10 @@ export default function PetManagementModule({
     const speciesBreedList = BREEDS_BY_SPECIES[resolvedSpecies] || null;
     const isKnownBreed = speciesBreedList
       ? speciesBreedList.includes(pet.breed)
+      : false;
+    const speciesColorList = COLORS_BY_SPECIES[resolvedSpecies] || null;
+    const isKnownColor = speciesColorList
+      ? speciesColorList.includes(pet.color)
       : false;
 
     setForm({
@@ -855,7 +654,15 @@ export default function PetManagementModule({
       sex: pet.sex || "Unknown",
       dateOfBirth: pet.date_of_birth || "",
       weight: pet.weight || "",
-      color: pet.color || "",
+      color: speciesColorList
+        ? isKnownColor
+          ? pet.color
+          : pet.color
+            ? "Other"
+            : ""
+        : pet.color || "",
+      customColor:
+        speciesColorList && !isKnownColor ? pet.color || "" : "",
       microchipNumber: pet.microchip_number || "",
       allergies: pet.allergies || "",
       existingConditions: pet.existing_conditions || "",
@@ -892,6 +699,7 @@ export default function PetManagementModule({
     const ownerId = form.ownerId || profile.id;
     const finalSpecies = form.species === "Other" ? form.customSpecies.trim() : form.species.trim();
     const finalBreed = form.breed === "Other" ? form.customBreed.trim() : form.breed.trim();
+    const finalColor = form.color === "Other" ? form.customColor.trim() : form.color.trim();
 
     const errors = {};
     const allFieldRefs = {};
@@ -945,6 +753,7 @@ export default function PetManagementModule({
           ...form,
           species: finalSpecies,
           breed: finalBreed,
+          color: finalColor,
           photoUrl,
         },
         ownerId
@@ -1381,6 +1190,8 @@ export default function PetManagementModule({
                                 customSpecies: "",
                                 breed: "",
                                 customBreed: "",
+                                color: "",
+                                customColor: "",
                               }));
                             }
                           }}
@@ -1405,6 +1216,8 @@ export default function PetManagementModule({
                                 customSpecies: "",
                                 breed: "",
                                 customBreed: "",
+                                color: "",
+                                customColor: "",
                               }));
                               setSpeciesQuery("");
                             }}
@@ -1654,17 +1467,59 @@ export default function PetManagementModule({
                   <label>
                     <span>Color<span className="optional-mark"> (Optional)</span></span>
 
-                    <input
-                      value={form.color}
-                      placeholder="Enter color or markings"
-                      onChange={(event) =>
-                        updateForm(
-                          "color",
-                          event.target.value
-                        )
-                      }
-                    />
+                    {colorOptions ? (
+                      <select
+                        value={form.color}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setForm((current) => ({
+                            ...current,
+                            color: value,
+                            customColor:
+                              value === "Other" ? current.customColor : "",
+                          }));
+                        }}
+                      >
+                        <option value="">Select color</option>
+
+                        {colorOptions.map((color) => (
+                          <option key={color} value={color}>
+                            {color}
+                          </option>
+                        ))}
+
+                        <option value="Other">Other</option>
+                      </select>
+                    ) : (
+                      <input
+                        value={form.color}
+                        placeholder="Enter color or markings"
+                        onChange={(event) =>
+                          updateForm(
+                            "color",
+                            event.target.value
+                          )
+                        }
+                      />
+                    )}
                   </label>
+
+                  {colorOptions && form.color === "Other" && (
+                    <label>
+                      <span>Specify Color<span className="optional-mark"> (Optional)</span></span>
+
+                      <input
+                        value={form.customColor}
+                        placeholder="Enter color or markings"
+                        onChange={(event) =>
+                          updateForm(
+                            "customColor",
+                            event.target.value
+                          )
+                        }
+                      />
+                    </label>
+                  )}
 
                   <label>
                     <span>Microchip Number<span className="optional-mark"> (Optional)</span></span>
@@ -1820,7 +1675,7 @@ export default function PetManagementModule({
             <div className="list-heading-row">
               <h2>
                 <PawPrint />
-                Animal Patients
+                List of Animal Patients
               </h2>
 
               <button

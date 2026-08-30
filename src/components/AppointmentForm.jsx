@@ -12,8 +12,18 @@ import DataPrivacyConsent, { focusConsentBlock } from "./DataPrivacyConsent";
 import { CONSENT_REQUIRED_ERROR } from "../constants/privacyNotice";
 import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, sanitizePhoneInput } from "../utils/validators";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
+import { formatPetAge } from "../utils/timeFormat";
+import { SPECIES_GROUPS, SEX_OPTIONS, BREEDS_BY_SPECIES, COLORS_BY_SPECIES } from "../constants/petOptions";
 
-const EMPTY_PET_FORM = { petName: "", species: "", breed: "", sex: "Unknown", dateOfBirth: "", weight: "" };
+// Same field set as the Animal Patients "Register Pet" form (species/breed/
+// color each support a curated dropdown with an "Other" free-text
+// fallback, from the shared src/constants/petOptions.js dataset), just
+// reached from inside an appointment booking instead of its own page.
+const EMPTY_PET_FORM = {
+  petName: "", species: "", customSpecies: "", breed: "", customBreed: "",
+  sex: "Unknown", dateOfBirth: "", weight: "",
+  color: "", customColor: "", microchipNumber: "", allergies: "", existingConditions: "", notes: "",
+};
 
 function validateGuestField(name, value) {
   switch (name) {
@@ -303,7 +313,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   async function submitPetModal(event) {
     event.preventDefault();
     if (petModalSavingRef.current) return;
-    if (!petModalForm.petName.trim() || !petModalForm.species.trim()) {
+    const finalSpecies = petModalForm.species === "Other" ? petModalForm.customSpecies.trim() : petModalForm.species.trim();
+    const finalBreed = petModalForm.breed === "Other" ? petModalForm.customBreed.trim() : petModalForm.breed.trim();
+    const finalColor = petModalForm.color === "Other" ? petModalForm.customColor.trim() : petModalForm.color.trim();
+    if (!petModalForm.petName.trim() || !finalSpecies) {
       setPetModalMessage("Pet name and species are required.");
       return;
     }
@@ -312,7 +325,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       setPetModalSaving(true);
       setPetModalMessage("");
       const resolvedOwnerId = await ensureOwnerId();
-      const newPet = await savePet({ ...petModalForm }, resolvedOwnerId);
+      const newPet = await savePet(
+        { ...petModalForm, species: finalSpecies, breed: finalBreed, color: finalColor },
+        resolvedOwnerId
+      );
       setPets(current => [...current, newPet].sort((a, b) => a.pet_name.localeCompare(b.pet_name)));
       setForm(current => ({ ...current, petIds: [...current.petIds, newPet.id] }));
       setPetModalOpen(false);
@@ -541,6 +557,9 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
     );
   }
 
+  const petModalBreedOptions = BREEDS_BY_SPECIES[petModalForm.species] || null;
+  const petModalColorOptions = COLORS_BY_SPECIES[petModalForm.species] || null;
+
   return (
     <div className="appointment-grid">
       <form className="appointment-card" onSubmit={submit}>
@@ -755,21 +774,106 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
             <form onSubmit={submitPetModal} className="appt-modal-form">
               {petModalMessage && <div className="notice error">{petModalMessage}</div>}
               <label>Pet Name<span className="required-mark"> *</span><input required value={petModalForm.petName} onChange={event => setPetModalForm(value => ({ ...value, petName: event.target.value }))} placeholder="Enter pet name" /></label>
+
               <div className="two-cols">
-                <label>Species<span className="required-mark"> *</span><input required value={petModalForm.species} onChange={event => setPetModalForm(value => ({ ...value, species: event.target.value }))} placeholder="e.g. Dog, Cat" /></label>
-                <label>Breed<span className="optional-mark"> (Optional)</span><input value={petModalForm.breed} onChange={event => setPetModalForm(value => ({ ...value, breed: event.target.value }))} placeholder="Enter breed" /></label>
+                <label>Species<span className="required-mark"> *</span>
+                  <select
+                    required
+                    value={petModalForm.species}
+                    onChange={event => {
+                      const value = event.target.value;
+                      setPetModalForm(current => ({
+                        ...current,
+                        species: value,
+                        customSpecies: value === "Other" ? current.customSpecies : "",
+                        breed: "",
+                        customBreed: "",
+                        color: "",
+                        customColor: "",
+                      }));
+                    }}
+                  >
+                    <option value="">Select species</option>
+                    {SPECIES_GROUPS.map(group => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.options.map(species => (
+                          <option key={species} value={species}>{species}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </label>
+
+                {petModalBreedOptions ? (
+                  <label>Breed<span className="required-mark"> *</span>
+                    <select
+                      required
+                      value={petModalForm.breed}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setPetModalForm(current => ({ ...current, breed: value, customBreed: value === "Other" ? current.customBreed : "" }));
+                      }}
+                    >
+                      <option value="">Select breed</option>
+                      {petModalBreedOptions.map(breed => <option key={breed} value={breed}>{breed}</option>)}
+                      <option value="Other">Other</option>
+                    </select>
+                  </label>
+                ) : (
+                  <label>Breed<span className="optional-mark"> (Optional)</span><input value={petModalForm.breed} onChange={event => setPetModalForm(value => ({ ...value, breed: event.target.value }))} placeholder="Enter breed" /></label>
+                )}
               </div>
+
+              {petModalForm.species === "Other" && (
+                <label>Specify Species<span className="required-mark"> *</span><input required value={petModalForm.customSpecies} onChange={event => setPetModalForm(value => ({ ...value, customSpecies: event.target.value }))} placeholder="Enter species" /></label>
+              )}
+              {petModalBreedOptions && petModalForm.breed === "Other" && (
+                <label>Specify Breed<span className="required-mark"> *</span><input required value={petModalForm.customBreed} onChange={event => setPetModalForm(value => ({ ...value, customBreed: event.target.value }))} placeholder="Enter breed" /></label>
+              )}
+
               <div className="two-cols">
                 <label>Sex
                   <select value={petModalForm.sex} onChange={event => setPetModalForm(value => ({ ...value, sex: event.target.value }))}>
-                    <option>Unknown</option>
-                    <option>Male</option>
-                    <option>Female</option>
+                    {SEX_OPTIONS.map(sex => <option key={sex}>{sex}</option>)}
                   </select>
                 </label>
                 <label>Weight (kg)<span className="optional-mark"> (Optional)</span><input type="number" min="0" step="0.01" value={petModalForm.weight} onChange={event => setPetModalForm(value => ({ ...value, weight: event.target.value }))} placeholder="0.00" /></label>
               </div>
-              <label>Date of Birth<span className="optional-mark"> (Optional)</span><input type="date" max={todayLocal()} value={petModalForm.dateOfBirth} onChange={event => setPetModalForm(value => ({ ...value, dateOfBirth: event.target.value }))} /></label>
+
+              <div className="two-cols">
+                <label>Date of Birth<span className="optional-mark"> (Optional)</span><input type="date" max={todayLocal()} value={petModalForm.dateOfBirth} onChange={event => setPetModalForm(value => ({ ...value, dateOfBirth: event.target.value }))} /></label>
+                <label>Age<input value={formatPetAge(petModalForm.dateOfBirth) || ""} placeholder="Fills in from date of birth" disabled /></label>
+              </div>
+
+              <div className="two-cols">
+                {petModalColorOptions ? (
+                  <label>Color<span className="optional-mark"> (Optional)</span>
+                    <select
+                      value={petModalForm.color}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setPetModalForm(current => ({ ...current, color: value, customColor: value === "Other" ? current.customColor : "" }));
+                      }}
+                    >
+                      <option value="">Select color</option>
+                      {petModalColorOptions.map(color => <option key={color} value={color}>{color}</option>)}
+                      <option value="Other">Other</option>
+                    </select>
+                  </label>
+                ) : (
+                  <label>Color<span className="optional-mark"> (Optional)</span><input value={petModalForm.color} onChange={event => setPetModalForm(value => ({ ...value, color: event.target.value }))} placeholder="Enter color or markings" /></label>
+                )}
+                <label>Microchip Number<span className="optional-mark"> (Optional)</span><input value={petModalForm.microchipNumber} onChange={event => setPetModalForm(value => ({ ...value, microchipNumber: event.target.value }))} placeholder="Enter microchip number" /></label>
+              </div>
+
+              {petModalColorOptions && petModalForm.color === "Other" && (
+                <label>Specify Color<span className="optional-mark"> (Optional)</span><input value={petModalForm.customColor} onChange={event => setPetModalForm(value => ({ ...value, customColor: event.target.value }))} placeholder="Enter color or markings" /></label>
+              )}
+
+              <label>Allergies<span className="optional-mark"> (Optional)</span><textarea value={petModalForm.allergies} onChange={event => setPetModalForm(value => ({ ...value, allergies: event.target.value }))} placeholder="Enter known allergies or write none" /></label>
+              <label>Existing Conditions<span className="optional-mark"> (Optional)</span><textarea value={petModalForm.existingConditions} onChange={event => setPetModalForm(value => ({ ...value, existingConditions: event.target.value }))} placeholder="Enter existing medical conditions" /></label>
+              <label>Additional Notes<span className="optional-mark"> (Optional)</span><textarea value={petModalForm.notes} onChange={event => setPetModalForm(value => ({ ...value, notes: event.target.value }))} placeholder="Enter relevant care or behavior notes" /></label>
+
               <button className="book-button" disabled={petModalSaving}>{petModalSaving ? "Saving…" : "Register Pet"}</button>
             </form>
           </div>
@@ -885,7 +989,9 @@ const styles = `
 .appt-modal h3{margin:0 0 16px;display:flex;align-items:center;gap:8px;color:#20313B;padding-right:30px}
 .appt-modal-close{position:absolute;top:12px;right:12px;display:grid;place-items:center;border:0;border-radius:9px;padding:7px;background:#edf5f8;color:#456472;cursor:pointer}
 .appt-modal-form label{display:grid;gap:7px;font-weight:700;margin-bottom:14px}.appt-modal-form label span{font-weight:400;color:#7c8c94}.appt-modal-form label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}
-.appt-modal-form input,.appt-modal-form select{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:11px 13px;font:inherit;color:#20313B;background:#fbfeff}
+.appt-modal-form input,.appt-modal-form select,.appt-modal-form textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:11px 13px;font:inherit;color:#20313B;background:#fbfeff}
+.appt-modal-form textarea{min-height:76px;resize:vertical}
+.appt-modal-form input:disabled{background:#f4f7f9;color:#7c8c94;cursor:not-allowed}
 
 .walkin-success-view{height:calc(100vh - 156px);overflow:hidden;display:grid;place-items:center;padding:24px 18px;background:radial-gradient(circle at top left,rgba(77,168,218,.13),transparent 38%),linear-gradient(145deg,#f8fcfe 0%,#edf8fc 100%);border-radius:24px}.walkin-success-card{position:relative;width:min(100%,680px);max-height:100%;overflow-y:auto;background:rgba(255,255,255,.96);border:1px solid rgba(119,189,218,.35);border-radius:28px;padding:30px 34px;box-shadow:0 24px 65px rgba(34,99,128,.16);text-align:center}.walkin-success-card:before{content:"";position:absolute;inset:0 0 auto;height:7px;background:linear-gradient(90deg,#3f9fca,#72c6dc)}.walkin-success-icon{width:72px;height:72px;margin:0 auto 14px;display:grid;place-items:center;border-radius:50%;color:#fff;background:linear-gradient(145deg,#42a6cc,#69c4d9);box-shadow:0 14px 30px rgba(57,157,196,.28)}.walkin-success-label{display:inline-flex;align-items:center;justify-content:center;margin-bottom:10px;padding:7px 13px;border-radius:999px;background:#eaf7fc;color:#267da3;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.walkin-success-card h2{margin:0;color:#183c50;font-size:clamp(24px,3.4vw,32px);line-height:1.15;letter-spacing:-.025em}.walkin-success-copy{max-width:510px;margin:10px auto 18px;color:#607985;font-size:15px;line-height:1.55}.walkin-success-details{margin:0;padding:4px 22px;background:#f6fbfd;border:1px solid #dceff6;border-radius:18px;text-align:left}.walkin-success-details>div{display:grid;grid-template-columns:150px minmax(0,1fr);gap:18px;align-items:center;padding:11px 4px;border-bottom:1px solid #e1eef3}.walkin-success-details>div:last-child{border-bottom:0}.walkin-success-details dt{color:#6b818b;font-size:13px;font-weight:700}.walkin-success-details dd{margin:0;color:#183c50;font-size:15px;font-weight:800;line-height:1.4}.walkin-success-actions{display:flex;justify-content:center;gap:12px;margin-top:18px}.walkin-success-actions button,.walkin-success-actions a{min-height:46px;display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:13px;padding:12px 18px;font:inherit;font-size:14px;font-weight:800;text-decoration:none;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,background .18s ease}.walkin-success-actions button{border:1px solid #bcdce9;background:#fff;color:#267da3}.walkin-success-actions a{border:1px solid #318fbe;background:#318fbe;color:#fff;box-shadow:0 9px 18px rgba(49,143,190,.22)}.walkin-success-actions button:hover,.walkin-success-actions a:hover{transform:translateY(-2px)}.walkin-success-actions button:hover{background:#f1f9fc}.walkin-success-actions a:hover{background:#287fa9;box-shadow:0 12px 24px rgba(49,143,190,.28)}.walkin-success-actions button:focus-visible,.walkin-success-actions a:focus-visible{outline:3px solid rgba(77,168,218,.32);outline-offset:3px}
 
