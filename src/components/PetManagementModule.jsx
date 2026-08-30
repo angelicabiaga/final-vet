@@ -212,11 +212,11 @@ export default function PetManagementModule({
   // already limits that to their Finalized records only -- unchanged).
   const canViewMedicalHistory = canManageAll || ownerOnly;
 
-  // The billing/prescription-fulfillment card is owner-facing data, but the
-  // vet who prescribed it also needs to see purchase/remaining status
-  // against the same visit -- not just staff/admin, who already manage this
-  // directly from Transactions.
-  const canViewBilling = ownerOnly || profile.role === "veterinarian";
+  // Shown to everyone who can open this pet's profile at all -- staff/admin
+  // already manage billing directly from Transactions, but seeing the same
+  // billing/prescription status here too (instead of cross-referencing POS)
+  // was requested even though it's redundant with that page.
+  const canViewBilling = ownerOnly || canManageAll;
 
   // Small, bounded list (a clinic's active veterinarians) reused from the
   // existing exported function, just to resolve veterinarian_id -> profile
