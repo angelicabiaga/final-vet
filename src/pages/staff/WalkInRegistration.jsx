@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
   ArrowLeft,
@@ -39,6 +39,7 @@ function NotRecorded() {
 
 export default function WalkInRegistration({ profile }) {
   const navigate = useNavigate();
+  const location = useLocation();
   // Animal Patients lives at a different route per role -- Pet Owners
   // itself is only ever reached from the staff/admin sidebar (see
   // AppShell's navByRole), so those are the only two cases here.
@@ -114,6 +115,23 @@ export default function WalkInRegistration({ profile }) {
     }
   }
 
+  // Mirrors this page's own ?pet= deep link into Animal Patients (see
+  // openPetProfile above): when its profile modal is closed, it navigates
+  // back here with { reopenOwnerId } in location.state so staff land back
+  // on the same owner's pet list instead of the bare Pet Owners table.
+  // Runs once the owner directory finishes loading, then clears the state
+  // so a later refresh/back doesn't reopen it.
+  useEffect(() => {
+    const reopenOwnerId = location.state?.reopenOwnerId;
+    if (!reopenOwnerId || !owners.length) return;
+
+    const owner = owners.find((item) => item.id === reopenOwnerId);
+    if (owner) openOwnerPets(owner);
+
+    navigate(location.pathname, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, owners]);
+
   function closeOwnerPets() {
     setViewingOwner(null);
     setOwnerPets([]);
@@ -152,8 +170,14 @@ export default function WalkInRegistration({ profile }) {
     [ownerPets, showArchivedForOwner]
   );
 
+  // Carries { returnTo, reopenOwnerId } so PetManagementModule's profile
+  // modal (Animal Patients page) knows to navigate back here -- instead of
+  // leaving staff stranded on Animal Patients -- once they close it, and
+  // reopens this same owner's pet list below once that happens.
   function openPetProfile(pet) {
-    navigate(`${animalPatientsPath}?pet=${pet.id}`);
+    navigate(`${animalPatientsPath}?pet=${pet.id}`, {
+      state: { returnTo: "/staff/walk-in", reopenOwnerId: viewingOwner?.id || null },
+    });
   }
 
   function addPetForViewingOwner() {

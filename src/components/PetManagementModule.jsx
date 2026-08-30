@@ -261,7 +261,11 @@ export default function PetManagementModule({
 
     handleOpenHistory(pet);
 
-    navigate(location.pathname, { replace: true });
+    // Forwards location.state (e.g. returnTo/reopenOwnerId set by the Pet
+    // Owners module below) onto the replaced entry -- navigate() does not
+    // carry state over automatically, and closeProfile() below needs it
+    // to still be there once the profile modal is closed.
+    navigate(location.pathname, { replace: true, state: location.state });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canManageAll, location.search, pets]);
 
@@ -825,6 +829,23 @@ export default function PetManagementModule({
       } finally {
         setMedicalHistoryLoading(false);
       }
+    }
+  }
+
+  // Undoes handleOpenHistory's navigation-based open (see the ?pet= deep
+  // link effect above): when this profile was reached by navigating away
+  // from another page -- e.g. clicking a pet inside the Pet Owners module,
+  // which pushes here with { returnTo, reopenOwnerId } in location.state --
+  // closing it must navigate back there instead of leaving the user
+  // stranded on this Animal Patients page they never chose to visit.
+  function closeProfile() {
+    setSelectedPet(null);
+    const returnTo = location.state?.returnTo;
+    if (returnTo) {
+      navigate(returnTo, {
+        replace: true,
+        state: { reopenOwnerId: location.state?.reopenOwnerId || null },
+      });
     }
   }
 
@@ -2007,9 +2028,7 @@ export default function PetManagementModule({
       {selectedPet && (
         <div
           className="modal-backdrop"
-          onClick={() =>
-            setSelectedPet(null)
-          }
+          onClick={closeProfile}
         >
           <div
             className="modal patient-profile-modal"
@@ -2021,9 +2040,7 @@ export default function PetManagementModule({
               type="button"
               className="close"
               aria-label="Close pet details"
-              onClick={() =>
-                setSelectedPet(null)
-              }
+              onClick={closeProfile}
             >
               <X />
             </button>
