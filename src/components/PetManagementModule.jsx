@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
-  ArrowLeft,
   BrainCircuit,
   Camera,
   ChevronDown,
@@ -14,10 +13,7 @@ import {
   Eye,
   FileHeart,
   History,
-  Mail,
-  MapPin,
   PawPrint,
-  Phone,
   Pill,
   Plus,
   Printer,
@@ -33,7 +29,6 @@ import {
 import { getOwners } from "../services/appointmentService";
 import {
   archivePet,
-  getLatestConsultationDates,
   getPetAppointments,
   getPetOwnersDirectory,
   getPets,
@@ -41,7 +36,7 @@ import {
   uploadPetPhoto,
 } from "../services/petService";
 import { validateImageFile } from "../utils/validators";
-import { formatDateLong } from "../utils/timeFormat";
+import { formatDateLong, formatPetAge } from "../utils/timeFormat";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 import { generateConsultationHealthInsight, generatePredictiveHealthAnalysis, getActiveVeterinarians, getMedicalRecords, getPreviousMedicalRecordsForAi } from "../services/medicalRecordService";
 import { computeRiskLevel, daysUntil, keywordSet, parseAiReport, parseConsultationInsight, sharesKeyword, toListItems } from "../utils/predictiveHealthParsing";
@@ -358,37 +353,6 @@ const BREEDS_BY_SPECIES = {
   ],
 };
 
-function formatPetAge(dateOfBirth) {
-  if (!dateOfBirth) return "";
-
-  const dob = new Date(`${dateOfBirth}T00:00:00`);
-  if (Number.isNaN(dob.getTime())) return "";
-
-  const now = new Date();
-  if (dob > now) return "";
-
-  let years = now.getFullYear() - dob.getFullYear();
-  let months = now.getMonth() - dob.getMonth();
-
-  if (now.getDate() < dob.getDate()) {
-    months -= 1;
-  }
-
-  if (months < 0) {
-    years -= 1;
-    months += 12;
-  }
-
-  const totalMonths = years * 12 + months;
-  if (totalMonths < 1) return "Less than a month old";
-
-  const parts = [];
-  if (years > 0) parts.push(`${years} year${years === 1 ? "" : "s"}`);
-  if (months > 0) parts.push(`${months} month${months === 1 ? "" : "s"}`);
-
-  return `${parts.join(", ")} old`;
-}
-
 export default function PetManagementModule({
   profile,
   ownerOnly = false,
@@ -414,16 +378,12 @@ export default function PetManagementModule({
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 8;
 
+  // Every pet owner, id-only lookup -- not rendered as its own browsable
+  // list here (that lives in the separate Pet Owners sidebar module, see
+  // WalkInRegistration.jsx). Kept just so this module can resolve an
+  // owner by id for the register-form's owner combobox and for the
+  // ?registerForOwner= deep link below.
   const [ownerDirectory, setOwnerDirectory] = useState([]);
-  const [ownerDirectoryLoading, setOwnerDirectoryLoading] = useState(true);
-  const [ownerListSearch, setOwnerListSearch] = useState("");
-  const [browsingOwner, setBrowsingOwner] = useState(null);
-  // Staff/admin can browse either a flat list of every animal patient or
-  // the owner-centric directory -- pet owners never see this switch, they
-  // only ever have the one flat list of their own pets.
-  const [staffListTab, setStaffListTab] = useState("owners");
-  const [latestVisitByPet, setLatestVisitByPet] = useState({});
-  const [ownerPetsLoading, setOwnerPetsLoading] = useState(false);
 
   const [ownerQuery, setOwnerQuery] = useState("");
   const [ownerDropdownOpen, setOwnerDropdownOpen] = useState(false);
@@ -479,42 +439,60 @@ export default function PetManagementModule({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Animal Patients now opens on a Pet Owner directory for Admin/Staff/Vet.
-  // A pet owner browsing their own pets skips this layer entirely -- there
-  // is nothing to pick, they only ever see themselves.
+  // Owner id -> profile lookup for the register-form combobox and the
+  // ?registerForOwner= deep link below -- not shown as its own browsable
+  // list here (see the Pet Owners sidebar module instead).
   useEffect(() => {
     if (!canManageAll) return;
     let active = true;
-    setOwnerDirectoryLoading(true);
     getPetOwnersDirectory()
       .then((rows) => { if (active) setOwnerDirectory(rows); })
-      .catch((error) => { if (active) setMessage(error.message || "Unable to load pet owners."); })
-      .finally(() => { if (active) setOwnerDirectoryLoading(false); });
+      .catch((error) => { if (active) setMessage(error.message || "Unable to load pet owners."); });
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canManageAll]);
 
   // Deep link support: a link elsewhere in the app (e.g. a veterinarian
-  // finalizing a consultation) can open straight to one pet's profile via
-  // ?pet=<petId> on this module's route, instead of stranding the user on
-  // wherever they were. Resolved by pet id only, never by name -- owners or
-  // pets can share a name. Runs once the directory/pet list finish loading,
-  // then clears the param so a later refresh doesn't reopen it.
+  // finalizing a consultation, or the Pet Owners module) can open straight
+  // to one pet's profile via ?pet=<petId> on this module's route, instead
+  // of stranding the user on wherever they were. Resolved by pet id only,
+  // never by name -- pets can share a name. Runs once the pet list
+  // finishes loading, then clears the param so a later refresh doesn't
+  // reopen it.
   useEffect(() => {
     if (!canManageAll) return;
     const targetPetId = new URLSearchParams(location.search).get("pet");
-    if (!targetPetId || !pets.length || !ownerDirectory.length) return;
+    if (!targetPetId || !pets.length) return;
 
     const pet = pets.find((item) => item.id === targetPetId);
     if (!pet) return;
 
-    const owner = ownerDirectory.find((item) => item.id === pet.owner_id);
-    if (owner) openOwnerPets(owner);
     handleOpenHistory(pet);
 
     navigate(location.pathname, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canManageAll, location.search, pets, ownerDirectory]);
+  }, [canManageAll, location.search, pets]);
+
+  // Deep link support: the Pet Owners module's "Add Pet" button (for an
+  // owner it's already looking at) can open straight to this module's
+  // registration form pre-filled with that owner via
+  // ?registerForOwner=<ownerId>, instead of requiring the owner to be
+  // re-picked here. Resolved by owner id only. Runs once the owner
+  // directory finishes loading, then clears the param so a later refresh
+  // doesn't reopen it.
+  useEffect(() => {
+    if (!canManageAll) return;
+    const targetOwnerId = new URLSearchParams(location.search).get("registerForOwner");
+    if (!targetOwnerId || !ownerDirectory.length) return;
+
+    const owner = ownerDirectory.find((item) => item.id === targetOwnerId);
+    if (!owner) return;
+
+    openRegisterModalForOwner(owner);
+
+    navigate(location.pathname, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageAll, location.search, ownerDirectory]);
 
   // Prevents the page behind either modal from scrolling while it's open.
   useEffect(() => {
@@ -709,73 +687,6 @@ export default function PetManagementModule({
   useEffect(() => {
     setPage(1);
   }, [search, speciesFilter, showArchived]);
-
-  // Counts come from the pet list already loaded above -- no second query,
-  // and it stays in sync automatically whenever loadPets() runs again.
-  const ownerPetCounts = useMemo(() => {
-    const counts = {};
-    pets.forEach((pet) => {
-      if (pet.is_archived) return;
-      counts[pet.owner_id] = (counts[pet.owner_id] || 0) + 1;
-    });
-    return counts;
-  }, [pets]);
-
-  const visibleOwners = useMemo(() => {
-    const keyword = ownerListSearch.trim().toLowerCase();
-    return ownerDirectory
-      .map((owner) => {
-        // When the keyword matches one of this owner's pets by name, the
-        // "N pets" badge swaps to that pet's actual name instead -- an
-        // immediate visual confirmation of which pet the search found,
-        // without opening the owner's pet list.
-        const matchedPet = keyword
-          ? pets.find(
-              (pet) =>
-                pet.owner_id === owner.id &&
-                !pet.is_archived &&
-                String(pet.pet_name || "").toLowerCase().includes(keyword)
-            )
-          : null;
-        return {
-          ...owner,
-          petCount: ownerPetCounts[owner.id] || 0,
-          matchedPetName: matchedPet?.pet_name || null,
-        };
-      })
-      .filter((owner) => {
-        if (!keyword) return true;
-        if (owner.matchedPetName) return true;
-        return [owner.full_name, owner.email, owner.phone, owner.address, owner.username].some(
-          (value) => String(value || "").toLowerCase().includes(keyword)
-        );
-      });
-  }, [ownerDirectory, ownerPetCounts, pets, ownerListSearch]);
-
-  const [showArchivedInOwnerView, setShowArchivedInOwnerView] = useState(false);
-
-  const ownersPets = useMemo(() => {
-    if (!browsingOwner) return [];
-    return pets.filter(
-      (pet) => pet.owner_id === browsingOwner.id && (showArchivedInOwnerView ? pet.is_archived : !pet.is_archived)
-    );
-  }, [pets, browsingOwner, showArchivedInOwnerView]);
-
-  function openOwnerPets(owner) {
-    setBrowsingOwner(owner);
-    setShowArchivedInOwnerView(false);
-    const petIds = pets.filter((pet) => pet.owner_id === owner.id).map((pet) => pet.id);
-    setOwnerPetsLoading(true);
-    getLatestConsultationDates(petIds)
-      .then((map) => setLatestVisitByPet(map))
-      .catch(() => setLatestVisitByPet({}))
-      .finally(() => setOwnerPetsLoading(false));
-  }
-
-  function backToOwnerDirectory() {
-    setBrowsingOwner(null);
-    setLatestVisitByPet({});
-  }
 
   useEffect(() => {
     let active = true;
@@ -1902,26 +1813,7 @@ export default function PetManagementModule({
         </div>
       )}
 
-      {canManageAll && !browsingOwner && (
-        <div className="patients-tab-switch">
-          <button
-            type="button"
-            className={`patients-tab${staffListTab === "patients" ? " active" : ""}`}
-            onClick={() => setStaffListTab("patients")}
-          >
-            <PawPrint size={16} /> Animal Patients
-          </button>
-          <button
-            type="button"
-            className={`patients-tab${staffListTab === "owners" ? " active" : ""}`}
-            onClick={() => setStaffListTab("owners")}
-          >
-            <Users size={16} /> Pet Owners
-          </button>
-        </div>
-      )}
-
-      {(ownerOnly || (canManageAll && staffListTab === "patients" && !browsingOwner)) && (
+      {(ownerOnly || canManageAll) && (
       <section className="card list-card">
         <div className="toolbar">
           <div>
@@ -2081,8 +1973,8 @@ export default function PetManagementModule({
             </p>
           </div>
         ) : (
-          <div className="table">
-            <table>
+          <div className="table-scroll">
+            <table className="table">
               <thead>
                 <tr>
                   <th>Pet</th>
@@ -2131,7 +2023,7 @@ export default function PetManagementModule({
                     {canManageAll && (
                       <td>
                         {pet.owner ? (
-                          <button type="button" className="pet-cell pet-cell-link" onClick={() => openOwnerPets(pet.owner)}>
+                          <span className="pet-cell">
                             {pet.owner.avatar_url ? (
                               <img className="owner-avatar small" src={pet.owner.avatar_url} alt={pet.owner.full_name || "Pet owner"} />
                             ) : (
@@ -2140,7 +2032,7 @@ export default function PetManagementModule({
                               </div>
                             )}
                             <span>{pet.owner.full_name || "Unnamed Owner"}</span>
-                          </button>
+                          </span>
                         ) : "Not assigned"}
                       </td>
                     )}
@@ -2256,252 +2148,6 @@ export default function PetManagementModule({
       </section>
       )}
 
-      {canManageAll && staffListTab === "owners" && !browsingOwner && (
-        <section className="card list-card">
-          <div className="toolbar">
-            <div>
-              <div className="list-heading-row">
-                <h2>
-                  <Users />
-                  Pet Owners
-                </h2>
-
-                <button
-                  type="button"
-                  className="register-pet-btn"
-                  onClick={openRegisterModal}
-                >
-                  <Plus size={16} />
-                  Register Pet
-                </button>
-              </div>
-
-              <p className="list-description">
-                Search registered pet owners, then view the animal patients under each one.
-              </p>
-            </div>
-
-            <div className="toolbar-controls owner-toolbar-controls">
-              <div className="search">
-                <Search size={17} />
-
-                <input
-                  value={ownerListSearch}
-                  onChange={(event) => setOwnerListSearch(event.target.value)}
-                  placeholder="Search by owner name, email, phone, address, or pet name"
-                />
-
-                {ownerListSearch && (
-                  <button
-                    type="button"
-                    className="clear-search"
-                    aria-label="Clear search"
-                    onClick={() => setOwnerListSearch("")}
-                  >
-                    <X size={15} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="result-summary">
-            <span>
-              {ownerDirectoryLoading
-                ? "Loading pet owners..."
-                : `Showing ${visibleOwners.length} of ${ownerDirectory.length} pet owners`}
-            </span>
-          </div>
-
-          {ownerDirectoryLoading ? (
-            <div className="empty">
-              <Users size={35} />
-              <h3>Loading pet owners...</h3>
-            </div>
-          ) : visibleOwners.length === 0 ? (
-            <div className="empty">
-              <Users size={35} />
-              <h3>No pet owners found</h3>
-              <p>Try a different search, or register a pet to add one.</p>
-            </div>
-          ) : (
-            <div className="table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Pet Owner</th>
-                    <th>Contact Number</th>
-                    <th>Email Address</th>
-                    <th>Address</th>
-                    <th>Registered Pets</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {visibleOwners.map((owner) => (
-                    <tr key={owner.id}>
-                      <td>
-                        <button type="button" className="pet-cell pet-cell-link" onClick={() => openOwnerPets(owner)}>
-                          {owner.avatar_url ? (
-                            <img className="owner-avatar" src={owner.avatar_url} alt={owner.full_name || "Pet owner"} />
-                          ) : (
-                            <div className="photo owner-avatar">
-                              <Users size={16} />
-                            </div>
-                          )}
-                          <span>{owner.full_name || "Unnamed Owner"}</span>
-                        </button>
-                      </td>
-                      <td>{owner.phone || "Not recorded"}</td>
-                      <td>{owner.email || "Not recorded"}</td>
-                      <td>{owner.address || "Not recorded"}</td>
-                      <td>
-                        <span className="pill active" title={owner.matchedPetName ? `Matched pet: ${owner.matchedPetName}` : undefined}>
-                          {owner.matchedPetName || `${owner.petCount} pet${owner.petCount === 1 ? "" : "s"}`}
-                        </span>
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="details-btn"
-                          onClick={() => openOwnerPets(owner)}
-                        >
-                          <Eye size={14} />
-                          View Pets
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      )}
-
-      {canManageAll && browsingOwner && (
-        <section className="card list-card">
-          <button
-            type="button"
-            className="back-to-owners"
-            onClick={backToOwnerDirectory}
-          >
-            <ArrowLeft size={16} />
-            Back to Pet Owners
-          </button>
-
-          <div className="owner-summary-card">
-            {browsingOwner.avatar_url ? (
-              <img className="owner-avatar large" src={browsingOwner.avatar_url} alt={browsingOwner.full_name || "Pet owner"} />
-            ) : (
-              <div className="photo owner-avatar large">
-                <Users size={22} />
-              </div>
-            )}
-
-            <div>
-              <h2>{browsingOwner.full_name || "Unnamed Owner"}</h2>
-              <div className="owner-summary-meta">
-                <span><Phone size={13} /> {browsingOwner.phone || "Not recorded"}</span>
-                <span><Mail size={13} /> {browsingOwner.email || "Not recorded"}</span>
-                <span><MapPin size={13} /> {browsingOwner.address || "Not recorded"}</span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              className="register-pet-btn"
-              onClick={() => openRegisterModalForOwner(browsingOwner)}
-            >
-              <Plus size={16} />
-              Add Pet
-            </button>
-          </div>
-
-          <div className="list-heading-row owner-pets-toolbar">
-            <h3 className="history-heading">
-              Animal Patients ({ownersPets.length})
-            </h3>
-
-            <label
-              className={
-                showArchivedInOwnerView
-                  ? "archive-check active"
-                  : "archive-check"
-              }
-            >
-              <input
-                type="checkbox"
-                checked={showArchivedInOwnerView}
-                onChange={(event) => setShowArchivedInOwnerView(event.target.checked)}
-              />
-              <Archive size={15} />
-              <span>View Archived</span>
-            </label>
-          </div>
-
-          {ownerPetsLoading ? (
-            <div className="empty">
-              <PawPrint size={35} />
-              <h3>Loading animal patients...</h3>
-            </div>
-          ) : ownersPets.length === 0 ? (
-            <div className="empty">
-              <PawPrint size={35} />
-              <h3>
-                {showArchivedInOwnerView ? "No archived pets" : "No animal patients yet"}
-              </h3>
-              <p>
-                {showArchivedInOwnerView
-                  ? "This owner has no archived pets."
-                  : "Register a pet for this owner to see it listed here."}
-              </p>
-            </div>
-          ) : (
-            <div className="pet-card-grid">
-              {ownersPets.map((pet) => (
-                <button
-                  type="button"
-                  key={pet.id}
-                  className="pet-profile-card"
-                  onClick={() => handleOpenHistory(pet)}
-                >
-                  <div className="pet-profile-card-photo">
-                    {pet.photo_url ? (
-                      <img src={pet.photo_url} alt={pet.pet_name} />
-                    ) : (
-                      <PawPrint size={22} />
-                    )}
-                  </div>
-
-                  <div className="pet-profile-card-body">
-                    <strong>{pet.pet_name || "Unnamed Pet"}</strong>
-
-                    <div className="pet-profile-card-chips">
-                      <span>{pet.species || "Species not recorded"}</span>
-                      {pet.breed && <span>{pet.breed}</span>}
-                      <span>{pet.sex || "Unknown"}</span>
-                    </div>
-
-                    <div className="pet-profile-card-meta">
-                      <span>{formatPetAge(pet.date_of_birth) || "Age not recorded"}</span>
-                      <span>{pet.weight ? `${pet.weight} kg` : "Weight not recorded"}</span>
-                    </div>
-
-                    <div className="pet-profile-card-visit">
-                      <History size={12} />
-                      {latestVisitByPet[pet.id]
-                        ? `Last consultation: ${latestVisitByPet[pet.id]}`
-                        : "No consultations yet"}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
 
       {selectedPet && (
         <div
@@ -3404,14 +3050,25 @@ export default function PetManagementModule({
           cursor: pointer;
         }
 
-        .table {
+        /* Purely a scroll viewport now -- no background/border/radius of
+           its own, so it's not a second decorative box around what's
+           already inside the list-card's own border/shadow/radius. (An
+           earlier version of this fix tried dropping this wrapper
+           entirely and putting overflow straight on the table element,
+           but overflow genuinely does not apply to a bare table element
+           in any browser -- it computes back as "visible" regardless of
+           what you set, isolated and confirmed -- so a plain block-level
+           wrapper is required for the horizontal scroll itself to work,
+           not just for styling.) */
+        .table-scroll {
           overflow: auto;
           margin-top: 18px;
-          border: 1px solid #e3f2fb;
-          border-radius: 16px;
         }
 
-        .table table {
+        /* The table's own white background/rounded corners already come
+           from the shared .shell table rule in css-reference-theme.css --
+           this class no longer adds a competing border/radius of its own. */
+        .table {
           width: 100%;
           min-width: 720px;
           border-collapse: collapse;
@@ -3433,14 +3090,6 @@ export default function PetManagementModule({
           text-transform: uppercase;
           letter-spacing: 0.5px;
           white-space: nowrap;
-        }
-
-        .table thead th:first-child {
-          border-top-left-radius: 15px;
-        }
-
-        .table thead th:last-child {
-          border-top-right-radius: 15px;
         }
 
         .table td {
@@ -3584,173 +3233,15 @@ export default function PetManagementModule({
           color: #71848d;
         }
 
-        .owner-toolbar-controls {
-          grid-template-columns: minmax(300px, 1fr) !important;
-        }
-
         .owner-avatar {
           border-radius: 50%;
           object-fit: cover;
           flex-shrink: 0;
         }
 
-        .owner-avatar.large {
-          width: 58px;
-          height: 58px;
-        }
-
         .owner-avatar.small {
           width: 28px;
           height: 28px;
-        }
-
-        .back-to-owners {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
-          border: 0;
-          background: none;
-          padding: 0;
-          margin-bottom: 18px;
-          color: #318fbe;
-          font-weight: 700;
-          font-size: 13.5px;
-          cursor: pointer;
-        }
-
-        .back-to-owners:hover {
-          text-decoration: underline;
-        }
-
-        .owner-summary-card {
-          display: flex;
-          align-items: center;
-          gap: 16px;
-          padding: 18px;
-          border-radius: 14px;
-          background: #f4fbfd;
-          border: 1px solid #e3f2fb;
-          margin-bottom: 22px;
-        }
-
-        .owner-summary-card h2 {
-          margin: 0 0 6px;
-          color: #20313b;
-        }
-
-        .owner-summary-meta {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 14px;
-        }
-
-        .owner-summary-meta span {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          color: #55707c;
-          font-size: 13px;
-        }
-
-        .owner-summary-card .register-pet-btn {
-          margin-left: auto;
-          flex-shrink: 0;
-        }
-
-        .owner-pets-toolbar {
-          margin: 0 0 16px;
-        }
-
-        .pet-card-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-          gap: 16px;
-        }
-
-        .pet-profile-card {
-          display: flex;
-          gap: 13px;
-          align-items: flex-start;
-          text-align: left;
-          border: 1px solid #e3edf2;
-          border-radius: 15px;
-          padding: 15px;
-          background: #fff;
-          cursor: pointer;
-          font: inherit;
-          transition:
-            transform 0.15s ease,
-            box-shadow 0.15s ease,
-            border-color 0.15s ease;
-        }
-
-        .pet-profile-card:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 10px 24px rgba(47, 117, 150, 0.14);
-          border-color: #a9dff0;
-        }
-
-        .pet-profile-card-photo {
-          width: 54px;
-          height: 54px;
-          flex: 0 0 auto;
-          border-radius: 12px;
-          background: #eaf8fd;
-          color: #4da8da;
-          display: grid;
-          place-items: center;
-          overflow: hidden;
-        }
-
-        .pet-profile-card-photo img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        .pet-profile-card-body {
-          display: grid;
-          gap: 4px;
-          min-width: 0;
-        }
-
-        .pet-profile-card-body strong {
-          color: #20313b;
-          font-size: 15px;
-        }
-
-        .pet-profile-card-chips {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 5px;
-          margin-top: 4px;
-        }
-
-        .pet-profile-card-chips span {
-          background: #eef5f8;
-          color: #3c5866;
-          border-radius: 999px;
-          padding: 2px 9px;
-          font-size: 11px;
-          font-weight: 700;
-        }
-
-        .pet-profile-card-meta {
-          display: flex;
-          gap: 10px;
-          color: #6f7f88;
-          font-size: 12px;
-          margin-top: 2px;
-        }
-
-        .pet-profile-card-visit {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-          margin-top: 6px;
-          color: #55707c;
-          font-size: 11.5px;
-          font-weight: 700;
         }
 
         .empty h3 {
@@ -3816,35 +3307,6 @@ export default function PetManagementModule({
           align-items: center;
           gap: 14px;
           flex-wrap: wrap;
-        }
-
-        .patients-tab-switch {
-          display: inline-flex;
-          gap: 4px;
-          margin-bottom: 16px;
-          padding: 4px;
-          border-radius: 12px;
-          background: #eaf3f7;
-        }
-
-        .patients-tab {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
-          border: 0;
-          border-radius: 9px;
-          padding: 10px 16px;
-          background: none;
-          color: #6f8792;
-          font-weight: 700;
-          font-size: 13.5px;
-          cursor: pointer;
-        }
-
-        .patients-tab.active {
-          background: #fff;
-          color: #21697f;
-          box-shadow: 0 2px 6px rgba(33, 105, 127, .18);
         }
 
         .register-pet-btn {

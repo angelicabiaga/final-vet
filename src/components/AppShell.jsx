@@ -4,7 +4,7 @@ import { Menu, LogOut, UserCircle, X } from "lucide-react";
 import { logoutUser } from "../services/authService";
 import { reconcileInventoryStatus, getInventoryItems, subscribeToInventoryChanges } from "../services/inventoryService";
 import { getAppointments, todayLocal } from "../services/appointmentService";
-import { getQueue, subscribeToQueue } from "../services/queueService";
+import { getQueue, getTodayCheckinAppointments, subscribeToQueue } from "../services/queueService";
 import { getPendingBillingQueue, subscribeToPendingBilling } from "../services/billingService";
 import { getConversations, subscribeToMessagingOverview } from "../services/messageService";
 import NotificationBell from "./NotificationBell";
@@ -119,8 +119,45 @@ export default function AppShell({ profile, title, children }) {
       // than waiting until its date arrives. Only past dates are excluded.
       jobs.appointments = getAppointments({ status: "Confirmed" })
         .then((rows) => rows.filter((row) => row.appointment_date >= today).length);
-      jobs.queue = getQueue({})
-        .then((rows) => rows.filter((entry) => ["Waiting", "Serving"].includes(entry.status)).length);
+      // Queue Management's own badge is deliberately broader than the
+      // Appointments badge above: it's the clinic floor's action count, so
+      // it adds today's Confirmed-but-not-yet-checked-in appointments to
+      // the Waiting/Serving entries already physically in the queue.
+      // getQueue({}) and getTodayCheckinAppointments() are the exact same
+      // calls QueueManagementModule's own load() uses, and getQueue
+      // already defaults its date filter to todayLocal() the same way
+      // this file's own `today` is computed above -- same query, same
+      // date, same timezone as the page, by construction, not by
+      // coincidence.
+      //
+      // getTodayCheckinAppointments itself is deliberately date-unbounded
+      // (a late arrival from yesterday is still legitimately check-in
+      // eligible from that tab), but the page then narrows it down to
+      // checkinDate (defaulting to todayLocal()) before counting/showing
+      // it -- see `checkinAppointments` in QueueManagementModule.jsx. That
+      // same today-only filter is mirrored here so a stale prior-day
+      // arrival can't inflate today's badge.
+      jobs.queue = Promise.all([getQueue({}), getTodayCheckinAppointments()])
+        .then(([entries, checkinCards]) => {
+          const activeEntries = entries.filter((entry) => ["Waiting", "Serving"].includes(entry.status));
+          const todaysCheckins = checkinCards.filter((card) => card.appointment_date === today);
+
+          // Explicit identity-based dedup rather than a plain sum: a queue
+          // entry's identity is its linked appointment_id, or its own
+          // queue_entry id for a walk-in with no appointment at all.
+          // getTodayCheckinAppointments already excludes any appointment
+          // with a matching queue entry, so in practice this union always
+          // equals activeEntries.length + todaysCheckins.length -- but
+          // computed this way, the same appointment genuinely can never be
+          // counted twice even if that upstream guarantee ever changes.
+          const queuedAppointmentIds = new Set(activeEntries.map((entry) => entry.appointment_id).filter(Boolean));
+          const uncoveredCheckins = todaysCheckins.filter((card) => {
+            const appointmentIds = card.appointmentIds?.length ? card.appointmentIds : [card.appointment_id || card.id];
+            return !appointmentIds.some((id) => queuedAppointmentIds.has(id));
+          });
+
+          return activeEntries.length + uncoveredCheckins.length;
+        });
       jobs.inventory = getInventoryItems({})
         .then((rows) => rows.filter((item) => INVENTORY_ALERT_STATUSES.includes(item.status)).length);
       if (role === "staff") {

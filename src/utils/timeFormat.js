@@ -88,6 +88,40 @@ export function formatDateShort(value) {
   return `${m}-${d}-${String(y).slice(-2)}`;
 }
 
+// Formats a pet's "YYYY-MM-DD" date of birth as a human age like "2
+// years, 3 months old" -- shared by every screen that shows a pet's age
+// (Animal Patients, the Pet Owners module's per-owner pet cards, ...).
+export function formatPetAge(dateOfBirth) {
+  if (!dateOfBirth) return "";
+
+  const dob = new Date(`${dateOfBirth}T00:00:00`);
+  if (Number.isNaN(dob.getTime())) return "";
+
+  const now = new Date();
+  if (dob > now) return "";
+
+  let years = now.getFullYear() - dob.getFullYear();
+  let months = now.getMonth() - dob.getMonth();
+
+  if (now.getDate() < dob.getDate()) {
+    months -= 1;
+  }
+
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const totalMonths = years * 12 + months;
+  if (totalMonths < 1) return "Less than a month old";
+
+  const parts = [];
+  if (years > 0) parts.push(`${years} year${years === 1 ? "" : "s"}`);
+  if (months > 0) parts.push(`${months} month${months === 1 ? "" : "s"}`);
+
+  return `${parts.join(", ")} old`;
+}
+
 // Splits a 24h "HH:MM"/"HH:MM:SS" string into 12-hour picker parts, for
 // building custom hour/minute/AM-PM select inputs.
 export function to12HourParts(time) {

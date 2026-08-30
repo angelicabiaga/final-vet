@@ -30,6 +30,18 @@ export async function getPetOwnersDirectory(){
   return data||[];
 }
 
+// Full pet-owner profile for the Pet Owners module's profile view, looked
+// up fresh by the owner's own unique id (never by name/email). Selects
+// only the display fields that view actually needs -- never password,
+// which this table's custom auth otherwise stores in plaintext on the
+// same row (see custom_auth_patch.sql) -- so nothing security-sensitive
+// is fetched into the client for this view at all.
+export async function getPetOwnerProfile(ownerId){
+  const{data,error}=await supabase.from("profiles").select("id,full_name,username,email,phone,address,avatar_url,account_status,created_at").eq("id",ownerId).eq("role","pet_owner").single();
+  if(error)throw new Error("Unable to load this pet owner's profile.");
+  return data;
+}
+
 // Most recent consultation date per pet, scoped to just the pet ids asked
 // for (an owner's pets) -- used only for display in the Animal Patients
 // list, reusing the existing medical_records table.
