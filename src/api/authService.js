@@ -9,6 +9,9 @@ import { getVeterinarianAppointments, todayLocal } from "./mobileAppointmentServ
 
 const SESSION_KEY = "pawcruz_session";
 const OTP_KEY = "pawcruz_pending_otp";
+// One stable value for this physical device/app install, shared by every
+// account that ever trusts it -- never a per-account key. See the block
+// comment above checkTrustedDevice/registerTrustedDevice below.
 const DEVICE_TOKEN_KEY = "pawcruz_device_token";
 export const OTP_EXPIRY_MINUTES = 10;
 export const TRUSTED_DEVICE_DAYS = 30;
@@ -153,8 +156,23 @@ async function verifyPendingLoginOtp(code) {
 // (never AsyncStorage) and sent to the Edge Functions over HTTPS instead
 // of riding in a cookie the way it does on web. Trust expires exactly
 // TRUSTED_DEVICE_DAYS after it was granted (fixed server-side by
-// register-trusted-device); leaving the toggle off means this is never
-// called, so the next login always requires OTP again.
+// register-trusted-device); leaving the toggle off means this account is
+// never registered, so its next login always requires OTP again.
+//
+// DEVICE_TOKEN_KEY holds ONE stable value for this phone/app install,
+// shared by every account that ever trusts it -- never a per-account
+// key. Switching accounts must reuse it, not replace it, which is why
+// registerTrustedDevice below always reads whatever is already stored
+// and sends it back to the server as `existingDeviceToken`: the server
+// then writes a separate trusted_devices row for that account against
+// the SAME token instead of minting (and this device then overwriting
+// its storage with) a different one that would orphan any other
+// account's existing row. Each account's own row is looked up only once
+// that account has already been identified (by username/email +
+// password), and logging out never touches DEVICE_TOKEN_KEY or any
+// account's row; only clearing app storage or that account's own
+// password change (server-side, see supabase/TRUSTED_DEVICES.sql)
+// removes its trust.
 // ---------------------------------------------------------------------------
 
 async function callDeviceTrustFunction(name, payload) {
@@ -192,7 +210,12 @@ async function checkTrustedDevice(profileId) {
 async function registerTrustedDevice(profileId) {
   if (!profileId) return;
   try {
-    const data = await callDeviceTrustFunction("register-trusted-device", { userId: profileId, platform: "mobile" });
+    const existingDeviceToken = await SecureStore.getItemAsync(DEVICE_TOKEN_KEY);
+    const data = await callDeviceTrustFunction("register-trusted-device", {
+      userId: profileId,
+      platform: "mobile",
+      existingDeviceToken: existingDeviceToken || undefined,
+    });
     if (data?.deviceToken) {
       await SecureStore.setItemAsync(DEVICE_TOKEN_KEY, data.deviceToken);
     }

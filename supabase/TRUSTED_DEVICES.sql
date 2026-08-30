@@ -3,17 +3,34 @@
 -- and had no server record at all -- see src/services/authService.js
 -- history).
 --
--- A device becomes trusted only when the user checks "Trust this device
--- for 30 days" on the login OTP screen -- leaving it unchecked (the
--- default) means the next login always requires OTP again, and no row is
--- written here at all. When checked, expires_at is fixed at exactly 30
+-- One physical browser/app install holds exactly one stable device token
+-- (the HttpOnly cookie on web, the SecureStore value on mobile -- see
+-- register-trusted-device) that never changes just because a different
+-- account logs in on it. A row in this table represents one (user_id,
+-- device token) PAIR, not the device token alone -- so the same device
+-- token can and does appear in multiple rows, one per account that has
+-- trusted this device. Logging into a second account and checking "Trust
+-- this device" adds a new row for that account without touching,
+-- replacing, or regenerating the device token itself or any other
+-- account's row -- that's what makes returning to the first account on
+-- the same device within its own 30 days still skip OTP.
+--
+-- A device becomes trusted for a given account only when that account's
+-- user checks "Trust this device for 30 days" on the login OTP screen --
+-- leaving it unchecked (the default) means the next login for that
+-- account always requires OTP again, and no row is written for it at
+-- all. When checked, that account's expires_at is fixed at exactly 30
 -- days from that moment (set server-side by register-trusted-device, not
--- extended just by using the device again during that window), and trust
--- ends at whichever of these happens first:
+-- extended just by using the device again during that window), and that
+-- account's trust on this device ends at whichever of these happens
+-- first:
 --   - expires_at passes (30 days after it was granted), or
---   - the browser/app clears its stored token (cookie / SecureStore), or
---   - the account's password is changed/reset (see the trigger below), or
---   - a trusted_devices row is revoked/deleted by some future admin action.
+--   - the device token is cleared client-side (cookie/SecureStore wiped,
+--     e.g. by clearing site data or reinstalling the app -- this affects
+--     every account's rows tied to that token, since they all shared it), or
+--   - the account's password is changed/reset (see the trigger below,
+--     which only ever touches that one account's own rows), or
+--   - that specific row is revoked/deleted by some future admin action.
 --
 -- Only a hash of the device token is ever stored here -- the raw token
 -- lives only in the caller's HttpOnly cookie (web) or SecureStore
@@ -27,6 +44,9 @@
 -- the two Edge Functions above.
 --
 -- Apply this once in the Supabase SQL editor, after custom_auth_patch.sql.
+-- Safe to re-run on a database created by an earlier copy of this file --
+-- see the index migration below, which upgrades the old
+-- one-token-globally constraint to the one-token-per-account model.
 
 create table if not exists public.trusted_devices (
   id uuid primary key default gen_random_uuid(),
@@ -50,8 +70,20 @@ alter table public.trusted_devices enable row level security;
 -- enabled and zero policies, every role except the RLS-bypassing service
 -- role is denied all access by default.
 
-create unique index if not exists trusted_devices_token_hash_key
-  on public.trusted_devices (token_hash);
+-- Heals an earlier copy of this table, which made token_hash unique
+-- GLOBALLY -- meaning only one account in the whole system could ever
+-- trust a given device token, so a second account trusting the same
+-- browser would fail to insert (or would require reusing the first
+-- account's row, overwriting its trust). The correct uniqueness is per
+-- (user_id, token_hash) pair: one account can only have one row for a
+-- given device token (so re-trusting the same device just extends that
+-- one row instead of duplicating it, see the upsert in
+-- register-trusted-device), but many different accounts can each hold
+-- their own row for that same shared device token.
+drop index if exists public.trusted_devices_token_hash_key;
+
+create unique index if not exists trusted_devices_user_token_key
+  on public.trusted_devices (user_id, token_hash);
 
 create index if not exists trusted_devices_user_id_idx
   on public.trusted_devices (user_id);

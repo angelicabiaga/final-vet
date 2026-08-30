@@ -56,20 +56,29 @@ function saveSession(profile) {
 // checkbox on the login OTP screen, backed by the trusted_devices table
 // (see supabase/TRUSTED_DEVICES.sql) instead of a client-side timer. The
 // browser never handles the raw device token directly: it lives only in
-// an HttpOnly/Secure/SameSite=None cookie that register-trusted-device
-// sets and check-trusted-device reads, so page JavaScript (and therefore
-// this file) never sees its value. `credentials: "include"` is required
-// on both calls so the browser attaches/accepts that cookie even though
-// the Edge Function lives on a different origin than this app.
+// one HttpOnly/Secure/SameSite=None cookie (pawcruz_device_token) shared
+// by every account that ever trusts this browser -- register-trusted-
+// device reuses that same cookie value (rather than replacing it) when a
+// second account trusts the device, so logging into account B can never
+// overwrite or invalidate account A's own trust. What scopes trust to
+// one account is the userId sent alongside the cookie, checked
+// server-side against that account's own trusted_devices row -- not the
+// cookie's name or value alone. Page JavaScript (and therefore this
+// file) never sees the cookie's value. `credentials: "include"` is
+// required on both calls so the browser attaches/accepts that cookie
+// even though the Edge Function lives on a different origin than this
+// app.
 //
 // Trust expires exactly TRUSTED_DEVICE_DAYS after it was granted (fixed
 // server-side by register-trusted-device -- this file never computes or
 // sends an expiry itself), or ends earlier if the cookie is cleared (new
-// browser/profile, cleared site data, reinstalled app) or the account's
-// password changes, which revokes every trusted device for that user
-// server-side (see the trigger in supabase/TRUSTED_DEVICES.sql). Leaving
-// the checkbox unchecked means registerTrustedDevice is never called at
-// all, so the next login always requires OTP again.
+// browser/profile, cleared site data) -- which drops trust for every
+// account that shared it, since they all keyed off the same token -- or
+// if that specific account's password changes, which revokes only that
+// account's own trusted devices server-side (see the trigger in
+// supabase/TRUSTED_DEVICES.sql). Leaving the checkbox unchecked means
+// registerTrustedDevice is never called at all, so the next login always
+// requires OTP again.
 async function callDeviceTrustFunction(name, payload) {
   const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/${name}`, {
     method: "POST",
