@@ -413,6 +413,12 @@ function imageFormatFromDataUrl(dataUrl) {
  * anything back to Supabase; it only reads the record/pet data already
  * loaded on screen and lays it out as a PDF opened in a new tab, where the
  * browser's own viewer offers Print / Save as PDF / page navigation.
+ *
+ * Layout: an ID-card-style masthead puts the pet's own photo beside the
+ * clinic name (the first visual element on the page, ahead of the record
+ * metadata strip above it), and every field below is laid out as a
+ * label-above/value-below grid for a consistent, scannable clinical-report
+ * look. The owner's section is text-only -- no photo -- by design.
  */
 export async function printMedicalRecordDocument(record, pet, meta = {}) {
   if (!record || !pet || record.pet_id !== pet.id) {
@@ -423,31 +429,38 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   const pageHeight = 297;
   const left = 20;
   const right = 190;
-  const centerX = 105;
   const bottomLimit = 277;
   let y = 20;
 
-  const [logoDataUrl, petPhotoDataUrl, ownerPhotoDataUrl] = await Promise.all([
+  // Brand palette -- teal/blue for identity + emphasis, slate for labels,
+  // near-black for values, light blue-gray for hairline dividers, and a
+  // muted gray reserved for empty ("N/A") values so a sparse record still
+  // reads as intentional rather than broken.
+  const BRAND = [37, 80, 101];
+  const BRAND_LIGHT = [97, 118, 129];
+  const TEXT_DARK = [30, 49, 58];
+  const MUTED = [140, 152, 159];
+  const DIVIDER = [214, 228, 235];
+  const SECTION_DIVIDER = [225, 235, 240];
+
+  const [logoDataUrl, petPhotoDataUrl] = await Promise.all([
     loadImageDataUrl(pawLogo),
     pet.photo_url ? loadImageDataUrl(pet.photo_url) : Promise.resolve(null),
-    pet.owner?.avatar_url ? loadImageDataUrl(pet.owner.avatar_url) : Promise.resolve(null),
   ]);
 
+  function isEmptyValue(value) {
+    return naText(value) === "N/A";
+  }
+
   // Draws one photo (or a clearly-labeled placeholder if there isn't one)
-  // at the top-right of the section about to start. Returns the x boundary
-  // field rows must wrap before (so text never runs under the photo) and
-  // the photo's own bottom edge, so the caller can guarantee the section
-  // doesn't visually end while the photo is still hanging past its last
-  // field row -- a short section (few fields, short values) could
-  // otherwise finish above the photo's bottom.
-  const PHOTO_SIZE = 22;
-  function drawSectionPhoto(dataUrl, fallbackLabel) {
-    const x = right - PHOTO_SIZE;
-    const photoY = y;
+  // at a fixed position/size. Deliberately high-contrast when there's no
+  // photo (filled gray, dark border, bold label) -- this must never be
+  // mistaken for "nothing rendered here" the way a faint hairline box could.
+  function drawPhotoBox(x, photoY, size, dataUrl, fallbackLabel) {
     let drew = false;
     if (dataUrl) {
       try {
-        pdf.addImage(dataUrl, imageFormatFromDataUrl(dataUrl), x, photoY, PHOTO_SIZE, PHOTO_SIZE);
+        pdf.addImage(dataUrl, imageFormatFromDataUrl(dataUrl), x, photoY, size, size);
         drew = true;
       } catch {
         // A photo that fails to decode just falls back to the placeholder
@@ -457,51 +470,18 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
     if (drew) {
       pdf.setDrawColor(180, 205, 217);
       pdf.setLineWidth(0.4);
-      pdf.rect(x, photoY, PHOTO_SIZE, PHOTO_SIZE);
+      pdf.rect(x, photoY, size, size);
     } else {
-      // Deliberately high-contrast (filled gray, dark border, bold label)
-      // -- this must never be mistaken for "nothing rendered here" the way
-      // a faint hairline box could be.
       pdf.setFillColor(230, 236, 240);
       pdf.setDrawColor(150, 170, 180);
       pdf.setLineWidth(0.5);
-      pdf.rect(x, photoY, PHOTO_SIZE, PHOTO_SIZE, "FD");
+      pdf.rect(x, photoY, size, size, "FD");
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(7.5);
+      pdf.setFontSize(8);
       pdf.setTextColor(110, 130, 140);
-      pdf.text(fallbackLabel, x + PHOTO_SIZE / 2, photoY + PHOTO_SIZE / 2, { align: "center", baseline: "middle" });
+      pdf.text(fallbackLabel, x + size / 2, photoY + size / 2, { align: "center", baseline: "middle" });
     }
-    return { fieldRight: right - PHOTO_SIZE - 6, photoBottom: photoY + PHOTO_SIZE };
-  }
-
-  function drawLetterhead() {
-    if (logoDataUrl) {
-      try {
-        pdf.addImage(logoDataUrl, "PNG", left, y - 9, 15, 15);
-      } catch {
-        // A logo that fails to decode just means a text-only header below --
-        // never worth failing the whole printout over.
-      }
-    }
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(18);
-    pdf.setTextColor(37, 80, 101);
-    pdf.text("PawCruz Veterinary Clinic", centerX, y, { align: "center" });
-    y += 7;
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(10.5);
-    pdf.setTextColor(97, 118, 129);
-    pdf.text("Official Medical Record / Consultation Summary", centerX, y, { align: "center" });
-    y += 5;
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(8.5);
-    pdf.setTextColor(120, 135, 143);
-    pdf.text("2189 Stall G, Felimarc Pet Center, A. Luna St, Pasay City", centerX, y, { align: "center" });
-    y += 6;
-    pdf.setDrawColor(214, 228, 235);
-    pdf.setLineWidth(0.4);
-    pdf.line(left, y, right, y);
-    y += 9;
+    return photoY + size;
   }
 
   function ensureSpace(height = 8) {
@@ -510,107 +490,204 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
       y = 20;
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(9);
-      pdf.setTextColor(97, 118, 129);
+      pdf.setTextColor(...BRAND_LIGHT);
       pdf.text("PawCruz Veterinary Clinic — Medical Record (continued)", left, y);
-      pdf.setDrawColor(214, 228, 235);
+      pdf.setDrawColor(...DIVIDER);
       pdf.setLineWidth(0.3);
       pdf.line(left, y + 2.5, right, y + 2.5);
-      y += 11;
+      y += 12;
     }
   }
 
+  // Consistent section divider, with extra breathing room above and below
+  // the heading so sections never feel cramped against each other.
   function sectionTitle(text) {
-    ensureSpace(11);
+    ensureSpace(16);
+    y += 3;
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(11.5);
-    pdf.setTextColor(37, 80, 101);
-    pdf.text(text, left, y);
-    pdf.setDrawColor(230, 238, 243);
-    pdf.setLineWidth(0.2);
-    pdf.line(left, y + 1.8, right, y + 1.8);
+    pdf.setTextColor(...BRAND);
+    pdf.text(text.toUpperCase(), left, y);
+    y += 2.6;
+    pdf.setDrawColor(...SECTION_DIVIDER);
+    pdf.setLineWidth(0.3);
+    pdf.line(left, y, right, y);
     y += 7.5;
   }
 
-  function fieldRow(label, value, maxRight = right) {
-    ensureSpace(7);
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(10);
-    pdf.setTextColor(97, 118, 129);
-    pdf.text(label, left, y);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(30, 49, 58);
-    const lines = pdf.splitTextToSize(naText(value), maxRight - left - 55);
-    pdf.text(lines, left + 55, y);
-    y += Math.max(6.5, lines.length * 5);
+  // The shared label-above/value-below "grid cell", laid out N per row so
+  // short related fields (e.g. Sex + Date of Birth) line up side by side
+  // instead of each eating a full-width row. Empty values render in a
+  // subtly lighter, italic gray instead of the same bold ink as real data.
+  function fieldGrid(pairs, cols = 2) {
+    const gap = 10;
+    const colWidth = (right - left - gap * (cols - 1)) / cols;
+    let i = 0;
+    while (i < pairs.length) {
+      const row = pairs.slice(i, i + cols);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(10);
+      const cellLines = row.map(([, value]) => pdf.splitTextToSize(naText(value), colWidth));
+      const maxLines = Math.max(...cellLines.map((lines) => lines.length));
+      const rowHeight = 5 + maxLines * 4.6 + 6;
+      ensureSpace(rowHeight);
+      row.forEach(([label, value], idx) => {
+        const x = left + idx * (colWidth + gap);
+        const empty = isEmptyValue(value);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        pdf.setTextColor(...BRAND_LIGHT);
+        pdf.text(label.toUpperCase(), x, y);
+        pdf.setFont("helvetica", empty ? "italic" : "bold");
+        pdf.setFontSize(10);
+        pdf.setTextColor(...(empty ? MUTED : TEXT_DARK));
+        pdf.text(cellLines[idx], x, y + 5);
+      });
+      y += rowHeight;
+      i += cols;
+    }
   }
 
   function paragraph(label, value) {
-    ensureSpace(12);
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(10);
-    pdf.setTextColor(97, 118, 129);
-    pdf.text(label, left, y);
+    ensureSpace(15);
+    const empty = isEmptyValue(value);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.setTextColor(...BRAND_LIGHT);
+    pdf.text(label.toUpperCase(), left, y);
     y += 5;
     const lines = pdf.splitTextToSize(naText(value), right - left);
-    ensureSpace(lines.length * 5 + 4);
-    pdf.setFont("helvetica", "normal");
+    ensureSpace(lines.length * 5 + 7);
+    pdf.setFont("helvetica", empty ? "italic" : "normal");
     pdf.setFontSize(10);
-    pdf.setTextColor(30, 49, 58);
+    pdf.setTextColor(...(empty ? MUTED : TEXT_DARK));
     pdf.text(lines, left, y);
-    y += lines.length * 5 + 5;
+    y += lines.length * 5 + 8;
   }
 
-  drawLetterhead();
+  // --- Masthead: the pet's own photo beside the clinic name/logo, ID-card
+  // style, sitting at the very top of the page so the pet's photo is the
+  // first thing the reader sees -- ahead of even the record number. ---
+  const photoSize = 26;
+  const photoTop = y;
+  drawPhotoBox(left, photoTop, photoSize, petPhotoDataUrl, "No Photo");
 
+  const textX = left + photoSize + 8;
+  let ty = photoTop + 7;
+  if (logoDataUrl) {
+    try {
+      pdf.addImage(logoDataUrl, "PNG", textX, ty - 9, 12, 12);
+    } catch {
+      // A logo that fails to decode just means a text-only header below --
+      // never worth failing the whole printout over.
+    }
+  }
+  const nameX = logoDataUrl ? textX + 15 : textX;
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(18);
+  pdf.setTextColor(...BRAND);
+  pdf.text("PawCruz Veterinary Clinic", nameX, ty);
+  ty += 6.5;
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(10.5);
+  pdf.setTextColor(...BRAND_LIGHT);
+  pdf.text("Official Medical Record / Consultation Summary", nameX, ty);
+  ty += 5.5;
+  pdf.setFontSize(8.5);
+  pdf.setTextColor(120, 135, 143);
+  pdf.text("2189 Stall G, Felimarc Pet Center, A. Luna St, Pasay City", nameX, ty);
+
+  y = Math.max(photoTop + photoSize, ty + 3) + 8;
+  pdf.setDrawColor(...DIVIDER);
+  pdf.setLineWidth(0.4);
+  pdf.line(left, y, right, y);
+  y += 9;
+
+  // --- Record metadata strip: Medical Record No. + status badge, sitting
+  // neatly below the masthead. ---
   const recordNo = `MR-${String(record.id || "").slice(0, 8).toUpperCase()}`;
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(11);
-  pdf.setTextColor(30, 49, 58);
+  pdf.setTextColor(...TEXT_DARK);
   pdf.text(`Medical Record No: ${recordNo}`, left, y);
 
+  const isFinalized = record.record_status === "Finalized";
+  const statusLabel = isFinalized ? "FINALIZED" : (record.record_status || "DRAFT").toUpperCase();
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(9);
-  const statusLabel = record.record_status === "Finalized" ? "FINALIZED" : (record.record_status || "DRAFT").toUpperCase();
-  const badgeWidth = pdf.getTextWidth(statusLabel) + 8;
-  pdf.setFillColor(230, 247, 238);
-  pdf.rect(right - badgeWidth, y - 4.5, badgeWidth, 6.5, "F");
-  pdf.setTextColor(31, 133, 80);
+  const badgeWidth = pdf.getTextWidth(statusLabel) + 10;
+  const [badgeFillR, badgeFillG, badgeFillB] = isFinalized ? [222, 241, 245] : [236, 239, 241];
+  const [badgeTextR, badgeTextG, badgeTextB] = isFinalized ? [16, 94, 116] : [108, 122, 131];
+  pdf.setFillColor(badgeFillR, badgeFillG, badgeFillB);
+  pdf.roundedRect(right - badgeWidth, y - 4.6, badgeWidth, 7, 1.4, 1.4, "F");
+  pdf.setTextColor(badgeTextR, badgeTextG, badgeTextB);
   pdf.text(statusLabel, right - badgeWidth / 2, y, { align: "center" });
-  y += 9;
+  y += 7;
 
-  fieldRow("Consultation Date & Time", meta.visitDateTime);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(9.5);
+  pdf.setTextColor(...BRAND_LIGHT);
+  const dtLabel = "Consultation Date & Time:";
+  pdf.text(dtLabel, left, y);
+  const dtLabelWidth = pdf.getTextWidth(dtLabel);
+  pdf.setFont("helvetica", "bold");
+  pdf.setTextColor(...TEXT_DARK);
+  pdf.text(naText(meta.visitDateTime), left + dtLabelWidth + 4, y);
+  y += 8;
+
+  pdf.setDrawColor(...DIVIDER);
+  pdf.setLineWidth(0.3);
+  pdf.line(left, y, right, y);
+  y += 10;
 
   sectionTitle("Animal Patient Information");
-  const petPhoto = drawSectionPhoto(petPhotoDataUrl, "No Photo");
-  fieldRow("Pet Name", pet.pet_name, petPhoto.fieldRight);
-  fieldRow("Species / Breed", [pet.species, pet.breed].filter(Boolean).join(" / "), petPhoto.fieldRight);
-  fieldRow("Sex", pet.sex, petPhoto.fieldRight);
-  fieldRow("Date of Birth / Age", [pet.date_of_birth ? formatDateLong(pet.date_of_birth) : "", meta.petAge].filter(Boolean).join(" · "), petPhoto.fieldRight);
-  fieldRow("Weight on File (kg)", pet.weight, petPhoto.fieldRight);
-  fieldRow("Color / Markings", pet.color, petPhoto.fieldRight);
-  fieldRow("Microchip Number", pet.microchip_number, petPhoto.fieldRight);
-  y = Math.max(y, petPhoto.photoBottom + 3);
+  fieldGrid(
+    [
+      ["Pet Name", pet.pet_name],
+      ["Species / Breed", [pet.species, pet.breed].filter(Boolean).join(" / ")],
+      ["Sex", pet.sex],
+      ["Date of Birth / Age", [pet.date_of_birth ? formatDateLong(pet.date_of_birth) : "", meta.petAge].filter(Boolean).join(" · ")],
+      ["Weight on File (kg)", pet.weight],
+      ["Color / Markings", pet.color],
+      ["Microchip Number", pet.microchip_number],
+    ],
+    2
+  );
 
+  // Owner section is text-only by design -- no photo placeholder here.
   sectionTitle("Pet Owner Information");
-  const ownerPhoto = drawSectionPhoto(ownerPhotoDataUrl, "No Photo");
-  fieldRow("Full Name", pet.owner?.full_name, ownerPhoto.fieldRight);
-  fieldRow("Contact Number", pet.owner?.phone, ownerPhoto.fieldRight);
-  fieldRow("Email", pet.owner?.email, ownerPhoto.fieldRight);
-  fieldRow("Address", pet.owner?.address, ownerPhoto.fieldRight);
-  y = Math.max(y, ownerPhoto.photoBottom + 3);
+  fieldGrid(
+    [
+      ["Full Name", pet.owner?.full_name],
+      ["Contact Number", pet.owner?.phone],
+      ["Email", pet.owner?.email],
+      ["Address", pet.owner?.address],
+    ],
+    2
+  );
 
   sectionTitle("Attending Veterinarian");
-  fieldRow("Attending Veterinarian", meta.veterinarianName ? `Dr. ${meta.veterinarianName}` : "");
-  fieldRow("Veterinarian Contact Number", meta.veterinarianPhone || "N/A");
+  fieldGrid(
+    [
+      ["Attending Veterinarian", meta.veterinarianName ? `Dr. ${meta.veterinarianName}` : ""],
+      ["Veterinarian Contact Number", meta.veterinarianPhone],
+    ],
+    2
+  );
 
   sectionTitle("Chief Complaint & Symptoms");
   paragraph("Chief Complaint", record.chief_complaint);
   paragraph("Symptoms", record.symptoms);
 
   sectionTitle("Vital Signs");
-  fieldRow("Vital Signs", record.vital_signs);
-  fieldRow("Weight (kg)", record.weight);
-  fieldRow("Temperature (°C)", record.temperature);
+  fieldGrid(
+    [
+      ["Vital Signs", record.vital_signs],
+      ["Weight (kg)", record.weight],
+      ["Temperature (°C)", record.temperature],
+    ],
+    3
+  );
 
   sectionTitle("Diagnosis");
   paragraph("Diagnosis", record.diagnosis);
@@ -620,10 +697,15 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   paragraph("Treatment Plan", record.treatment_plan);
 
   sectionTitle("Medications");
-  fieldRow("Medication", record.medication);
-  fieldRow("Dosage", record.dosage);
-  fieldRow("Frequency", record.frequency);
-  fieldRow("Duration", record.duration);
+  fieldGrid(
+    [
+      ["Medication", record.medication],
+      ["Dosage", record.dosage],
+      ["Frequency", record.frequency],
+      ["Duration", record.duration],
+    ],
+    2
+  );
 
   sectionTitle("Laboratory");
   paragraph("Laboratory Request", record.laboratory_request);
@@ -637,22 +719,22 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   const services = (record.template_data?.inventoryItems || []).filter((item) => !item.isNA);
   sectionTitle("Services, Tests & Prescribed Medicines");
   if (!services.length) {
-    ensureSpace(7);
-    pdf.setFont("helvetica", "normal");
+    ensureSpace(8);
+    pdf.setFont("helvetica", "italic");
     pdf.setFontSize(10);
-    pdf.setTextColor(120, 135, 143);
+    pdf.setTextColor(...MUTED);
     pdf.text("N/A", left, y);
-    y += 7;
+    y += 8;
   } else {
     ensureSpace(7);
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(9);
-    pdf.setTextColor(97, 118, 129);
-    pdf.text("Item", left, y);
-    pdf.text("Category", left + 85, y);
-    pdf.text("Qty", right, y, { align: "right" });
+    pdf.setTextColor(...BRAND_LIGHT);
+    pdf.text("ITEM", left, y);
+    pdf.text("CATEGORY", left + 85, y);
+    pdf.text("QTY", right, y, { align: "right" });
     y += 2;
-    pdf.setDrawColor(230, 238, 243);
+    pdf.setDrawColor(...SECTION_DIVIDER);
     pdf.setLineWidth(0.2);
     pdf.line(left, y, right, y);
     y += 5;
@@ -660,51 +742,51 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
       ensureSpace(6.5);
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(9.5);
-      pdf.setTextColor(30, 49, 58);
+      pdf.setTextColor(...TEXT_DARK);
       pdf.text(String(item.item_name || "N/A"), left, y);
       pdf.text(String(item.category || "N/A"), left + 85, y);
       pdf.text(String(item.quantity ?? 1), right, y, { align: "right" });
       y += 6;
     });
-    y += 2;
+    y += 3;
   }
 
   sectionTitle("Veterinarian Notes");
   paragraph("Notes", record.veterinarian_notes);
 
   sectionTitle("Follow-up");
-  fieldRow("Follow-up Date", record.follow_up_date ? formatDateLong(record.follow_up_date) : "");
+  fieldGrid([["Follow-up Date", record.follow_up_date ? formatDateLong(record.follow_up_date) : ""]], 1);
 
   sectionTitle("Consultation Status");
-  fieldRow("Status", record.record_status === "Finalized" ? "Finalized / Completed" : record.record_status);
+  fieldGrid([["Status", record.record_status === "Finalized" ? "Finalized / Completed" : record.record_status]], 1);
 
-  ensureSpace(28);
-  y += 8;
+  ensureSpace(30);
+  y += 9;
   const sigX = right - 75;
-  pdf.setDrawColor(97, 118, 129);
+  pdf.setDrawColor(...BRAND_LIGHT);
   pdf.setLineWidth(0.4);
   pdf.line(sigX, y, right, y);
   y += 5;
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10.5);
-  pdf.setTextColor(30, 49, 58);
+  pdf.setTextColor(...TEXT_DARK);
   pdf.text(meta.veterinarianName ? `Dr. ${meta.veterinarianName}` : "N/A", sigX, y);
   y += 4.5;
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8.5);
-  pdf.setTextColor(97, 118, 129);
+  pdf.setTextColor(...BRAND_LIGHT);
   pdf.text("Attending Veterinarian — Signature over Printed Name", sigX, y);
 
   const printedAt = formatDateTime(new Date());
   const totalPages = pdf.internal.getNumberOfPages();
   for (let page = 1; page <= totalPages; page++) {
     pdf.setPage(page);
-    pdf.setDrawColor(214, 228, 235);
+    pdf.setDrawColor(...DIVIDER);
     pdf.setLineWidth(0.3);
     pdf.line(left, pageHeight - 14, right, pageHeight - 14);
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
-    pdf.setTextColor(97, 118, 129);
+    pdf.setTextColor(...BRAND_LIGHT);
     pdf.text(`Printed: ${printedAt}`, left, pageHeight - 9);
     pdf.text(`Page ${page} of ${totalPages}`, right, pageHeight - 9, { align: "right" });
   }
