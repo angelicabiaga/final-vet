@@ -207,6 +207,12 @@ export default function PetManagementModule({
     !ownerOnly &&
     ["admin", "staff", "veterinarian"].includes(profile.role);
 
+  // Vets treat Animal Patients as a read/edit view of pets brought to them
+  // for consultation, not an intake desk -- registering a new patient record
+  // stays a staff/admin/pet-owner action, so the button is hidden here even
+  // though a vet otherwise has full canManageAll access to this module.
+  const canRegisterPet = ownerOnly || (canManageAll && profile.role !== "veterinarian");
+
   // Staff/Vet/Admin see it inside their patient-management view; a pet
   // owner sees the same section for their own pets (getMedicalRecords
   // already limits that to their Finalized records only -- unchanged).
@@ -277,7 +283,7 @@ export default function PetManagementModule({
   // directory finishes loading, then clears the param so a later refresh
   // doesn't reopen it.
   useEffect(() => {
-    if (!canManageAll) return;
+    if (!canRegisterPet) return;
     const targetOwnerId = new URLSearchParams(location.search).get("registerForOwner");
     if (!targetOwnerId || !ownerDirectory.length) return;
 
@@ -288,7 +294,7 @@ export default function PetManagementModule({
 
     navigate(location.pathname, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canManageAll, location.search, ownerDirectory]);
+  }, [canRegisterPet, location.search, ownerDirectory]);
 
   // Prevents the page behind either modal from scrolling while it's open.
   useEffect(() => {
@@ -1699,14 +1705,16 @@ export default function PetManagementModule({
                 List of Animal Patients
               </h2>
 
-              <button
-                type="button"
-                className="register-pet-btn"
-                onClick={openRegisterModal}
-              >
-                <Plus size={16} />
-                Register Pet
-              </button>
+              {canRegisterPet && (
+                <button
+                  type="button"
+                  className="register-pet-btn"
+                  onClick={openRegisterModal}
+                >
+                  <Plus size={16} />
+                  Register Pet
+                </button>
+              )}
             </div>
 
             <p className="list-description">
@@ -1844,7 +1852,9 @@ export default function PetManagementModule({
               {archivedScopeCount === 0
                 ? showArchived
                   ? "No pets have been archived yet."
-                  : "Register a pet to see it listed here."
+                  : canRegisterPet
+                    ? "Register a pet to see it listed here."
+                    : "No pets have been registered yet."
                 : "Try changing the search text or species filter."}
             </p>
           </div>
