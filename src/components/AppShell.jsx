@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Menu, LogOut, UserCircle, X } from "lucide-react";
+import { Menu, LogOut, UserCircle, Users, X } from "lucide-react";
 import { logoutUser } from "../services/authService";
 import { reconcileInventoryStatus, getInventoryItems, subscribeToInventoryChanges } from "../services/inventoryService";
 import { getAppointments, todayLocal } from "../services/appointmentService";
@@ -38,8 +38,11 @@ const iconByType = {
   payment: paymentIcon
 };
 
+// Some profiles store "Dr." as part of full_name (e.g. "Dr. Neil Cruz"),
+// which made this pick "Dr." itself as the "first name" -- strip it first
+// so the greeting always lands on an actual name.
 function firstNameOf(fullName) {
-  return String(fullName || "").trim().split(/\s+/)[0] || "";
+  return String(fullName || "").trim().replace(/^dr\.?\s*/i, "").split(/\s+/)[0] || "";
 }
 
 const ROLE_LABELS = {
@@ -233,7 +236,7 @@ export default function AppShell({ profile, title, children }) {
     staff: [
       { label: "Dashboard", to: "/staff/dashboard", type: "dashboard" },
       { label: "Appointments", to: "/staff/appointments", type: "appointment" },
-      { label: "Pet Owners", to: "/staff/walk-in", type: "pet" },
+      { label: "Pet Owners", to: "/staff/walk-in", type: "owner" },
       { label: "Queue Management", to: "/staff/queue", type: "queue" },
       { label: "Veterinarian Schedules", to: "/staff/veterinarian-schedules", type: "schedule" },
       { label: "Animal Patients", to: "/staff/patients", type: "pet" },
@@ -254,7 +257,7 @@ export default function AppShell({ profile, title, children }) {
     admin: [
       { label: "Dashboard", to: "/admin/dashboard", type: "dashboard" },
       { label: "Appointments", to: "/staff/appointments", type: "appointment" },
-      { label: "Pet Owners", to: "/staff/walk-in", type: "pet" },
+      { label: "Pet Owners", to: "/staff/walk-in", type: "owner" },
       { label: "Queue Management", to: "/admin/queue", type: "queue" },
       { label: "Veterinarian Schedules", to: "/staff/veterinarian-schedules", type: "schedule" },
       { label: "Animal Patients", to: "/admin/pets", type: "pet" },
@@ -311,7 +314,11 @@ export default function AppShell({ profile, title, children }) {
                 onClick={() => setOpen(false)}
               >
                 <span className="navIconWrap">
-                  <img src={iconByType[item.type] || dashboardIcon} alt="" aria-hidden="true" />
+                  {item.type === "owner" ? (
+                    <Users size={22} color="#fff" aria-hidden="true" />
+                  ) : (
+                    <img src={iconByType[item.type] || dashboardIcon} alt="" aria-hidden="true" />
+                  )}
                   {badgeCount > 0 && <span className="navBadge">{badgeLabel(badgeCount)}</span>}
                 </span>
                 <span>{item.label}</span>
@@ -325,13 +332,13 @@ export default function AppShell({ profile, title, children }) {
       <main>
         <header className="topBar">
           <button className="menu" onClick={() => setOpen(!open)} aria-label="Open navigation"><Menu /></button>
-          <div className="pageHeading"><h1>{title}</h1><p>Monday–Sunday, 9:00 AM–7:00 PM</p></div>
+          <div className="pageHeading"><h1>{title}</h1></div>
           <div className="headerActions">
             <NotificationBell profile={profile} />
             <Link className="user profileLink" to={`/${rolePath}/profile`}>
               <UserCircle />
               <span className="userText">
-                <span className="userGreeting">Hi, {firstName}!</span>
+                <span className="userGreeting">Hi, {profile?.role === "veterinarian" ? `Dr. ${firstName}` : firstName}!</span>
                 <span className="userRole">{roleText}</span>
               </span>
             </Link>

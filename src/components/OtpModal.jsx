@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { resendAuthOtp } from "../services/authService";
 
 export default function OtpModal({ open, email, purpose, title, onVerify, onClose }) {
   const [code, setCode] = useState("");
+  const [codeError, setCodeError] = useState("");
+  const codeRef = useRef(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -15,9 +17,19 @@ export default function OtpModal({ open, email, purpose, title, onVerify, onClos
 
   if (!open) return null;
 
+  function updateCode(value) {
+    setCode(value);
+    if (codeError && /^\d{6}$/.test(value)) setCodeError("");
+  }
+
   async function verify(e) {
     e.preventDefault();
-    if (!/^\d{6}$/.test(code)) return setMessage("Enter the 6-digit OTP.");
+    if (!/^\d{6}$/.test(code)) {
+      setCodeError("Enter the 6-digit OTP.");
+      codeRef.current?.focus();
+      return;
+    }
+    setCodeError("");
     setLoading(true); setMessage("");
     try { await onVerify(code); setCode(""); }
     catch (err) { setMessage(err.message || "Invalid OTP."); }
@@ -25,7 +37,7 @@ export default function OtpModal({ open, email, purpose, title, onVerify, onClos
   }
 
   async function resend() {
-    setLoading(true); setMessage("");
+    setLoading(true); setMessage(""); setCodeError("");
     try { await resendAuthOtp(purpose); setCode(""); setMessage("A new OTP was sent."); }
     catch (err) { setMessage(err.message || "Unable to resend OTP."); }
     finally { setLoading(false); }
@@ -35,8 +47,9 @@ export default function OtpModal({ open, email, purpose, title, onVerify, onClos
     <div className="otpCard">
       <h3>{title || "OTP Verification"}</h3>
       <p>Enter the 6-digit code sent to <b>{email}</b>. It expires in 10 minutes.</p>
-      <form onSubmit={verify}>
-        <input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength="6" value={code} onChange={(e)=>setCode(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="000000" />
+      <form onSubmit={verify} noValidate>
+        <input ref={codeRef} className={codeError ? "field-invalid" : ""} autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength="6" value={code} onChange={(e)=>updateCode(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="000000" />
+        {codeError && <span className="field-error-text">{codeError}</span>}
         {message && <div className={message.includes("sent") ? "success" : "error"}>{message}</div>}
         <div className="otpActions"><button disabled={loading}>{loading?"Please wait...":"Verify OTP"}</button><button type="button" className="secondary" onClick={resend} disabled={loading}>Resend OTP</button><button type="button" className="secondary" onClick={onClose} disabled={loading}>Cancel</button></div>
       </form>

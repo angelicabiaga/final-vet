@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BellRing,
   Check,
@@ -19,6 +19,7 @@ import {
   subscribeNotifications,
 } from "../../services/notificationService";
 import { formatDateTime12h } from "../../utils/timeFormat";
+import { focusFirstInvalidField, invalidClass } from "../../utils/formValidation";
 
 const FILTER_OPTIONS = [
   "Appointment Confirmation",
@@ -45,6 +46,9 @@ export default function NotificationsPage({ profile }) {
   const [filter, setFilter] = useState("all");
 
   const [form, setForm] = useState(INITIAL_BROADCAST_FORM);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const fieldRefs = useRef({}).current;
+  const registerFieldRef = (name) => (el) => { fieldRefs[name] = el; };
   const [sending, setSending] = useState(false);
 
   const clearMessages = () => {
@@ -308,6 +312,10 @@ export default function NotificationsPage({ profile }) {
       ...currentForm,
       [name]: value,
     }));
+
+    setFieldErrors((current) => (
+      current[name] && value.trim() ? { ...current, [name]: "" } : current
+    ));
   }
 
   async function handleBroadcast(event) {
@@ -316,13 +324,12 @@ export default function NotificationsPage({ profile }) {
     const title = form.title.trim();
     const message = form.message.trim();
 
-    if (!title) {
-      setError("Please enter a notification title.");
-      return;
-    }
-
-    if (!message) {
-      setError("Please enter a notification message.");
+    const errors = {};
+    if (!title) errors.title = "Please enter a notification title.";
+    if (!message) errors.message = "Please enter a notification message.";
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      focusFirstInvalidField(fieldRefs, errors);
       return;
     }
 
@@ -340,6 +347,7 @@ export default function NotificationsPage({ profile }) {
       );
 
       setForm(INITIAL_BROADCAST_FORM);
+      setFieldErrors({});
 
       setItems((currentItems) => {
         if (!notification?.id) {
@@ -459,6 +467,7 @@ export default function NotificationsPage({ profile }) {
           <form
             className="broadcast-form"
             onSubmit={handleBroadcast}
+            noValidate
           >
             <h3>
               <Send size={18} />
@@ -470,6 +479,8 @@ export default function NotificationsPage({ profile }) {
                 <span>Title<span className="required-mark"> *</span></span>
 
                 <input
+                  ref={registerFieldRef("title")}
+                  className={invalidClass(fieldErrors, "title")}
                   type="text"
                   name="title"
                   value={form.title}
@@ -478,6 +489,7 @@ export default function NotificationsPage({ profile }) {
                   maxLength={120}
                   required
                 />
+                {fieldErrors.title && <span className="field-error-text">{fieldErrors.title}</span>}
               </label>
 
               <label>
@@ -505,6 +517,8 @@ export default function NotificationsPage({ profile }) {
               <span>Message<span className="required-mark"> *</span></span>
 
               <textarea
+                ref={registerFieldRef("message")}
+                className={invalidClass(fieldErrors, "message")}
                 name="message"
                 value={form.message}
                 onChange={handleBroadcastChange}
@@ -512,6 +526,7 @@ export default function NotificationsPage({ profile }) {
                 maxLength={1000}
                 required
               />
+              {fieldErrors.message && <span className="field-error-text">{fieldErrors.message}</span>}
             </label>
 
             <button type="submit" disabled={sending}>

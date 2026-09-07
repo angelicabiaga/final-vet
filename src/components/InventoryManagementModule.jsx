@@ -371,6 +371,9 @@ export default function InventoryManagementModule({
 
   const [txForm, setTxForm] =
     useState(EMPTY_TX);
+  const [txFieldErrors, setTxFieldErrors] = useState({});
+  const txFieldRefs = useRef({}).current;
+  const registerTxFieldRef = (name) => (el) => { txFieldRefs[name] = el; };
 
   const [modal, setModal] =
     useState("");
@@ -410,6 +413,8 @@ export default function InventoryManagementModule({
     dateReceived: "",
     expiryDate: "",
   });
+  const [batchDateError, setBatchDateError] = useState("");
+  const batchDateFieldRef = useRef(null);
   const [mergingId, setMergingId] = useState("");
   const [togglingBatchId, setTogglingBatchId] = useState("");
   const [batchPage, setBatchPage] = useState(1);
@@ -797,6 +802,7 @@ export default function InventoryManagementModule({
       isBatchEntry,
       quantity: isBatchEntry ? "" : "1",
     });
+    setTxFieldErrors({});
 
     setUnitModalOpen(false);
 
@@ -882,6 +888,7 @@ export default function InventoryManagementModule({
 
   function startEditBatch(batch) {
     setEditingBatchId(batch.id);
+    setBatchDateError("");
     setBatchEditForm({
       batchNumber: batch.batch_number || "",
       dateReceived: batch.date_received || "",
@@ -911,6 +918,15 @@ export default function InventoryManagementModule({
 
   async function submitBatchEdit(event, batchId) {
     event.preventDefault();
+
+    if (!String(batchEditForm.dateReceived || "").trim()) {
+      setBatchDateError("Date received is required.");
+      batchDateFieldRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      batchDateFieldRef.current?.focus();
+      return;
+    }
+    setBatchDateError("");
+
     setSaving(true);
 
     try {
@@ -1663,6 +1679,20 @@ export default function InventoryManagementModule({
       txForm.transactionType
     );
 
+    const errors = {};
+    ["quantity", "expiryDate"].forEach((name) => {
+      const errorMessage = validateTxField(name, txForm[name], txForm);
+      if (errorMessage) errors[name] = errorMessage;
+    });
+
+    setTxFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setNotice({ type: "error", text: "Please fix the highlighted field(s) before continuing." });
+      focusFirstInvalidField(txFieldRefs, errors);
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -2272,6 +2302,7 @@ export default function InventoryManagementModule({
             onSubmit={
               submitItem
             }
+            noValidate
           >
             <Field label="Item Name" required error={itemFieldErrors.item_name}>
               <input
@@ -2888,6 +2919,7 @@ export default function InventoryManagementModule({
             onSubmit={
               submitTransaction
             }
+            noValidate
           >
             <Field label="Transaction type">
               <select
@@ -2948,8 +2980,11 @@ export default function InventoryManagementModule({
                   "unit"
                 })`}
                 required
+                error={txFieldErrors.quantity}
               >
                 <input
+                  ref={registerTxFieldRef("quantity")}
+                  className={invalidClass(txFieldErrors, "quantity")}
                   type="number"
                   min="1"
                   step="1"
@@ -2958,10 +2993,12 @@ export default function InventoryManagementModule({
                     txForm.quantity
                   }
                   onChange={(e) => {
-                    setTxForm({
-                      ...txForm,
-                      quantity: e.target.value.replace(/[^\d]/g, ""),
-                    });
+                    const value = e.target.value.replace(/[^\d]/g, "");
+                    const nextForm = { ...txForm, quantity: value };
+                    setTxForm(nextForm);
+                    if (txFieldErrors.quantity) {
+                      setTxFieldErrors((current) => ({ ...current, quantity: validateTxField("quantity", value, nextForm) }));
+                    }
                   }}
                 />
               </Field>
@@ -3007,21 +3044,23 @@ export default function InventoryManagementModule({
                   />
                 </Field>
 
-                <Field label="Expiry Date" required>
+                <Field label="Expiry Date" required error={txFieldErrors.expiryDate}>
                   <input
+                    ref={registerTxFieldRef("expiryDate")}
+                    className={invalidClass(txFieldErrors, "expiryDate")}
                     type="date"
                     required
                     value={
                       txForm.expiryDate
                     }
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        expiryDate:
-                          e.target
-                            .value,
-                      })
-                    }
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      const nextForm = { ...txForm, expiryDate: value };
+                      setTxForm(nextForm);
+                      if (txFieldErrors.expiryDate) {
+                        setTxFieldErrors((current) => ({ ...current, expiryDate: validateTxField("expiryDate", value, nextForm) }));
+                      }
+                    }}
                   />
                 </Field>
 
@@ -3314,6 +3353,7 @@ export default function InventoryManagementModule({
                                 <form
                                   className="batch-edit-form"
                                   onSubmit={(event) => submitBatchEdit(event, batch.id)}
+                                  noValidate
                                 >
                                   <Field label="Batch Number" optional>
                                     <input
@@ -3326,17 +3366,21 @@ export default function InventoryManagementModule({
                                       }
                                     />
                                   </Field>
-                                  <Field label="Date Received" required>
+                                  <Field label="Date Received" required error={batchDateError}>
                                     <input
+                                      ref={batchDateFieldRef}
+                                      className={batchDateError ? "field-invalid" : ""}
                                       type="date"
                                       required
                                       value={batchEditForm.dateReceived}
-                                      onChange={(event) =>
+                                      onChange={(event) => {
+                                        const value = event.target.value;
                                         setBatchEditForm((current) => ({
                                           ...current,
-                                          dateReceived: event.target.value,
-                                        }))
-                                      }
+                                          dateReceived: value,
+                                        }));
+                                        if (batchDateError && value.trim()) setBatchDateError("");
+                                      }}
                                     />
                                   </Field>
                                   <Field label="Expiration Date" optional>
@@ -5137,6 +5181,27 @@ function validateItemField(name, value, itemForm) {
     }
     case "unit":
       return String(value || "").trim() ? "" : "Unit of measure is required.";
+    default:
+      return "";
+  }
+}
+
+// Quantity is only required when it's actually shown (see the matching
+// !(...) condition in the Stock Transaction form's JSX); Expiry Date is
+// only required for the batch-creating transaction types.
+function validateTxField(name, value, txForm) {
+  const createsBatch = BATCH_CREATING_TX_TYPES.includes(txForm.transactionType);
+  switch (name) {
+    case "quantity": {
+      const quantityShown = !(createsBatch && !txForm.isBatchEntry);
+      if (!quantityShown) return "";
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "Quantity is required.";
+      return /^\d+$/.test(trimmed) && Number(trimmed) >= 1 ? "" : "Enter a quantity of at least 1.";
+    }
+    case "expiryDate":
+      if (!createsBatch) return "";
+      return String(value || "").trim() ? "" : "Expiry date is required.";
     default:
       return "";
   }

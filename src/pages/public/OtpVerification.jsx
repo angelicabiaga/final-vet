@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import { LoginLayout } from './Login';
@@ -20,9 +20,13 @@ const PURPOSE_TITLES = {
 
 const OTP_LENGTH = 6;
 
-function OtpCodeInput({ onChange, disabled, resetKey, blockPaste = false }) {
+const OtpCodeInput = forwardRef(function OtpCodeInput({ onChange, disabled, resetKey, blockPaste = false, className = '' }, ref) {
   const [digits, setDigits] = useState(() => Array(OTP_LENGTH).fill(''));
   const inputsRef = useRef([]);
+
+  useImperativeHandle(ref, () => ({
+    focusFirst: () => inputsRef.current[0]?.focus(),
+  }));
 
   useEffect(() => {
     setDigits(Array(OTP_LENGTH).fill(''));
@@ -103,7 +107,7 @@ function OtpCodeInput({ onChange, disabled, resetKey, blockPaste = false }) {
   }
 
   return (
-    <div className='otp-code-boxes' role='group' aria-label='Verification code'>
+    <div className={`otp-code-boxes ${className}`} role='group' aria-label='Verification code'>
       {digits.map((digit, index) => (
         <input
           key={index}
@@ -126,7 +130,7 @@ function OtpCodeInput({ onChange, disabled, resetKey, blockPaste = false }) {
       ))}
     </div>
   );
-}
+});
 
 export default function OtpVerification() {
   const navigate = useNavigate();
@@ -152,20 +156,29 @@ export default function OtpVerification() {
   // mount means a login that already succeeded can't un-render itself.
   const [pending] = useState(() => getPendingOtp());
   const [code, setCode] = useState('');
+  const [codeError, setCodeError] = useState('');
+  const otpInputRef = useRef(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [resent, setResent] = useState(false);
   const [resetToken, setResetToken] = useState(0);
   const [trustDevice, setTrustDevice] = useState(false);
 
+  function updateCode(value) {
+    setCode(value);
+    if (codeError && /^\d{6}$/.test(value)) setCodeError('');
+  }
+
   async function submit(event) {
     event.preventDefault();
     if (loading) return;
 
     if (!/^\d{6}$/.test(code)) {
-      setMessage('Enter the 6-digit OTP sent to your email.');
+      setCodeError('Enter the 6-digit OTP sent to your email.');
+      otpInputRef.current?.focusFirst();
       return;
     }
+    setCodeError('');
 
     setLoading(true);
     setMessage('');
@@ -202,6 +215,7 @@ export default function OtpVerification() {
     try {
       await resendAuthOtp(purpose);
       setCode('');
+      setCodeError('');
       setResetToken((token) => token + 1);
       setResent(true);
     } catch (error) {
@@ -256,6 +270,11 @@ export default function OtpVerification() {
           font-size: 24px !important;
           font-weight: 800;
           letter-spacing: normal !important;
+        }
+
+        .otp-code-boxes.field-invalid .otp-code-box {
+          border-color: #d9534f !important;
+          box-shadow: 0 0 0 1px #d9534f !important;
         }
 
         .otp-resend-button {
@@ -365,11 +384,14 @@ export default function OtpVerification() {
         <label>
           Verification Code
           <OtpCodeInput
-            onChange={setCode}
+            ref={otpInputRef}
+            className={codeError ? 'field-invalid' : ''}
+            onChange={updateCode}
             disabled={loading}
             resetKey={resetToken}
             blockPaste={purpose === 'login'}
           />
+          {codeError && <span className="field-error-text">{codeError}</span>}
         </label>
 
         {purpose === 'login' && (

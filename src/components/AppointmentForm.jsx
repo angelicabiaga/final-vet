@@ -46,6 +46,31 @@ function validateGuestField(name, value) {
   }
 }
 
+// Mirrors the "Register Pet" form's own required-field set (see
+// PetManagementModule.jsx) for this same Add Pet modal, reached instead
+// from inside appointment booking. Breed/Specify Breed are only required
+// when this species actually has a curated breed dropdown (BREEDS_BY_SPECIES).
+function validatePetModalField(name, value, form) {
+  const hasBreedOptions = Boolean(BREEDS_BY_SPECIES[form.species]);
+  switch (name) {
+    case "petName":
+      return String(value || "").trim() ? "" : "Pet name is required.";
+    case "species":
+      return String(value || "").trim() ? "" : "Please select the pet's species.";
+    case "customSpecies":
+      if (form.species !== "Other") return "";
+      return String(value || "").trim() ? "" : "Please enter the pet's species.";
+    case "breed":
+      if (!hasBreedOptions) return "";
+      return String(value || "").trim() ? "" : "Please select the pet's breed.";
+    case "customBreed":
+      if (!hasBreedOptions || form.breed !== "Other") return "";
+      return String(value || "").trim() ? "" : "Please enter the pet's breed.";
+    default:
+      return "";
+  }
+}
+
 export default function AppointmentForm({ profile, mode = "owner", guestOwner = false, presetOwner = null, lockOwnerSelection = false, onCreated }) {
   const isStaff = mode === "staff";
   const [owners, setOwners] = useState([]);
@@ -89,6 +114,18 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const [petModalForm, setPetModalForm] = useState(EMPTY_PET_FORM);
   const [petModalSaving, setPetModalSaving] = useState(false);
   const [petModalMessage, setPetModalMessage] = useState("");
+  const [petModalFieldErrors, setPetModalFieldErrors] = useState({});
+  const petModalFieldRefs = useRef({}).current;
+  const registerPetModalFieldRef = (name) => (el) => { petModalFieldRefs[name] = el; };
+  // Only re-checks a field once it's already showing an error (same
+  // "don't nag before first submit" convention as updateGuestField above).
+  function revalidatePetModalField(name, value, formPatch = {}) {
+    setPetModalFieldErrors(current => {
+      if (!current[name]) return current;
+      const nextForm = { ...petModalForm, ...formPatch, [name]: value };
+      return { ...current, [name]: validatePetModalField(name, value, nextForm) };
+    });
+  }
 
   const [form, setForm] = useState({
     ownerId: isStaff ? presetOwner?.id || "" : profile?.id || "",
@@ -303,6 +340,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       await ensureOwnerId();
       setPetModalForm(EMPTY_PET_FORM);
       setPetModalMessage("");
+      setPetModalFieldErrors({});
       setPetModalOpen(true);
       setPetDropdownOpen(false);
     } catch (error) {
@@ -316,10 +354,18 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
     const finalSpecies = petModalForm.species === "Other" ? petModalForm.customSpecies.trim() : petModalForm.species.trim();
     const finalBreed = petModalForm.breed === "Other" ? petModalForm.customBreed.trim() : petModalForm.breed.trim();
     const finalColor = petModalForm.color === "Other" ? petModalForm.customColor.trim() : petModalForm.color.trim();
-    if (!petModalForm.petName.trim() || !finalSpecies) {
-      setPetModalMessage("Pet name and species are required.");
+
+    const errors = {};
+    ["petName", "species", "customSpecies", "breed", "customBreed"].forEach((name) => {
+      const errorMessage = validatePetModalField(name, petModalForm[name], petModalForm);
+      if (errorMessage) errors[name] = errorMessage;
+    });
+    setPetModalFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      focusFirstInvalidField(petModalFieldRefs, errors);
       return;
     }
+
     petModalSavingRef.current = true;
     try {
       setPetModalSaving(true);
@@ -562,7 +608,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
   return (
     <div className="appointment-grid">
-      <form className="appointment-card" onSubmit={submit}>
+      <form className="appointment-card" onSubmit={submit} noValidate>
         <div className="form-title"><CalendarDays /> <div><h2>{isStaff ? "Create Appointment" : "Book an Appointment"}</h2><p>General Consultation · 10-minute time slots</p></div></div>
         {message.text && <div className={`notice ${message.type}`}>{message.text}</div>}
 
@@ -771,13 +817,15 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
           <div className="appt-modal" onClick={event => event.stopPropagation()}>
             <button type="button" className="appt-modal-close" aria-label="Close" onClick={() => setPetModalOpen(false)}><X /></button>
             <h3><PawPrint size={18} /> Add Pet</h3>
-            <form onSubmit={submitPetModal} className="appt-modal-form">
+            <form onSubmit={submitPetModal} className="appt-modal-form" noValidate>
               {petModalMessage && <div className="notice error">{petModalMessage}</div>}
-              <label>Pet Name<span className="required-mark"> *</span><input required value={petModalForm.petName} onChange={event => setPetModalForm(value => ({ ...value, petName: event.target.value }))} placeholder="Enter pet name" /></label>
+              <label>Pet Name<span className="required-mark"> *</span><input ref={registerPetModalFieldRef("petName")} className={invalidClass(petModalFieldErrors, "petName")} required value={petModalForm.petName} onChange={event => { const value = event.target.value; setPetModalForm(current => ({ ...current, petName: value })); revalidatePetModalField("petName", value); }} placeholder="Enter pet name" />{petModalFieldErrors.petName && <span className="field-error-text">{petModalFieldErrors.petName}</span>}</label>
 
               <div className="two-cols">
                 <label>Species<span className="required-mark"> *</span>
                   <select
+                    ref={registerPetModalFieldRef("species")}
+                    className={invalidClass(petModalFieldErrors, "species")}
                     required
                     value={petModalForm.species}
                     onChange={event => {
@@ -791,6 +839,8 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
                         color: "",
                         customColor: "",
                       }));
+                      revalidatePetModalField("species", value);
+                      setPetModalFieldErrors(current => ({ ...current, customSpecies: "", breed: "", customBreed: "" }));
                     }}
                   >
                     <option value="">Select species</option>
@@ -802,22 +852,28 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
                       </optgroup>
                     ))}
                   </select>
+                  {petModalFieldErrors.species && <span className="field-error-text">{petModalFieldErrors.species}</span>}
                 </label>
 
                 {petModalBreedOptions ? (
                   <label>Breed<span className="required-mark"> *</span>
                     <select
+                      ref={registerPetModalFieldRef("breed")}
+                      className={invalidClass(petModalFieldErrors, "breed")}
                       required
                       value={petModalForm.breed}
                       onChange={event => {
                         const value = event.target.value;
                         setPetModalForm(current => ({ ...current, breed: value, customBreed: value === "Other" ? current.customBreed : "" }));
+                        revalidatePetModalField("breed", value);
+                        setPetModalFieldErrors(current => ({ ...current, customBreed: "" }));
                       }}
                     >
                       <option value="">Select breed</option>
                       {petModalBreedOptions.map(breed => <option key={breed} value={breed}>{breed}</option>)}
                       <option value="Other">Other</option>
                     </select>
+                    {petModalFieldErrors.breed && <span className="field-error-text">{petModalFieldErrors.breed}</span>}
                   </label>
                 ) : (
                   <label>Breed<span className="optional-mark"> (Optional)</span><input value={petModalForm.breed} onChange={event => setPetModalForm(value => ({ ...value, breed: event.target.value }))} placeholder="Enter breed" /></label>
@@ -825,10 +881,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
               </div>
 
               {petModalForm.species === "Other" && (
-                <label>Specify Species<span className="required-mark"> *</span><input required value={petModalForm.customSpecies} onChange={event => setPetModalForm(value => ({ ...value, customSpecies: event.target.value }))} placeholder="Enter species" /></label>
+                <label>Specify Species<span className="required-mark"> *</span><input ref={registerPetModalFieldRef("customSpecies")} className={invalidClass(petModalFieldErrors, "customSpecies")} required value={petModalForm.customSpecies} onChange={event => { const value = event.target.value; setPetModalForm(current => ({ ...current, customSpecies: value })); revalidatePetModalField("customSpecies", value); }} placeholder="Enter species" />{petModalFieldErrors.customSpecies && <span className="field-error-text">{petModalFieldErrors.customSpecies}</span>}</label>
               )}
               {petModalBreedOptions && petModalForm.breed === "Other" && (
-                <label>Specify Breed<span className="required-mark"> *</span><input required value={petModalForm.customBreed} onChange={event => setPetModalForm(value => ({ ...value, customBreed: event.target.value }))} placeholder="Enter breed" /></label>
+                <label>Specify Breed<span className="required-mark"> *</span><input ref={registerPetModalFieldRef("customBreed")} className={invalidClass(petModalFieldErrors, "customBreed")} required value={petModalForm.customBreed} onChange={event => { const value = event.target.value; setPetModalForm(current => ({ ...current, customBreed: value })); revalidatePetModalField("customBreed", value); }} placeholder="Enter breed" />{petModalFieldErrors.customBreed && <span className="field-error-text">{petModalFieldErrors.customBreed}</span>}</label>
               )}
 
               <div className="two-cols">
