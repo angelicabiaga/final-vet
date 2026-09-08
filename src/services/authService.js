@@ -122,6 +122,35 @@ async function registerTrustedDevice(profileId) {
   }
 }
 
+const LOCATION_LOOKUP_TIMEOUT_MS = 4000;
+
+// Best-effort city/region/country lookup for the browser's own public IP,
+// used to auto-populate profiles.location on every successful login (see
+// loginUser and completeLoginOtp below). There is no backend here to read
+// a trustworthy client IP from, so this calls a public geo-IP API directly
+// from the browser -- that request's source IP is the visitor's own, which
+// is the same information a server-side lookup would key off. Never
+// throws and never hangs login: a slow, blocked, or failed lookup (ad
+// blockers, offline, rate limits) resolves to null within
+// LOCATION_LOOKUP_TIMEOUT_MS, and the admin table displays "Unknown" for
+// a null location rather than leaving it blank.
+async function detectLoginLocation() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LOCATION_LOOKUP_TIMEOUT_MS);
+  try {
+    const response = await fetch("https://ipapi.co/json/", { signal: controller.signal });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data?.error) return null;
+    const parts = [data.city, data.region, data.country_name].filter(Boolean);
+    return parts.length ? parts.join(", ") : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function writeActivity(profile, action, description) {
   try {
     await supabase.from("activity_logs").insert({
@@ -279,8 +308,9 @@ export async function loginUser(identifier, password) {
 
   if (await checkTrustedDevice(profile.id)) {
     const now = new Date().toISOString();
-    await supabase.from("profiles").update({ last_login_at: now }).eq("id", profile.id);
-    const updatedProfile = { ...profile, last_login_at: now };
+    const location = await detectLoginLocation();
+    await supabase.from("profiles").update({ last_login_at: now, location }).eq("id", profile.id);
+    const updatedProfile = { ...profile, last_login_at: now, location };
     await writeActivity(updatedProfile, "Login", `${profile.full_name} logged in (trusted device, OTP skipped).`);
     return { requiresOtp: false, ...saveSession(updatedProfile) };
   }
@@ -299,8 +329,9 @@ export async function completeLoginOtp(code, trustDevice = false) {
   const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", pending.payload?.profileId).single();
   if (error || !profile) throw new Error("Unable to complete login.");
   const now = new Date().toISOString();
-  await supabase.from("profiles").update({ last_login_at: now }).eq("id", profile.id);
-  const updatedProfile = { ...profile, last_login_at: now };
+  const location = await detectLoginLocation();
+  await supabase.from("profiles").update({ last_login_at: now, location }).eq("id", profile.id);
+  const updatedProfile = { ...profile, last_login_at: now, location };
 
   // Session first -- this is what makes the login "succeed". Device
   // registration only happens if the user opted in (unchecked is the

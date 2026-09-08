@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[9924],{89924(e,t,a){a.r(t),a.d(t,{default:()=>i});a(65043);var n=a(73216),s=a(34498),r=a(63321),o=a(70579);function i(e){var t;let a=e.profile;const i=(0,n.zy)(),l=Boolean(null===(t=i.state)||void 0===t?void 0:t.focusToday);return(0,o.jsx)(s.A,{profile:a,title:"List of Appointments",children:(0,o.jsx)(r.A,{profile:a,focusToday:l})})}}}]);
+//# sourceMappingURL=9924.7f2d8c9c.chunk.js.map

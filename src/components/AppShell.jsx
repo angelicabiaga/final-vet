@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Menu, LogOut, UserCircle, Users, X } from "lucide-react";
+import {
+  Menu, LogOut, UserCircle, Users, X, ChevronLeft, ChevronRight,
+  LayoutDashboard, ClipboardPlus, Bell, UserCog, CreditCard
+} from "lucide-react";
 import { logoutUser } from "../services/authService";
 import { reconcileInventoryStatus, getInventoryItems, subscribeToInventoryChanges } from "../services/inventoryService";
 import { getAppointments, todayLocal } from "../services/appointmentService";
@@ -10,31 +13,34 @@ import { getConversations, subscribeToMessagingOverview } from "../services/mess
 import NotificationBell from "./NotificationBell";
 
 import pawLogo from "../assets/reference/paw.png";
-import dashboardIcon from "../assets/reference/Dashboard_Icon.png";
-import appointmentIcon from "../assets/reference/Appointment_Icon.png";
-import inventoryIcon from "../assets/reference/Inventory_Icon.png";
-import medicalIcon from "../assets/reference/Medical_Icon.png";
-import messageIcon from "../assets/reference/Message_Icon.png";
-import petsIcon from "../assets/reference/Pets_Icon.png";
-import userIcon from "../assets/reference/User_Icon.png";
-import userManagementIcon from "../assets/reference/UserManagement_Icon.png";
-import paymentIcon from "../assets/reference/payment_icon.png";
-import bellIcon from "../assets/reference/Bell_Icon.png";
 import chatbotIcon from "../assets/reference/chatbot.png";
+import dashboardIcon from "../assets/reference/Dashboard_Icon.png";
+import paymentIcon from "../assets/reference/payment_icon.png";
+import inventoryIcon from "../assets/reference/Inventory_Icon.png";
+import petsIcon from "../assets/reference/Pets_Icon.png";
+import appointmentIcon from "../assets/reference/Appointment_Icon.png";
+import messageIcon from "../assets/reference/Message_Icon.png";
 
+// Most nav types keep their original PNG icons; only the types with no
+// strong original identity (medical/report, notification, profile, user)
+// use the shared lucide-react set (already used for every other icon in
+// this file). A string value here means "render as an <img>"; a
+// component value means "render as a lucide icon" -- see the
+// isImageIcon check below.
 const iconByType = {
   dashboard: dashboardIcon,
   appointment: appointmentIcon,
   queue: appointmentIcon,
   schedule: appointmentIcon,
+  owner: Users,
   pet: petsIcon,
-  medical: medicalIcon,
+  medical: ClipboardPlus,
   inventory: inventoryIcon,
   message: messageIcon,
-  notification: bellIcon,
-  profile: userIcon,
-  user: userManagementIcon,
-  report: medicalIcon,
+  notification: Bell,
+  profile: UserCircle,
+  user: UserCog,
+  report: ClipboardPlus,
   payment: paymentIcon
 };
 
@@ -81,6 +87,11 @@ const INVENTORY_ALERT_STATUSES = ["Low Stock", "Out of Stock", "Near Expiry"];
 
 export default function AppShell({ profile, title, children }) {
   const [open, setOpen] = useState(false);
+  // Desktop-only "rail" mode: collapses the fixed sidebar down to icons
+  // only. Independent of `open`, which is the mobile off-canvas
+  // slide-in/out toggle -- the collapse CSS below is scoped inside a
+  // min-width media query so this can never affect the mobile sidebar.
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [logoutConfirmationOpen, setLogoutConfirmationOpen] =
     useState(false);
   const location = useLocation();
@@ -284,16 +295,35 @@ export default function AppShell({ profile, title, children }) {
     navigate("/login", { replace: true });
   }
 
+  // Rendered in two different spots depending on collapse state: inline
+  // next to the "PawCruz" wordmark when expanded (saves the vertical
+  // space a separate row would cost), or in its own centered row above
+  // the nav when collapsed, since there's no wordmark row to sit next to
+  // once the sidebar shrinks to icon-only.
+  const sidebarToggleButton = (
+    <button
+      className="sidebarToggle"
+      type="button"
+      onClick={() => setIsCollapsed((value) => !value)}
+      aria-label={isCollapsed ? "Expand navigation" : "Collapse navigation"}
+      title={isCollapsed ? "Expand navigation" : "Collapse navigation"}
+    >
+      {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+    </button>
+  );
+
   return (
-    <div className="shell pawcruz-shell">
+    <div className={`shell pawcruz-shell${isCollapsed ? " collapsed" : ""}`}>
       <div className={open ? "sidebarOverlay visible" : "sidebarOverlay"} onClick={() => setOpen(false)} />
-      <aside className={open ? "sidebar open" : "sidebar"}>
+      <aside className={`sidebar${open ? " open" : ""}${isCollapsed ? " collapsed" : ""}`}>
         <div className="sidebarBrand">
           <img src={pawLogo} alt="PawCruz logo" />
           <span>PawCruz</span>
+          {!isCollapsed && sidebarToggleButton}
           <button className="sidebarClose" type="button" onClick={() => setOpen(false)} aria-label="Close navigation"><X size={20}/></button>
         </div>
         <div className="clinic">Cruz Veterinary Clinic</div>
+        {isCollapsed && <div className="sidebarToggleRow">{sidebarToggleButton}</div>}
         <nav className="sidebarNav">
           {nav.map((item) => {
             const badgeKey = BADGE_ROUTES[profile?.role]?.[item.to];
@@ -305,6 +335,9 @@ export default function AppShell({ profile, title, children }) {
               : isInventoryLink
                 ? { prioritizeAlerts: true }
                 : undefined;
+            const navIcon = iconByType[item.type] || LayoutDashboard;
+            const isImageIcon = typeof navIcon === "string";
+            const NavIcon = isImageIcon ? null : navIcon;
             return (
               <Link
                 key={item.to}
@@ -312,21 +345,22 @@ export default function AppShell({ profile, title, children }) {
                 to={item.to}
                 state={linkState}
                 onClick={() => setOpen(false)}
+                title={item.label}
               >
                 <span className="navIconWrap">
-                  {item.type === "owner" ? (
-                    <Users size={22} color="#fff" aria-hidden="true" />
+                  {isImageIcon ? (
+                    <img src={navIcon} alt="" aria-hidden="true" />
                   ) : (
-                    <img src={iconByType[item.type] || dashboardIcon} alt="" aria-hidden="true" />
+                    <NavIcon size={22} color="#fff" aria-hidden="true" />
                   )}
                   {badgeCount > 0 && <span className="navBadge">{badgeLabel(badgeCount)}</span>}
                 </span>
-                <span>{item.label}</span>
+                <span className="navLabel">{item.label}</span>
               </Link>
             );
           })}
         </nav>
-        <button className="logout" onClick={handleLogout}><LogOut size={18} /> Logout</button>
+        <button className="logout" onClick={handleLogout} title="Logout"><LogOut size={18} /> <span className="logoutLabel">Logout</span></button>
       </aside>
 
       <main>
@@ -517,14 +551,31 @@ export default function AppShell({ profile, title, children }) {
 
       <style>{`
         *{box-sizing:border-box}.shell{display:flex;min-height:100vh}.sidebar{width:280px;height:100dvh;background:linear-gradient(180deg,#438fb5 0%,#255065 100%);color:#fff;display:flex;flex-direction:column;position:fixed;left:0;top:0;z-index:100;padding:0;box-shadow:5px 0 20px rgba(37,80,101,.15)}
-        .sidebarBrand{padding:34px 28px 8px;display:flex;align-items:center;gap:12px;flex-shrink:0}.sidebarBrand>img{width:42px;height:42px;object-fit:contain;filter:brightness(0) invert(1)}.sidebarBrand>span{font-size:30px;font-weight:700;font-family:"Quicksand",sans-serif}.clinic{font-size:12px;color:rgba(255,255,255,.78);padding:0 30px 22px;flex-shrink:0}.sidebarClose{display:none;margin-left:auto;border:0;background:rgba(255,255,255,.15);color:#fff;border-radius:9px;padding:7px}
-        .sidebarNav{display:flex;flex-direction:column;gap:3px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;padding:0 15px 10px;overscroll-behavior:contain}.sidebarNav::-webkit-scrollbar{width:6px}.sidebarNav::-webkit-scrollbar-track{background:transparent}.sidebarNav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.34);border-radius:999px}.sidebarNav a{display:flex;align-items:center;gap:15px;padding:12px 18px;border-radius:8px;text-decoration:none;color:#fff;font-size:14px;font-weight:500;flex-shrink:0}.sidebarNav a img{width:22px;height:22px;object-fit:contain;filter:brightness(0) invert(1)}.sidebarNav a:hover,.sidebarNav a.active{background:rgba(255,255,255,.27);color:#fff}.sidebarNav a.active{font-weight:600}
+        .sidebarBrand{padding:34px 28px 8px;display:flex;align-items:center;gap:12px;flex-shrink:0}.sidebarBrand img{width:42px;height:42px;object-fit:contain;filter:brightness(0) invert(1)}.sidebarBrand>span{font-size:30px;font-weight:700;font-family:"Quicksand",sans-serif}.clinic{font-size:12px;color:rgba(255,255,255,.78);padding:0 30px 22px;flex-shrink:0}.sidebarClose{display:none;flex-shrink:0;margin-left:auto;border:1px solid rgba(255,255,255,.32);background:rgba(255,255,255,.18);color:#fff;border-radius:11px;padding:8px}
+        .sidebarNav{display:flex;flex-direction:column;gap:6px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;padding:4px 15px 10px;overscroll-behavior:contain}.sidebarNav::-webkit-scrollbar{width:6px}.sidebarNav::-webkit-scrollbar-track{background:transparent}.sidebarNav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.34);border-radius:999px}.sidebarNav a{display:flex;align-items:center;gap:15px;padding:13px 18px;border-radius:10px;text-decoration:none;color:#fff;font-size:14px;font-weight:500;flex-shrink:0}.sidebarNav a img{width:22px;height:22px;object-fit:contain;filter:brightness(0) invert(1)}.sidebarNav a:hover,.sidebarNav a.active{background:rgba(255,255,255,.27);color:#fff}.sidebarNav a.active{font-weight:600}
         .navIconWrap{position:relative;display:inline-flex;flex-shrink:0}
         .navBadge{position:absolute;top:-6px;right:-8px;min-width:16px;height:16px;padding:0 4px;display:flex;align-items:center;justify-content:center;background:#e53935;color:#fff;font-size:10px;line-height:1;font-weight:700;border-radius:999px;box-shadow:0 0 0 2px rgba(37,80,101,.55),0 1px 3px rgba(0,0,0,.25)}
         .logout{flex-shrink:0;margin:12px 15px 20px;border:1px solid rgba(255,255,255,.26);background:rgba(255,255,255,.12);color:#fff;padding:12px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;font-weight:600}.logout:hover{background:rgba(255,255,255,.22)}
         .shell main{margin-left:280px;flex:1;min-width:0}.topBar{height:96px;background:linear-gradient(110deg,#4aa3c7 0%,#66bcc8 48%,#78c4ca 100%);display:flex;align-items:center;padding:0 38px;justify-content:space-between;color:#fff;position:fixed;left:280px;right:0;top:0;z-index:80;border-bottom:1px solid rgba(255,255,255,.32);box-shadow:0 8px 26px rgba(35,91,116,.16);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.pageHeading{display:flex;flex-direction:column;justify-content:center;min-width:0}.topBar h1{margin:0;font-size:26px;line-height:1.12;color:#fff;font-weight:800;letter-spacing:-.02em;text-shadow:0 1px 2px rgba(20,73,94,.08)}.topBar p{margin:7px 0 0;color:rgba(255,255,255,.92);font-size:13px;font-weight:600;letter-spacing:.01em}.menu{display:none;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.16);color:#fff;padding:10px;border-radius:14px;box-shadow:0 4px 12px rgba(28,84,106,.08)}.headerActions{display:flex;align-items:center;gap:14px}.headerActions>.nb .bell{width:52px;height:52px;border-radius:17px!important;border:1px solid rgba(255,255,255,.6)!important;background:rgba(255,255,255,.92)!important;box-shadow:0 8px 18px rgba(31,91,115,.14)!important}.user{display:flex;align-items:center;gap:10px;color:#fff}.userText{display:flex;flex-direction:column;gap:1px;min-width:0}.userGreeting{font-size:14px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.userRole{font-size:11px;font-weight:600;line-height:1.2;color:rgba(255,255,255,.82);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.profileLink{text-decoration:none;padding:9px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.10);transition:background .18s ease,transform .18s ease}.profileLink svg{width:25px;height:25px;flex-shrink:0}.profileLink:hover{background:rgba(255,255,255,.2);color:#fff;transform:translateY(-1px)}.content{padding:126px 30px 30px}.card{background:#fff;border-radius:15px;padding:22px;box-shadow:0 4px 10px rgba(0,0,0,.04)}.sidebarOverlay{display:none}
         .chatbotLauncher{position:fixed;right:28px;bottom:28px;z-index:80;width:72px;height:72px;display:grid;place-items:center;overflow:hidden;border:3px solid #fff;border-radius:50%;background:#fff;box-shadow:0 8px 24px rgba(37,80,101,.3);transition:transform .2s ease,box-shadow .2s ease}.chatbotLauncher img{display:block;width:100%;height:100%;object-fit:contain;border-radius:50%}.chatbotLauncher:hover{transform:translateY(-3px) scale(1.04);box-shadow:0 12px 28px rgba(37,80,101,.38)}.chatbotLauncher:focus-visible{outline:4px solid #173e52;outline-offset:4px}
-        @media(max-width:800px){.sidebar{transform:translateX(-105%);transition:transform .25s ease}.sidebar.open{transform:translateX(0)}.sidebarClose{display:grid}.sidebarOverlay{display:block;position:fixed;inset:0;background:rgba(16,41,54,.45);opacity:0;visibility:hidden;transition:.2s;z-index:90}.sidebarOverlay.visible{opacity:1;visibility:visible}.shell main{margin-left:0}.menu{display:grid}.topBar{left:0;height:86px;padding:0 14px;gap:10px}.pageHeading{min-width:0;flex:1}.topBar h1{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.topBar p{font-size:11px;margin-top:4px}.headerActions{gap:8px}.headerActions>.nb .bell{width:46px;height:46px;border-radius:15px!important}.profileLink{padding:8px 9px;border-radius:13px}.userText{display:none}.content{padding:108px 16px 16px}.chatbotLauncher{width:62px;height:62px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom, 0px))}}
+        .sidebar{transition:width .22s ease}.shell main{transition:margin-left .22s ease}.topBar{transition:left .22s ease}
+        .sidebarToggleRow{display:flex;justify-content:center;padding:2px 0 16px;flex-shrink:0}
+        .sidebarToggle{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.28);padding:0;display:grid;place-items:center;cursor:pointer;box-shadow:0 3px 8px rgba(19,49,64,.18);transition:background .18s ease;flex-shrink:0}.sidebarToggle:hover{background:rgba(255,255,255,.26)}.sidebarBrand .sidebarToggle{margin-left:auto}
+        @media(min-width:801px){
+          .shell.collapsed .sidebar{width:88px}
+          .shell.collapsed .sidebarBrand{padding:34px 0 8px;justify-content:center}
+          .shell.collapsed .sidebarBrand>span{display:none}
+          .shell.collapsed .clinic{display:none}
+          .shell.collapsed .sidebarNav{padding:0 10px 10px;align-items:center}
+          .shell.collapsed .sidebarNav a{justify-content:center;padding:12px;gap:0}
+          .shell.collapsed .navLabel{display:none}
+          .shell.collapsed .logout{gap:0}
+          .shell.collapsed .logoutLabel{display:none}
+          .shell.collapsed main{margin-left:88px}
+          .shell.collapsed .topBar{left:88px}
+        }
+        @media(max-width:800px){
+          .sidebarToggle,.sidebarToggleRow{display:none}.sidebar{transform:translateX(-105%);transition:transform .25s ease}.sidebar.open{transform:translateX(0)}.sidebarClose{display:grid}.sidebarOverlay{display:block;position:fixed;inset:0;background:rgba(16,41,54,.45);opacity:0;visibility:hidden;transition:.2s;z-index:90}.sidebarOverlay.visible{opacity:1;visibility:visible}.shell main{margin-left:0}.menu{display:grid}.topBar{left:0;height:86px;padding:0 14px;gap:10px}.pageHeading{min-width:0;flex:1}.topBar h1{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.topBar p{font-size:11px;margin-top:4px}.headerActions{gap:8px}.headerActions>.nb .bell{width:46px;height:46px;border-radius:15px!important}.profileLink{padding:8px 9px;border-radius:13px}.userText{display:none}.content{padding:108px 16px 16px}.chatbotLauncher{width:62px;height:62px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom, 0px))}}
       `}</style>
     </div>
   );
