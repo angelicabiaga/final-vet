@@ -1740,10 +1740,6 @@ export default function PetManagementModule({
                 </button>
               )}
             </div>
-
-            <p className="list-description">
-              Search and review registered animal patients.
-            </p>
           </div>
 
           <div className="toolbar-controls">
@@ -2500,8 +2496,7 @@ export default function PetManagementModule({
           color: #20313b;
         }
 
-        .form-description,
-        .list-description {
+        .form-description {
           margin: 7px 0 0;
           color: #6f7f88;
           line-height: 1.5;
