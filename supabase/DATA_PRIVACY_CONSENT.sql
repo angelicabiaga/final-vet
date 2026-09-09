@@ -53,15 +53,23 @@ do $$ begin
   alter table public.consent_records add constraint consent_records_recorded_by_fkey foreign key (recorded_by) references public.profiles(id) on delete set null;
 exception when duplicate_object then null; end $$;
 
--- Force these two CHECK constraints to exactly the values this file's
--- own RPC below actually inserts, regardless of what a stale prior
--- version of this table had them set to -- this is the fix for
--- consent_records_status_check rejecting 'granted'.
+-- Force these CHECK constraints to exactly the values this file's own RPC
+-- below actually inserts, regardless of what a stale prior version of this
+-- table had them set to -- this is the fix for consent_records_status_check
+-- rejecting 'granted', and (method) consent_records_method_check rejecting
+-- 'Staff Walk-in Form' -- a leftover constraint from an earlier draft of
+-- this table that never accounted for that source, only 'Web Form' and/or
+-- 'Mobile App Form'. Keep this list in sync with every p_method value any
+-- caller actually passes (see appointmentService.js, authService.js,
+-- api/authService.js).
 alter table public.consent_records drop constraint if exists consent_records_consent_type_check;
 alter table public.consent_records add constraint consent_records_consent_type_check check (consent_type in ('service', 'marketing'));
 
 alter table public.consent_records drop constraint if exists consent_records_status_check;
 alter table public.consent_records add constraint consent_records_status_check check (status in ('granted', 'withdrawn'));
+
+alter table public.consent_records drop constraint if exists consent_records_method_check;
+alter table public.consent_records add constraint consent_records_method_check check (method in ('Staff Walk-in Form', 'Web Form', 'Mobile App Form'));
 
 comment on table public.consent_records is
   'Append-only Data Privacy consent log. One row per consent decision (service/marketing), written only at new Pet Owner account creation -- never edited afterward.';

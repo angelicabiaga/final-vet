@@ -628,6 +628,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
   const petModalBreedOptions = BREEDS_BY_SPECIES[petModalForm.species] || null;
   const petModalColorOptions = COLORS_BY_SPECIES[petModalForm.species] || null;
+  // Staff books for a specific pet, so scheduling fields stay locked until
+  // one is actually attached -- pet owners already have their own pets to
+  // pick from immediately, so this doesn't apply to their self-booking.
+  const needsPetFirst = isStaff && !form.petIds.length;
 
   return (
     <div className="appointment-grid">
@@ -791,16 +795,16 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         </label>
 
         <div className="two-cols">
-          <label>Appointment Date<span className="required-mark"> *</span><input ref={appointmentDateFieldRef} className={invalidClass(fieldErrors, "appointmentDate")} type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required />{fieldErrors.appointmentDate && <span className="field-error-text">{fieldErrors.appointmentDate}</span>}</label>
-          <label>Available Time<span className="required-mark"> *</span><select ref={startTimeFieldRef} className={invalidClass(fieldErrors, "startTime")} value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={availabilityLoading || !availableTimes.length}>
-            <option value="">{availabilityLoading ? "Loading…" : availableTimes.length ? "Select time" : "No available slots"}</option>
+          <label>Appointment Date<span className="required-mark"> *</span><input ref={appointmentDateFieldRef} className={invalidClass(fieldErrors, "appointmentDate")} type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required disabled={needsPetFirst} />{needsPetFirst && <span className="field-hint">Add a pet above first.</span>}{fieldErrors.appointmentDate && <span className="field-error-text">{fieldErrors.appointmentDate}</span>}</label>
+          <label>Available Time<span className="required-mark"> *</span><select ref={startTimeFieldRef} className={invalidClass(fieldErrors, "startTime")} value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={needsPetFirst || availabilityLoading || !availableTimes.length}>
+            <option value="">{needsPetFirst ? "Add a pet first" : availabilityLoading ? "Loading…" : availableTimes.length ? "Select time" : "No available slots"}</option>
             {availableTimes.map(slot => <option key={slot} value={slot}>{formatTime(slot)}</option>)}
           </select>{fieldErrors.startTime && <span className="field-error-text">{fieldErrors.startTime}</span>}</label>
         </div>
 
         <label>Veterinarian<span className="required-mark"> *</span>
-          <select ref={veterinarianFieldRef} className={invalidClass(fieldErrors, "veterinarianId")} value={form.veterinarianId} onChange={event => updateForm({ veterinarianId: event.target.value })} required disabled={!form.startTime}>
-            <option value="">{!form.startTime ? "Select a time first" : eligibleVets.length ? "Select veterinarian" : "No veterinarian available at this time"}</option>
+          <select ref={veterinarianFieldRef} className={invalidClass(fieldErrors, "veterinarianId")} value={form.veterinarianId} onChange={event => updateForm({ veterinarianId: event.target.value })} required disabled={needsPetFirst || !form.startTime}>
+            <option value="">{needsPetFirst ? "Add a pet first" : !form.startTime ? "Select a time first" : eligibleVets.length ? "Select veterinarian" : "No veterinarian available at this time"}</option>
             {eligibleVets.map(vet => <option key={vet.id} value={vet.id}>{vet.full_name}</option>)}
           </select>
           {fieldErrors.veterinarianId && <span className="field-error-text">{fieldErrors.veterinarianId}</span>}
@@ -1016,6 +1020,7 @@ function formatAppointmentDate(value) {
 
 const styles = `
 .appointment-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:22px;align-items:start}.appointment-card{background:#fff;border-radius:20px;padding:24px;box-shadow:0 10px 30px rgba(55,126,158,.1)}.form-title{display:flex;gap:12px;align-items:center;margin-bottom:20px;color:#318fbe}.form-title h2{margin:0;color:#20313B}.form-title p{margin:3px 0;color:#6F7F88}.appointment-card label{display:grid;gap:7px;font-weight:700;margin-bottom:16px}.appointment-card label span{font-weight:400;color:#7c8c94}.appointment-card label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}.appointment-card input,.appointment-card select,.appointment-card textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;font:inherit;color:#20313B;background:#fbfeff}.appointment-card input:focus,.appointment-card select:focus,.appointment-card textarea:focus{outline:2px solid #a9dff0;border-color:#4DA8DA}.two-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}.appt-checkbox-field{display:flex!important;flex-direction:row;align-items:center;gap:10px;padding:12px 14px;border:1px solid #cfe4ed;border-radius:12px;background:#f2fafd;color:#21697f;cursor:pointer}.appt-checkbox-field input[type="checkbox"]{width:17px;height:17px;flex-shrink:0;accent-color:#4DA8DA;cursor:pointer}.appt-checkbox-field input[type="checkbox"]:disabled{cursor:not-allowed}.book-button{width:100%;border:0;border-radius:13px;padding:14px;background:#4DA8DA;color:white;font-weight:800;font-size:15px;cursor:pointer}.book-button:disabled{opacity:.65;cursor:not-allowed}.notice{padding:12px 14px;border-radius:12px;margin-bottom:16px}.notice.success{background:#eaf8ef;color:#28774b}.notice.error{background:#fff0f0;color:#b34848}.summary{position:sticky;top:105px}.summary h3{margin-top:0}.summary-row{display:flex;gap:11px;padding:13px 0;border-bottom:1px solid #edf4f7}.summary-icon{width:36px;height:36px;background:#eaf8fd;color:#3998c5;border-radius:10px;display:grid;place-items:center;flex-shrink:0}.summary-icon svg{width:18px}.summary-row small,.summary-row strong{display:block}.summary-row small{color:#758891;margin-bottom:3px}.summary-row strong{word-break:break-word}.summary-type{margin-top:18px;padding:14px;background:#f2fafd;border-radius:12px;display:grid;gap:5px}.summary-type span{color:#318fbe}.help{font-size:12px;line-height:1.55;color:#6F7F88}
+.field-hint{display:block;margin-top:5px;font-size:12px;font-weight:400;color:#8496a0}
 
 .appt-owner-selected{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;background:#fbfeff}.appt-owner-selected .appt-owner-cell{cursor:default}.appt-owner-selected strong{color:#20313B;font-size:14px}.appt-owner-selected span{color:#7c8c94;font-size:12px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .appt-clear{flex-shrink:0;display:inline-flex;align-items:center;gap:5px;border:1px solid #cfe4ed;background:#edf5f8;color:#5d7782;border-radius:8px;padding:7px 11px;font-weight:700;font-size:12.5px;cursor:pointer}
