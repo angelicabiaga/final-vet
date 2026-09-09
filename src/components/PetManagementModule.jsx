@@ -828,8 +828,15 @@ export default function PetManagementModule({
       setMedicalHistoryLoading(true);
 
       try {
+        // A veterinarian must be able to see a pet's full history here, not
+        // just their own past records -- otherwise the original doctor on an
+        // emergency-reassigned visit could never see who covered for them
+        // (see original_veterinarian_id / the "Reassigned" note above).
+        // Staff/admin/pet-owner callers already see every relevant record
+        // regardless of this flag, so it's a no-op for them.
         const records = await getMedicalRecords(profile, {
           petId: pet.id,
+          allVeterinarians: true,
         });
 
         setMedicalHistory(records);
@@ -2197,6 +2204,9 @@ export default function PetManagementModule({
                               {record.weight ? ` · ${record.weight}kg` : ""}
                               {record.temperature ? ` · ${record.temperature}°C` : ""}
                               {" · "}{appointment?.status ? `${appointment.status} · ` : ""}{record.record_status || "Draft"}
+                              {record.original_veterinarian_id && record.original_veterinarian_id !== record.veterinarian_id && (
+                                <span className="consultation-reassigned-badge">Reassigned</span>
+                              )}
                             </span>
 
                             {consultationInsights[record.id]?.riskLevel && (
@@ -2210,6 +2220,13 @@ export default function PetManagementModule({
 
                           {expanded && (
                             <div className="consultation-details">
+                              {record.original_veterinarian_id && record.original_veterinarian_id !== record.veterinarian_id && (
+                                <p className="consultation-reassignment-note">
+                                  Originally assigned to {vetsById[record.original_veterinarian_id]?.full_name ? `Dr. ${vetsById[record.original_veterinarian_id].full_name}` : "another veterinarian"} — this
+                                  visit was covered by {vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "a substitute veterinarian"} as an emergency substitute.
+                                </p>
+                              )}
+
                               <div className="consultation-field">
                                 <span>Symptoms</span>
                                 <p>{record.symptoms || "Not recorded"}</p>
@@ -3512,6 +3529,20 @@ export default function PetManagementModule({
           white-space: nowrap;
         }
 
+        .consultation-reassigned-badge {
+          display: inline-flex;
+          align-items: center;
+          margin-left: 6px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          background: #fdf1ef;
+          color: #c0392b;
+          font-size: 10px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .02em;
+        }
+
         .consultation-chevron {
           color: #93a4ac;
           transition: transform 0.15s ease;
@@ -3528,6 +3559,19 @@ export default function PetManagementModule({
           padding: 4px 17px 17px;
           border-top: 1px solid #eef3f5;
           background: #fbfdfe;
+        }
+
+        .consultation-reassignment-note {
+          grid-column: 1 / -1;
+          margin: 8px 0 0;
+          padding: 10px 13px;
+          border-radius: 10px;
+          border: 1px solid #f0c4bd;
+          background: #fdf1ef;
+          color: #a1352a;
+          font-size: 12.5px;
+          font-weight: 600;
+          line-height: 1.5;
         }
 
         .consultation-field {

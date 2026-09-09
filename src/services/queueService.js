@@ -77,7 +77,7 @@ async function enrich(rows){
   const entryIds=uniq(rows.map(r=>r.id));
   const [pets,profiles,appointments,entryPets]=await Promise.all([
     supabase.from("pets").select("id,pet_name,species,breed,photo_url").in("id",uniq(rows.map(r=>r.pet_id))),
-    supabase.from("profiles").select("id,full_name,username,email,role,avatar_url").in("id",uniq(rows.flatMap(r=>[r.owner_id,r.veterinarian_id]))),
+    supabase.from("profiles").select("id,full_name,username,email,role,avatar_url").in("id",uniq(rows.flatMap(r=>[r.owner_id,r.veterinarian_id,r.original_veterinarian_id]))),
     supabase.from("appointments").select("id,appointment_date,start_time,visit_reason,status").in("id",uniq(rows.map(r=>r.appointment_id))),
     entryIds.length?supabase.from("queue_entry_pets").select("queue_entry_id,appointment_id,pet:pets(id,pet_name,species,breed,photo_url)").in("queue_entry_id",entryIds):Promise.resolve({data:[]})
   ]);
@@ -104,6 +104,7 @@ async function enrich(rows){
       visitDurationMinutes:Math.max(pets.length,1)*10,
       owner:pr.get(r.owner_id)||null,
       veterinarian:pr.get(r.veterinarian_id)||null,
+      original_veterinarian:pr.get(r.original_veterinarian_id)||null,
       appointment
     };
   });
@@ -422,6 +423,27 @@ export async function requeueToNextAvailable(id,profile){
   if(entryError)throw new Error("Unable to update the queue entry.");
 
   return run[0];
+}
+
+// Hands a Waiting ticket to a different, available doctor for that visit
+// (emergency substitution). Only the first reassignment for a visit records
+// original_veterinarian_id -- a second reassignment during the same visit
+// swaps veterinarian_id again but leaves the true original doctor in place.
+export async function reassignQueueVeterinarian(id,newVeterinarianId,reason,profile){
+  if(!newVeterinarianId)throw new Error("Select a doctor to reassign this visit to.");
+  const {data:entry,error:loadError}=await supabase.from("queue_entries").select("id,status,veterinarian_id,original_veterinarian_id").eq("id",id).single();
+  if(loadError)throw new Error(`Unable to load the queue entry: ${loadError.message}`);
+  if(entry.status!=="Waiting")throw new Error("Only a Waiting ticket can be reassigned to another doctor.");
+  if(entry.veterinarian_id===newVeterinarianId)throw new Error("This visit is already assigned to that doctor.");
+
+  const {error}=await supabase.from("queue_entries").update({
+    veterinarian_id:newVeterinarianId,
+    original_veterinarian_id:entry.original_veterinarian_id||entry.veterinarian_id,
+    reassignment_reason:reason?.trim()||null,
+    reassigned_at:new Date().toISOString(),
+    reassigned_by:profile.id
+  }).eq("id",id);
+  if(error)throw new Error(`Unable to reassign the doctor: ${error.message}`);
 }
 
 // Maps queue_entry_id -> billing_status for a batch of ids -- used by the

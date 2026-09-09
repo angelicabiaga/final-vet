@@ -60,6 +60,7 @@ const blank = {
   petId: "",
   ownerId: "",
   veterinarianId: "",
+  originalVeterinarianId: "",
   appointmentId: "",
   consultationDate:
     new Date()
@@ -120,6 +121,7 @@ function recordToFormValues(record) {
     petId: record.pet_id,
     ownerId: record.owner_id,
     veterinarianId: record.veterinarian_id,
+    originalVeterinarianId: record.original_veterinarian_id || "",
     appointmentId: record.appointment_id || "",
     consultationDate: record.consultation_date || "",
     chiefComplaint: record.chief_complaint || "",
@@ -647,6 +649,9 @@ export default function MedicalRecordsModule({
         (profile?.role === "veterinarian"
           ? profile.id
           : ""),
+      originalVeterinarianId:
+        params.get("originalVeterinarianId") ||
+        "",
       recordTemplate: getMedicalRecordTemplate(
         params.get("template")
       ).value,
@@ -782,6 +787,8 @@ export default function MedicalRecordsModule({
       ownerId: queueLaunch.ownerId,
       veterinarianId:
         queueLaunch.veterinarianId,
+      originalVeterinarianId:
+        queueLaunch.originalVeterinarianId,
       appointmentId:
         queueLaunch.appointmentIds[0] || "",
       recordTemplate:
@@ -1356,6 +1363,8 @@ export default function MedicalRecordsModule({
       ownerId: context.ownerId,
       veterinarianId:
         context.veterinarianId,
+      originalVeterinarianId:
+        context.originalVeterinarianId,
       appointmentId,
       recordTemplate: template,
       templateData: {},
@@ -1387,6 +1396,7 @@ export default function MedicalRecordsModule({
         petId: current.petId,
         ownerId: current.ownerId,
         veterinarianId: current.veterinarianId,
+        originalVeterinarianId: current.originalVeterinarianId,
         appointmentId: current.appointmentId,
         consultationDate: current.consultationDate,
         recordTemplate: template,
@@ -1876,6 +1886,15 @@ export default function MedicalRecordsModule({
                     <p className="mrp-history-readonly-note">
                       Finalized record — shown as read-only so past visits can't be altered.
                     </p>
+
+                    {viewingHistoryRecord.original_veterinarian_id &&
+                      viewingHistoryRecord.original_veterinarian_id !== viewingHistoryRecord.veterinarian_id && (
+                        <p className="mrp-reassignment-note">
+                          Originally assigned to {formatVetName(viewingHistoryRecord.original_veterinarian)} — this
+                          visit was covered by {formatVetName(viewingHistoryRecord.veterinarian)} as an emergency
+                          substitute.
+                        </p>
+                      )}
 
                     <div className="mrp-history-section">
                       <h4>Complaint &amp; Findings</h4>
@@ -3013,7 +3032,12 @@ export default function MedicalRecordsModule({
                           <span className="mrp-history-label">{template.label}</span>
                         </div>
                         <span className="mrp-history-title-text">{record.diagnosis || record.chief_complaint || "General consultation"}</span>
-                        <span className="mrp-history-vet">{formatVetName(record.veterinarian)}</span>
+                        <span className="mrp-history-vet">
+                          {formatVetName(record.veterinarian)}
+                          {record.original_veterinarian_id && record.original_veterinarian_id !== record.veterinarian_id && (
+                            <span className="mrp-reassigned-badge">Reassigned</span>
+                          )}
+                        </span>
                       </button>
                     );
                   })
@@ -3590,6 +3614,34 @@ export default function MedicalRecordsModule({
         .mrp-history-vet {
           color: #7c8c94;
           font-size: 12px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .mrp-reassigned-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 2px 7px;
+          border-radius: 999px;
+          background: #fdf1ef;
+          color: #c0392b;
+          font-weight: 800;
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: .02em;
+        }
+
+        .mrp-reassignment-note {
+          margin: -6px 0 4px;
+          padding: 10px 13px;
+          border-radius: 10px;
+          border: 1px solid #f0c4bd;
+          background: #fdf1ef;
+          color: #a1352a;
+          font-size: 12.5px;
+          font-weight: 600;
+          line-height: 1.5;
         }
 
         .mrp-history-view {

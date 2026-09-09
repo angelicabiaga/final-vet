@@ -182,6 +182,7 @@ async function loadRelatedRecords(
     records.flatMap((record) => [
       record.owner_id,
       record.veterinarian_id,
+      record.original_veterinarian_id,
       record.created_by,
       record.updated_by,
     ])
@@ -292,6 +293,11 @@ async function loadRelatedRecords(
       veterinarian:
         profilesById.get(
           record.veterinarian_id
+        ) || null,
+
+      original_veterinarian:
+        profilesById.get(
+          record.original_veterinarian_id
         ) || null,
 
       creator:
@@ -699,6 +705,10 @@ export async function saveMedicalRecord(
 
     veterinarian_id:
       values.veterinarianId,
+
+    original_veterinarian_id:
+      values.originalVeterinarianId ||
+      null,
 
     appointment_id:
       values.appointmentId ||

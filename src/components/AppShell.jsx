@@ -99,6 +99,11 @@ export default function AppShell({ profile, title, children }) {
   const rolePath = profile?.role === "pet_owner" ? "pet-owner" : profile?.role;
   const firstName = firstNameOf(profile?.full_name) || profile?.username || "there";
   const roleText = roleLabelOf(profile?.role);
+  // "Professional blue" chrome, now applied to every role -- see
+  // .shell.theme-professional-blue below. Content areas (cards, tables,
+  // inputs) stay on the normal light theme; only the sidebar/top bar get a
+  // richer, more saturated corporate blue instead of the previous lighter
+  // cyan-leaning gradient.
 
   // Inventory statuses (Low Stock / Out of Stock / Near Expiry / Expired)
   // already update automatically on every write (POS sale, stock
@@ -313,7 +318,7 @@ export default function AppShell({ profile, title, children }) {
   );
 
   return (
-    <div className={`shell pawcruz-shell${isCollapsed ? " collapsed" : ""}`}>
+    <div className={`shell pawcruz-shell theme-professional-blue${isCollapsed ? " collapsed" : ""}`}>
       <div className={open ? "sidebarOverlay visible" : "sidebarOverlay"} onClick={() => setOpen(false)} />
       <aside className={`sidebar${open ? " open" : ""}${isCollapsed ? " collapsed" : ""}`}>
         <div className="sidebarBrand">
@@ -576,6 +581,32 @@ export default function AppShell({ profile, title, children }) {
         }
         @media(max-width:800px){
           .sidebarToggle,.sidebarToggleRow{display:none}.sidebar{transform:translateX(-105%);transition:transform .25s ease}.sidebar.open{transform:translateX(0)}.sidebarClose{display:grid}.sidebarOverlay{display:block;position:fixed;inset:0;background:rgba(16,41,54,.45);opacity:0;visibility:hidden;transition:.2s;z-index:90}.sidebarOverlay.visible{opacity:1;visibility:visible}.shell main{margin-left:0}.menu{display:grid}.topBar{left:0;height:86px;padding:0 14px;gap:10px}.pageHeading{min-width:0;flex:1}.topBar h1{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.topBar p{font-size:11px;margin-top:4px}.headerActions{gap:8px}.headerActions>.nb .bell{width:46px;height:46px;border-radius:15px!important}.profileLink{padding:8px 9px;border-radius:13px}.userText{display:none}.content{padding:108px 16px 16px}.chatbotLauncher{width:62px;height:62px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom, 0px))}}
+
+        /* Staff-only "professional blue" chrome. Sidebar/top bar only --
+           content areas (cards, tables, inputs) are untouched, still the
+           normal light theme. A richer, more saturated corporate blue,
+           staying in the same blue family throughout (no drift into the
+           cyan/teal the default top bar gradient has) instead of a literal
+           dark mode. */
+        .shell.theme-professional-blue .sidebar{background:linear-gradient(180deg,#2c6ba3 0%,#123a5e 100%);box-shadow:5px 0 20px rgba(18,58,94,.25)}
+        .shell.theme-professional-blue .clinic{color:rgba(255,255,255,.78)}
+        .shell.theme-professional-blue .sidebarClose{border-color:rgba(255,255,255,.32);background:rgba(255,255,255,.18)}
+        .shell.theme-professional-blue .sidebarNav a{color:#fff}
+        .shell.theme-professional-blue .sidebarNav a:hover,.shell.theme-professional-blue .sidebarNav a.active{background:rgba(255,255,255,.2);color:#fff}
+        .shell.theme-professional-blue .navBadge{box-shadow:0 0 0 2px #123a5e,0 1px 3px rgba(0,0,0,.25)}
+        .shell.theme-professional-blue .logout{border-color:rgba(255,255,255,.26);background:rgba(255,255,255,.12);color:#fff}
+        .shell.theme-professional-blue .logout:hover{background:rgba(255,255,255,.22)}
+        .shell.theme-professional-blue .sidebarToggle{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28)}
+        .shell.theme-professional-blue .sidebarToggle:hover{background:rgba(255,255,255,.26)}
+        .shell.theme-professional-blue .topBar{background:linear-gradient(110deg,#1e5a8c 0%,#2c6ba3 55%,#3a7ab8 100%);border-bottom-color:rgba(255,255,255,.3);box-shadow:0 8px 26px rgba(18,58,94,.22)}
+        .shell.theme-professional-blue .topBar h1{color:#fff}
+        .shell.theme-professional-blue .topBar p{color:rgba(255,255,255,.9)}
+        .shell.theme-professional-blue .menu{border-color:rgba(255,255,255,.28);background:rgba(255,255,255,.16)}
+        .shell.theme-professional-blue .headerActions>.nb .bell{background:rgba(255,255,255,.92)!important;border-color:rgba(255,255,255,.6)!important}
+        .shell.theme-professional-blue .profileLink{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.1);color:#fff}
+        .shell.theme-professional-blue .profileLink:hover{background:rgba(255,255,255,.2)}
+        .shell.theme-professional-blue .userRole{color:rgba(255,255,255,.82)}
+        .shell.theme-professional-blue .chatbotLauncher{border-color:#fff;box-shadow:0 8px 24px rgba(18,58,94,.35)}
       `}</style>
     </div>
   );
