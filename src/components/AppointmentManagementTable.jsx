@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { PawPrint, Search, X } from "lucide-react";
 import { APPOINTMENT_STATUSES, formatTime, getAppointments, updateAppointmentStatus, getVeterinarianAvailability, rescheduleAppointment, todayLocal } from "../services/appointmentService";
 import { supabase } from "../config/supabaseClient";
 import { formatDateLong } from "../utils/timeFormat";
+import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 
 const PAGE_SIZE = 10;
 const STATUS_FILTER_OPTIONS = APPOINTMENT_STATUSES.filter(s => s !== "Confirmed");
@@ -30,6 +31,8 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
   const [rebookLoading,setRebookLoading]=useState(false);
   const [rebookSaving,setRebookSaving]=useState(false);
   const [rebookMessage,setRebookMessage]=useState("");
+  const [rebookFieldErrors,setRebookFieldErrors]=useState({});
+  const rebookFieldRefs=useRef({}).current;
 
   const load = useCallback(async () => {
     try {
@@ -127,12 +130,20 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
     setRebookSlotMap({});
     setRebookTimes([]);
     setRebookMessage("");
+    setRebookFieldErrors({});
   }
 
   async function confirmRebook(event) {
     event.preventDefault();
-    if (!rebookTime) { setRebookMessage("Select an available time."); return; }
-    if (!rebookVetId) { setRebookMessage("Select a veterinarian."); return; }
+    const errors = {};
+    if (!rebookDate) errors.rebookDate = "Select a new date.";
+    if (!rebookTime) errors.rebookTime = "Select an available time.";
+    if (!rebookVetId) errors.rebookVetId = "Select a veterinarian.";
+    setRebookFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      focusFirstInvalidField(rebookFieldRefs, errors);
+      return;
+    }
     try {
       setRebookSaving(true);
       setRebookMessage("");
@@ -234,14 +245,14 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
         <button type="button" className="notes-close" aria-label="Close" onClick={()=>setRebookModal(null)}><X size={16}/></button>
         <h3>Rebook Appointment</h3>
         <p className="notes-context">{rebookModal.pet?.pet_name} · {rebookModal.owner?.full_name} · {rebookModal.veterinarian?.full_name}</p>
-        <form onSubmit={confirmRebook} className="rebook-form">
+        <form onSubmit={confirmRebook} className="rebook-form" noValidate>
           {rebookMessage&&<div className="rebook-error">{rebookMessage}</div>}
-          <label>New Date<span className="required-mark"> *</span><input type="date" min={todayLocal()} value={rebookDate} onChange={e=>setRebookDate(e.target.value)} required/></label>
-          <label>Available Time<span className="required-mark"> *</span><select value={rebookTime} onChange={e=>setRebookTime(e.target.value)} required disabled={rebookLoading||!rebookTimes.length}>
+          <label>New Date<span className="required-mark"> *</span><input ref={el=>{rebookFieldRefs.rebookDate=el}} className={invalidClass(rebookFieldErrors,"rebookDate")} type="date" min={todayLocal()} value={rebookDate} onChange={e=>{setRebookDate(e.target.value);if(rebookFieldErrors.rebookDate&&e.target.value)setRebookFieldErrors({...rebookFieldErrors,rebookDate:""})}} required/>{rebookFieldErrors.rebookDate&&<span className="field-error-text">{rebookFieldErrors.rebookDate}</span>}</label>
+          <label>Available Time<span className="required-mark"> *</span><select ref={el=>{rebookFieldRefs.rebookTime=el}} className={invalidClass(rebookFieldErrors,"rebookTime")} value={rebookTime} onChange={e=>{setRebookTime(e.target.value);if(rebookFieldErrors.rebookTime&&e.target.value)setRebookFieldErrors({...rebookFieldErrors,rebookTime:""})}} required disabled={rebookLoading||!rebookTimes.length}>
             <option value="">{rebookLoading?"Loading…":rebookTimes.length?"Select time":"No available slots"}</option>
             {rebookTimes.map(slot=><option key={slot} value={slot}>{formatTime(slot)}</option>)}
-          </select></label>
-          <label>Veterinarian<span className="required-mark"> *</span><select value={rebookVetId} onChange={e=>setRebookVetId(e.target.value)} required disabled={!rebookTime}>
+          </select>{rebookFieldErrors.rebookTime&&<span className="field-error-text">{rebookFieldErrors.rebookTime}</span>}</label>
+          <label>Veterinarian<span className="required-mark"> *</span><select ref={el=>{rebookFieldRefs.rebookVetId=el}} className={invalidClass(rebookFieldErrors,"rebookVetId")} value={rebookVetId} onChange={e=>{setRebookVetId(e.target.value);if(rebookFieldErrors.rebookVetId&&e.target.value)setRebookFieldErrors({...rebookFieldErrors,rebookVetId:""})}} required disabled={!rebookTime}>
             <option value="">{!rebookTime?"Select a time first":rebookEligibleVets.length?"Select veterinarian":"No veterinarian available at this time"}</option>
             {rebookEligibleVets.map(vet=><option key={vet.id} value={vet.id}>{vet.full_name}</option>)}
           </select></label>

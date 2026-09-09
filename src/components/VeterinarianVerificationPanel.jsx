@@ -19,6 +19,7 @@ import {
   uploadVerificationImage,
 } from "../services/veterinarianVerificationService";
 import { extractPrcIdText, parsePrcFields } from "../services/prcOcrService";
+import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 
 const STATUS_META = {
   Unverified: { label: "Unverified", tone: "muted", icon: AlertTriangle },
@@ -72,10 +73,16 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
   const [reviewUrls, setReviewUrls] = useState(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [decisionReason, setDecisionReason] = useState("");
+  const [decisionFieldError, setDecisionFieldError] = useState("");
   const [deciding, setDeciding] = useState("");
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const decisionReasonRef = useRef(null);
+
+  const [fieldErrors, setFieldErrors] = useState({});
+  const fieldRefs = useRef({}).current;
+  const registerFieldRef = (name) => (el) => { fieldRefs[name] = el; };
 
   async function load() {
     setLoading(true);
@@ -104,6 +111,7 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
     setOcrResult(null);
     setCorrectedFields(null);
     setMessage({ type: "", text: "" });
+    setFieldErrors((current) => (current.idFront ? { ...current, idFront: "" } : current));
     if (!file) return;
 
     setOcrRunning(true);
@@ -124,8 +132,16 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
     }
   }
 
+  function pickIdBack(file) {
+    setIdBackFile(file);
+    setFieldErrors((current) => (current.idBack && file ? { ...current, idBack: "" } : current));
+  }
+
   function correctField(name, value) {
     setCorrectedFields((current) => ({ ...current, [name]: value }));
+    setFieldErrors((current) => (
+      current[name] && String(value || "").trim() ? { ...current, [name]: "" } : current
+    ));
   }
 
   async function startCamera() {
@@ -157,6 +173,7 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
       if (!blob) return;
       const file = new File([blob], `face-scan-${Date.now()}.jpg`, { type: "image/jpeg" });
       setFaceScanFile(file);
+      setFieldErrors((current) => (current.faceScan ? { ...current, faceScan: "" } : current));
       setFaceScanPreview(URL.createObjectURL(blob));
       stopCamera();
     }, "image/jpeg", 0.9);
@@ -171,11 +188,32 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
   async function submit(event) {
     event.preventDefault();
     setMessage({ type: "", text: "" });
-    if (!idFrontFile || !idBackFile) return setMessage({ type: "error", text: "Upload both the front and back of your PRC ID." });
-    if (ocrRunning) return setMessage({ type: "error", text: "Still reading your ID -- please wait a moment." });
-    if (!ocrResult?.licenseNumber) return setMessage({ type: "error", text: "A license number could not be read from the front photo. Upload a clearer photo -- it cannot be typed in manually." });
-    if (!consent || !consentGivenAt) return setMessage({ type: "error", text: "Face-scan consent is required before submitting." });
-    if (!faceScanFile) return setMessage({ type: "error", text: "Capture a live face scan before submitting." });
+
+    if (ocrRunning) {
+      setMessage({ type: "error", text: "Still reading your ID -- please wait a moment." });
+      return;
+    }
+
+    const errors = {};
+    const allFieldRefs = {};
+    if (!idFrontFile) errors.idFront = "Upload the front of your PRC ID.";
+    else if (!ocrResult?.licenseNumber) errors.idFront = "A license number could not be read from this photo. Upload a clearer, well-lit photo -- it cannot be typed in manually.";
+    if (!idBackFile) errors.idBack = "Upload the back of your PRC ID.";
+    if (idFrontFile && ocrResult?.licenseNumber) {
+      if (!correctedFields?.nameCandidate?.trim()) errors.nameCandidate = "Full name is required.";
+      if (!correctedFields?.profession?.trim()) errors.profession = "Profession is required.";
+      if (!correctedFields?.registrationDate) errors.registrationDate = "Registration date is required.";
+      if (!correctedFields?.expirationDate) errors.expirationDate = "Expiration date is required.";
+    }
+    if (!consent || !consentGivenAt) errors.consent = "Face-scan consent is required before submitting.";
+    if (!faceScanFile) errors.faceScan = "Capture a live face scan before submitting.";
+
+    Object.keys(errors).forEach((name) => { if (fieldRefs[name]) allFieldRefs[name] = fieldRefs[name]; });
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      focusFirstInvalidField(allFieldRefs, errors);
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -206,6 +244,7 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
       setCorrectedFields(null);
       setConsent(false);
       setConsentGivenAt("");
+      setFieldErrors({});
       retakePhoto();
       setMessage({ type: "success", text: "Submitted for review. An administrator will confirm your verification." });
     } catch (error) {
@@ -232,14 +271,19 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
   async function decide(decision) {
     setMessage({ type: "", text: "" });
     if (decision !== "Verified" && !decisionReason.trim()) {
-      return setMessage({ type: "error", text: "Enter a reason before rejecting or requesting resubmission." });
+      setDecisionFieldError("Enter a reason before rejecting or requesting resubmission.");
+      decisionReasonRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      decisionReasonRef.current?.focus();
+      return;
     }
+    setDecisionFieldError("");
     setDeciding(decision);
     try {
       const updated = await reviewVerification(vetId, { decision, reason: decisionReason }, viewerProfile);
       setRecord(updated);
       setReviewUrls(null);
       setDecisionReason("");
+      setDecisionFieldError("");
       setMessage({ type: "success", text: `Verification set to ${decision}.` });
     } catch (error) {
       setMessage({ type: "error", text: error.message });
@@ -273,7 +317,7 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
       )}
 
       {canSubmit && (
-        <form onSubmit={submit} className="vvp-form">
+        <form onSubmit={submit} className="vvp-form" noValidate>
           <p className="vvp-instructions">
             Upload clear photos of the front and back of your PRC Professional Identification Card, then complete a
             live face scan. Your details are read automatically from the front photo -- if a personal detail was
@@ -281,8 +325,8 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
           </p>
 
           <div className="vvp-pair">
-            <label>PRC ID (Front)<input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickIdFront} />{idFrontFile && <span className="vvp-file-name">{idFrontFile.name}</span>}</label>
-            <label>PRC ID (Back)<input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={(e) => setIdBackFile(e.target.files?.[0] || null)} />{idBackFile && <span className="vvp-file-name">{idBackFile.name}</span>}</label>
+            <label ref={registerFieldRef("idFront")} className={invalidClass(fieldErrors, "idFront")}>PRC ID (Front)<input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickIdFront} />{idFrontFile && <span className="vvp-file-name">{idFrontFile.name}</span>}{fieldErrors.idFront && <span className="field-error-text">{fieldErrors.idFront}</span>}</label>
+            <label ref={registerFieldRef("idBack")} className={invalidClass(fieldErrors, "idBack")}>PRC ID (Back)<input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={(e) => pickIdBack(e.target.files?.[0] || null)} />{idBackFile && <span className="vvp-file-name">{idBackFile.name}</span>}{fieldErrors.idBack && <span className="field-error-text">{fieldErrors.idBack}</span>}</label>
           </div>
 
           {ocrRunning && <p className="vvp-ocr-status"><ScanLine size={14} className="vvp-scan-spin" /> Reading your ID...</p>}
@@ -301,26 +345,28 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
               <p className="vvp-ocr-correct-hint">You may correct the fields below if any were misread:</p>
               <div className="vvp-pair">
                 <label>Full Name<span className="required-mark"> *</span>
-                  <input value={correctedFields.nameCandidate} onChange={(e) => correctField("nameCandidate", e.target.value)} placeholder="Unable to Detect" required />
+                  <input ref={registerFieldRef("nameCandidate")} className={invalidClass(fieldErrors, "nameCandidate")} value={correctedFields.nameCandidate} onChange={(e) => correctField("nameCandidate", e.target.value)} placeholder="Unable to Detect" required />
+                  {fieldErrors.nameCandidate && <span className="field-error-text">{fieldErrors.nameCandidate}</span>}
                 </label>
                 <label>Profession<span className="required-mark"> *</span>
-                  <input value={correctedFields.profession} onChange={(e) => correctField("profession", e.target.value)} placeholder="Unable to Detect" required />
+                  <input ref={registerFieldRef("profession")} className={invalidClass(fieldErrors, "profession")} value={correctedFields.profession} onChange={(e) => correctField("profession", e.target.value)} placeholder="Unable to Detect" required />
+                  {fieldErrors.profession && <span className="field-error-text">{fieldErrors.profession}</span>}
                 </label>
               </div>
               <div className="vvp-pair">
                 <label>Registration Date<span className="required-mark"> *</span>
-                  <input type="date" value={correctedFields.registrationDate} onChange={(e) => correctField("registrationDate", e.target.value)} required />
-                  {!correctedFields.registrationDate && <span className="vvp-fieldError">Unable to Detect -- enter it manually</span>}
+                  <input ref={registerFieldRef("registrationDate")} className={invalidClass(fieldErrors, "registrationDate")} type="date" value={correctedFields.registrationDate} onChange={(e) => correctField("registrationDate", e.target.value)} required />
+                  {fieldErrors.registrationDate ? <span className="field-error-text">{fieldErrors.registrationDate}</span> : !correctedFields.registrationDate && <span className="vvp-hint-text">Unable to Detect -- enter it manually</span>}
                 </label>
                 <label>Expiration Date<span className="required-mark"> *</span>
-                  <input type="date" value={correctedFields.expirationDate} onChange={(e) => correctField("expirationDate", e.target.value)} required />
-                  {!correctedFields.expirationDate && <span className="vvp-fieldError">Unable to Detect -- enter it manually</span>}
+                  <input ref={registerFieldRef("expirationDate")} className={invalidClass(fieldErrors, "expirationDate")} type="date" value={correctedFields.expirationDate} onChange={(e) => correctField("expirationDate", e.target.value)} required />
+                  {fieldErrors.expirationDate ? <span className="field-error-text">{fieldErrors.expirationDate}</span> : !correctedFields.expirationDate && <span className="vvp-hint-text">Unable to Detect -- enter it manually</span>}
                 </label>
               </div>
             </div>
           )}
 
-          <div className="vvp-consent">
+          <div ref={registerFieldRef("consent")} className={invalidClass(fieldErrors, "consent", "vvp-consent")}>
             <label className="vvp-consent-check">
               <input
                 type="checkbox"
@@ -328,14 +374,16 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
                 onChange={(e) => {
                   setConsent(e.target.checked);
                   setConsentGivenAt(e.target.checked ? new Date().toISOString() : "");
+                  if (fieldErrors.consent && e.target.checked) setFieldErrors({ ...fieldErrors, consent: "" });
                 }}
               />
               I consent to a live camera capture of my face, used only to support identity verification of my
               veterinarian account. This is not an uploaded photo -- it must be captured live.
             </label>
+            {fieldErrors.consent && <span className="field-error-text">{fieldErrors.consent}</span>}
           </div>
 
-          <div className="vvp-face-scan">
+          <div ref={registerFieldRef("faceScan")} className={invalidClass(fieldErrors, "faceScan", "vvp-face-scan")}>
             {faceScanPreview ? (
               <div className="vvp-face-result">
                 <img src={faceScanPreview} alt="Captured face scan" />
@@ -354,6 +402,7 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
                 <Camera size={16} /> Start Live Face Scan
               </button>
             )}
+            {fieldErrors.faceScan && <span className="field-error-text">{fieldErrors.faceScan}</span>}
           </div>
 
           <button className="vvp-submit-btn" disabled={submitting}>
@@ -396,7 +445,18 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
 
           {status === "Pending Review" && (
             <div className="vvp-decision">
-              <label>Reason (required for Reject / Needs Resubmission)<textarea value={decisionReason} onChange={(e) => setDecisionReason(e.target.value)} /></label>
+              <label>Reason (required for Reject / Needs Resubmission)
+                <textarea
+                  ref={decisionReasonRef}
+                  className={decisionFieldError ? "field-invalid" : ""}
+                  value={decisionReason}
+                  onChange={(e) => {
+                    setDecisionReason(e.target.value);
+                    if (decisionFieldError && e.target.value.trim()) setDecisionFieldError("");
+                  }}
+                />
+                {decisionFieldError && <span className="field-error-text">{decisionFieldError}</span>}
+              </label>
               <div className="vvp-decision-actions">
                 <button type="button" className="approve" onClick={() => decide("Verified")} disabled={!!deciding}>{deciding === "Verified" ? "Saving..." : "Approve - Verified"}</button>
                 <button type="button" className="resubmit" onClick={() => decide("Needs Resubmission")} disabled={!!deciding}>{deciding === "Needs Resubmission" ? "Saving..." : "Needs Resubmission"}</button>
@@ -440,7 +500,7 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
         .vvp-ocr-result input[readonly]{background:#eef1f2;color:#657a84;cursor:not-allowed}
         .vvp-ocr-warn{margin:0;color:#a5680b;font-size:12px;font-weight:600}
         .vvp-ocr-correct-hint{margin:2px 0 0;color:#6f7f88;font-size:11.5px;font-weight:600}
-        .vvp-fieldError{color:#a5680b;font-size:11px;font-weight:600}
+        .vvp-hint-text{color:#a5680b;font-size:11px;font-weight:600}
 
         .vvp-consent{background:#f4f9fb;border:1px solid #e1edf2;border-radius:10px;padding:12px}
         .vvp-consent-check{display:flex!important;flex-direction:row;align-items:flex-start;gap:9px;font-weight:600!important;font-size:12.5px!important;color:#334e5a;cursor:pointer}

@@ -422,9 +422,13 @@ function PaymentTransactionHistory({ profile }) {
   const [ownerBalance, setOwnerBalance] = useState(0);
   const [actionDialog, setActionDialog] = useState(null);
   const [reversalReason, setReversalReason] = useState("");
+  const [reversalFieldError, setReversalFieldError] = useState("");
+  const reversalReasonRef = useRef(null);
   const [reversing, setReversing] = useState(false);
   const [balanceDialog, setBalanceDialog] = useState(null);
   const [balanceAmount, setBalanceAmount] = useState("");
+  const [balanceFieldError, setBalanceFieldError] = useState("");
+  const balanceAmountRef = useRef(null);
   const [balanceMethod, setBalanceMethod] = useState("Cash");
   const [collecting, setCollecting] = useState(false);
   const [vetsById, setVetsById] = useState({});
@@ -609,6 +613,7 @@ function PaymentTransactionHistory({ profile }) {
   function openCollectBalance(transaction) {
     setBalanceDialog({ transaction });
     setBalanceAmount(remainingBalance(transaction).toFixed(2));
+    setBalanceFieldError("");
     setBalanceMethod("Cash");
   }
 
@@ -774,12 +779,12 @@ function PaymentTransactionHistory({ profile }) {
           <div className="detail-actions">
             <button type="button" className="receipt-print" onClick={() => printReceipt(details)}><Printer size={17} /> Print Invoice</button>
             {["Unpaid", "Partially Paid"].includes(details.payment_status) && <button type="button" className="process-payment-btn" onClick={() => openCollectBalance(details)}><Wallet size={17} /> Collect Balance</button>}
-            {canReverse && ["Paid", "Pending", "Unpaid", "Partially Paid"].includes(details.payment_status) && <button type="button" className="void-button" onClick={() => { setActionDialog({ transaction: details, label: "Void transaction" }); setReversalReason(""); }}><RotateCcw size={17} /> Void</button>}
+            {canReverse && ["Paid", "Pending", "Unpaid", "Partially Paid"].includes(details.payment_status) && <button type="button" className="void-button" onClick={() => { setActionDialog({ transaction: details, label: "Void transaction" }); setReversalReason(""); setReversalFieldError(""); }}><RotateCcw size={17} /> Void</button>}
           </div>
         </div>
       </div>}
 
-      {actionDialog && <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Void transaction"><div className="reversal-card"><h2>{actionDialog.label}</h2><p>{actionDialog.transaction.or_number} · {money(actionDialog.transaction.total_amount)}</p><label>Reason<span className="required-mark"> *</span> <textarea value={reversalReason} onChange={(event) => setReversalReason(event.target.value)} placeholder="Required reason for this audit action" autoFocus /></label><div><button type="button" className="modal-cancel" onClick={() => setActionDialog(null)}>Cancel</button><button type="button" className="modal-confirm" disabled={!reversalReason.trim() || reversing} onClick={confirmReversal}>{reversing ? "Saving…" : "Confirm Void"}</button></div></div></div>}
+      {actionDialog && <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Void transaction"><div className="reversal-card"><h2>{actionDialog.label}</h2><p>{actionDialog.transaction.or_number} · {money(actionDialog.transaction.total_amount)}</p><label>Reason<span className="required-mark"> *</span> <textarea ref={reversalReasonRef} className={reversalFieldError ? "field-invalid" : ""} value={reversalReason} onChange={(event) => { setReversalReason(event.target.value); if (reversalFieldError && event.target.value.trim()) setReversalFieldError(""); }} onBlur={() => setReversalFieldError(reversalReason.trim() ? "" : "A reason is required for this audit action.")} placeholder="Required reason for this audit action" autoFocus />{reversalFieldError && <span className="field-error-text">{reversalFieldError}</span>}</label><div><button type="button" className="modal-cancel" onClick={() => setActionDialog(null)}>Cancel</button><button type="button" className="modal-confirm" disabled={!reversalReason.trim() || reversing} onClick={confirmReversal}>{reversing ? "Saving…" : "Confirm Void"}</button></div></div></div>}
 
       {balanceDialog && <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Collect balance">
         <div className="balance-card">
@@ -790,7 +795,7 @@ function PaymentTransactionHistory({ profile }) {
             <div><span>Already paid</span><strong>{money(balanceDialog.transaction.amount_paid)}</strong></div>
             <div><span>Remaining balance</span><strong>{money(remainingBalance(balanceDialog.transaction))}</strong></div>
           </div>
-          <label>Amount to collect<span className="required-mark"> *</span><input type="number" min="0.01" step="0.01" max={remainingBalance(balanceDialog.transaction)} value={balanceAmount} onChange={(event) => setBalanceAmount(event.target.value)} autoFocus /></label>
+          <label>Amount to collect<span className="required-mark"> *</span><input ref={balanceAmountRef} className={balanceFieldError ? "field-invalid" : ""} type="number" min="0.01" step="0.01" max={remainingBalance(balanceDialog.transaction)} value={balanceAmount} onChange={(event) => { const value = event.target.value; setBalanceAmount(value); if (balanceFieldError && Number(value) > 0 && Number(value) <= remainingBalance(balanceDialog.transaction)) setBalanceFieldError(""); }} onBlur={() => { const amount = Number(balanceAmount); if (!amount || amount <= 0) setBalanceFieldError("Enter an amount greater than 0."); else if (amount > remainingBalance(balanceDialog.transaction)) setBalanceFieldError("Amount cannot exceed the remaining balance."); else setBalanceFieldError(""); }} autoFocus />{balanceFieldError && <span className="field-error-text">{balanceFieldError}</span>}</label>
           <label>Payment method<select value={balanceMethod} onChange={(event) => setBalanceMethod(event.target.value)}>{PAYMENT_METHODS.filter((method) => method !== "Split Payment").map((method) => <option key={method}>{method}</option>)}</select></label>
           <div className="balance-card-actions">
             <button type="button" className="modal-cancel" onClick={() => setBalanceDialog(null)} disabled={collecting}>Cancel</button>

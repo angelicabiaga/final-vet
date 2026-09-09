@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[1036],{21036(e,n,t){t.r(n),t.d(n,{default:()=>o});t(65043);var a=t(73216),r=t(34498),s=t(63321),i=t(70579);function o(e){var n;let t=e.profile;const o=(0,a.zy)();return(0,i.jsx)(r.A,{profile:t,title:"My Appointments",children:(0,i.jsx)(s.A,{profile:t,veterinarianOnly:!0,focusToday:Boolean(null===(n=o.state)||void 0===n?void 0:n.focusToday)})})}}}]);
+//# sourceMappingURL=1036.118049de.chunk.js.map

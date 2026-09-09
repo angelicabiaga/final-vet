@@ -1,24 +1,58 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { loginUser, resolveLoginDestination } from "../../services/authService";
 import PasswordInput from "../../components/PasswordInput";
 import pawLogo from "../../assets/reference/paw.png";
+import { focusFirstInvalidField, invalidClass } from "../../utils/formValidation";
 
 import { MapPin, Phone } from 'lucide-react';
 import dogCatBackground from '../../assets/reference/dog_cat.jpg';
 
+function validateLoginField(name, value) {
+  switch (name) {
+    case "identifier":
+      return String(value || "").trim() ? "" : "Email or username is required.";
+    case "password":
+      return String(value || "") ? "" : "Password is required.";
+    default:
+      return "";
+  }
+}
+
 export default function Login() {
   const [form, setForm] = useState({ identifier: "", password: "" });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const fieldRefs = useRef({}).current;
+  const registerFieldRef = (name) => (el) => { fieldRefs[name] = el; };
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
+  function updateField(name, value) {
+    setForm((current) => ({ ...current, [name]: value }));
+    setFieldErrors((current) => (
+      current[name] ? { ...current, [name]: validateLoginField(name, value) } : current
+    ));
+  }
+
   async function submit(e) {
     e.preventDefault();
-    setLoading(true);
     setMessage("");
+
+    const errors = {};
+    ["identifier", "password"].forEach((name) => {
+      const errorMessage = validateLoginField(name, form[name]);
+      if (errorMessage) errors[name] = errorMessage;
+    });
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      focusFirstInvalidField(fieldRefs, errors);
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const result = await loginUser(form.identifier, form.password);
@@ -46,23 +80,29 @@ export default function Login() {
       subtitle="Sign in to your PawCruz account"
       showBackToHome
     >
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <label>
           Email or Username<span className="required-mark"> *</span>
           <input
+            ref={registerFieldRef("identifier")}
+            className={invalidClass(fieldErrors, "identifier")}
             value={form.identifier}
-            onChange={(e) => setForm({ ...form, identifier: e.target.value })}
+            onChange={(e) => updateField("identifier", e.target.value)}
             required
           />
+          {fieldErrors.identifier && <span className="field-error-text">{fieldErrors.identifier}</span>}
         </label>
         <label>
           Password<span className="required-mark"> *</span>
           <PasswordInput
+            ref={registerFieldRef("password")}
+            className={invalidClass(fieldErrors, "password")}
             value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            onChange={(e) => updateField("password", e.target.value)}
             required
             minLength="6"
           />
+          {fieldErrors.password && <span className="field-error-text">{fieldErrors.password}</span>}
         </label>
         {message && <div className="error">{message}</div>}
         <button disabled={loading}>{loading ? "Signing in..." : "Login"}</button>

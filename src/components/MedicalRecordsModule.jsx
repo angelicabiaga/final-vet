@@ -15,6 +15,7 @@ import {
 import {
   BrainCircuit,
   Check,
+  ChevronDown,
   Eye,
   FileDown,
   PawPrint,
@@ -43,7 +44,7 @@ import {
   uploadMedicalAttachment,
 } from "../services/medicalRecordService";
 
-import { formatDateLong, formatTime12h } from "../utils/timeFormat";
+import { formatClockTime, formatDateLong, formatTime12h } from "../utils/timeFormat";
 import { parseConsultationInsight } from "../utils/predictiveHealthParsing";
 
 import { getInventoryItems } from "../services/inventoryService";
@@ -51,7 +52,7 @@ import { printMedicalRecordDocument, downloadPrescriptionPadPdf } from "../utils
 import ConfirmDialog from "./ConfirmDialog";
 import ConsultationHealthInsight from "./ConsultationHealthInsight";
 
-import { markConsultationReadyForBilling } from "../services/queueService";
+import { completeQueueEntry, markConsultationReadyForBilling } from "../services/queueService";
 import { getPrescriptionsForConsultation } from "../services/billingService";
 
 const blank = {
@@ -166,6 +167,15 @@ function formatHistoryDate(dateStr) {
   });
 }
 
+// Some veterinarian profiles already store "Dr." as part of full_name, so
+// prepending it blindly produced "Dr. Dr. Lopez" wherever a vet's name is
+// shown -- this strips any existing leading "Dr." first so it's added
+// exactly once either way.
+function formatVetName(vet, fallback = "Veterinarian not recorded") {
+  if (!vet?.full_name) return fallback;
+  return `Dr. ${vet.full_name.replace(/^dr\.?\s*/i, "")}`;
+}
+
 function formatPetAge(dateOfBirth) {
   if (!dateOfBirth) return "";
 
@@ -196,6 +206,15 @@ function formatPetAge(dateOfBirth) {
 
   return `${parts.join(", ")} old`;
 }
+
+// Common Dosage/Frequency/Duration values, offered as suggestions (via a
+// <datalist>, so the dropdown arrow shows up next to the input) on the
+// Medication line -- the vet can still type any value the presets don't
+// cover, since dosing varies too much by drug and patient to lock these
+// down to a fixed picklist.
+const DOSAGE_PRESETS = ["250mg", "500mg", "1000mg", "1 tablet", "1/2 tablet", "5ml", "10ml"];
+const FREQUENCY_PRESETS = ["Daily", "Twice daily", "Three times daily", "Every 4 hours", "Every 6 hours", "Every 8 hours", "Every 12 hours", "As needed (PRN)"];
+const DURATION_PRESETS = ["3 days", "5 days", "7 days (1 week)", "10 days", "14 days (2 weeks)", "1 month"];
 
 const VACCINE_KEYS = [
   ["distemper", "Distemper"],
@@ -325,35 +344,34 @@ export default function MedicalRecordsModule({
   ] = useState([]);
 
   const [
-    expandedHistoryId,
-    setExpandedHistoryId,
+    viewingHistoryId,
+    setViewingHistoryId,
   ] = useState(null);
 
   const [historyPrescriptions, setHistoryPrescriptions] = useState({});
 
-  // The History column scrolls on its own (see .mrp-history), so expanding
-  // a card doesn't guarantee its action buttons land inside the visible
-  // area -- scroll the whole card (buttons included) into view every time
-  // a different one opens.
+  // The History column scrolls on its own (see .mrp-history), so selecting
+  // a card doesn't guarantee it lands inside the visible area -- scroll it
+  // into view every time a different one is picked.
   useEffect(() => {
-    if (!expandedHistoryId) return;
-    const card = document.getElementById(`mrp-history-card-${expandedHistoryId}`);
+    if (!viewingHistoryId) return;
+    const card = document.getElementById(`mrp-history-card-${viewingHistoryId}`);
     card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [expandedHistoryId]);
+  }, [viewingHistoryId]);
 
-  // Lazy-loads the dispensed prescriptions for whichever history card is
-  // expanded, so the "Prescribed PDF" action knows whether to offer a real
-  // download or show "No Prescription" -- fetched once per record and
+  // Lazy-loads the dispensed prescriptions for whichever history record is
+  // being viewed, so the "Prescribed PDF" action knows whether to offer a
+  // real download or show "No Prescription" -- fetched once per record and
   // cached, same pattern as the AI insight cache below.
   useEffect(() => {
-    if (!expandedHistoryId) return;
-    if (historyPrescriptions[expandedHistoryId]) return;
-    const record = historyRecords.find((item) => item.id === expandedHistoryId);
+    if (!viewingHistoryId) return;
+    if (historyPrescriptions[viewingHistoryId]) return;
+    const record = historyRecords.find((item) => item.id === viewingHistoryId);
     if (!record?.queue_entry_id) {
-      setHistoryPrescriptions((current) => ({ ...current, [expandedHistoryId]: { loading: false, data: [] } }));
+      setHistoryPrescriptions((current) => ({ ...current, [viewingHistoryId]: { loading: false, data: [] } }));
       return;
     }
-    setHistoryPrescriptions((current) => ({ ...current, [expandedHistoryId]: { loading: true, data: [] } }));
+    setHistoryPrescriptions((current) => ({ ...current, [viewingHistoryId]: { loading: true, data: [] } }));
     getPrescriptionsForConsultation(record.queue_entry_id)
       .then((rows) => {
         const scoped = rows.filter((rx) => !rx.medical_record_id || rx.medical_record_id === record.id);
@@ -365,7 +383,7 @@ export default function MedicalRecordsModule({
           [record.id]: { loading: false, data: [], error: prescriptionError.message },
         }));
       });
-  }, [expandedHistoryId, historyRecords, historyPrescriptions]);
+  }, [viewingHistoryId, historyRecords, historyPrescriptions]);
 
   const [
     pendingTemplateSwitch,
@@ -384,12 +402,11 @@ export default function MedicalRecordsModule({
   const [showCurrentInsight, setShowCurrentInsight] = useState(false);
   const [currentInsight, setCurrentInsight] = useState(null);
 
-  // Quick-pick popover for the Medication / Laboratory Request fields --
-  // { type: "medication", index } targets one prescription line, { type:
-  // "lab" } targets the Laboratory Request field. Kept separate from the
-  // shared inventorySearch/tab state used by the "Test / Medicine / Vaccine
-  // Given" billing picker below so opening one never disturbs the other,
-  // even though this one reuses the exact same tabbed picker UI.
+  // Quick-pick popover for the Medication field -- { type: "medication",
+  // index } targets one prescription line. Kept separate from the shared
+  // inventorySearch/tab state used by the "Test / Medicine / Vaccine Given"
+  // billing picker below so opening one never disturbs the other, even
+  // though this one reuses the exact same tabbed picker UI.
   const [fieldPicker, setFieldPicker] = useState(null);
   const [fieldPickerSearch, setFieldPickerSearch] = useState("");
   const [fieldPickerCategoryTab, setFieldPickerCategoryTab] = useState("Medicine");
@@ -406,6 +423,12 @@ export default function MedicalRecordsModule({
   const activeTemplate = getMedicalRecordTemplate(
     form.recordTemplate
   );
+
+  // When set, the big central panel shows this past visit read-only instead
+  // of the current consultation's editable fields -- see the History aside.
+  const viewingHistoryRecord = viewingHistoryId
+    ? historyRecords.find((record) => record.id === viewingHistoryId) || null
+    : null;
 
   const selectedPet = useMemo(
     () => pets.find((pet) => pet.id === form.petId),
@@ -504,10 +527,9 @@ export default function MedicalRecordsModule({
       );
   }, [inventoryOptions, inventorySearch, inventoryCategoryTab, form.templateData]);
 
-  // The medication picker only ever needs two buckets (its own category,
-  // plus an "Others" catch-all for anything misclassified/not Medicine) --
-  // the lab picker only ever needs Test, so it gets no tab bar at all.
-  const fieldPickerTabs = fieldPicker?.type === "medication" ? ["Medicine", "Others"] : ["Test"];
+  // The medication picker only ever needs two buckets: its own category,
+  // plus an "Others" catch-all for anything misclassified/not Medicine.
+  const fieldPickerTabs = ["Medicine", "Others"];
 
   const fieldPickerOptions = useMemo(() => {
     if (!fieldPicker) return [];
@@ -515,7 +537,6 @@ export default function MedicalRecordsModule({
     return inventoryOptions
       .filter((option) => {
         const category = classifyPickerCategory(option.category);
-        if (fieldPicker.type === "lab") return category === "Test";
         return fieldPickerCategoryTab === "Others" ? category !== "Medicine" : category === "Medicine";
       })
       .filter(
@@ -525,31 +546,60 @@ export default function MedicalRecordsModule({
       );
   }, [inventoryOptions, fieldPickerSearch, fieldPickerCategoryTab, fieldPicker]);
 
-  // Selecting an item from the Medication/Laboratory Request quick-pick
-  // both fills the text field (so the vet doesn't have to type the product
-  // name) and adds it to the billing basket below (pickInventoryItem
-  // already de-dupes there), so it's charged and deducted from stock
-  // without a second manual step. A medication line is one medicine each,
-  // so picking there just sets that line's name outright; the lab field can
-  // still hold several tests, so picking there appends to the list instead.
-  // Either way, the picker's job is done once something is chosen, so the
-  // modal closes right after instead of waiting for an explicit Close.
+  // Selecting an item from the Medication quick-pick both fills the line's
+  // name (so the vet doesn't have to type the product name) and adds it to
+  // the billing basket below (pickInventoryItem already de-dupes there), so
+  // it's charged and deducted from stock without a second manual step. The
+  // picker's job is done once something is chosen, so the modal closes
+  // right after instead of waiting for an explicit Close.
   function pickFieldInventoryItem(option) {
     if (fieldPicker?.type === "medication" && fieldPicker.index != null) {
       updateMedicationLine(fieldPicker.index, { medication: option.item_name });
-    } else if (fieldPicker?.type === "lab") {
-      setForm((current) => {
-        const existingNames = String(current.laboratoryRequest || "")
-          .split(",")
-          .map((part) => part.trim())
-          .filter(Boolean);
-        if (existingNames.includes(option.item_name)) return current;
-        const nextValue = [...existingNames, option.item_name].join(", ");
-        return { ...current, laboratoryRequest: nextValue };
-      });
     }
     pickInventoryItem(option.id);
     setFieldPicker(null);
+  }
+
+  // Laboratory Request used to be a free-text field with a "Search" helper;
+  // it's now a compact checklist over whatever the clinic actually stocks
+  // under the "Test Kits" inventory category, so the list always matches
+  // what's really available (no separate hardcoded list to keep in sync).
+  const labTestOptions = useMemo(
+    () => inventoryOptions.filter((option) => classifyPickerCategory(option.category) === "Test"),
+    [inventoryOptions]
+  );
+
+  // `laboratoryRequest` stays a plain comma-joined string (same column the
+  // history view, PDF export, and AI insight already read) -- this just
+  // parses it back out to know which checkboxes should show as ticked.
+  const laboratoryRequestNames = useMemo(
+    () => String(form.laboratoryRequest || "").split(",").map((name) => name.trim()).filter(Boolean),
+    [form.laboratoryRequest]
+  );
+
+  // Ticking a box both records the test's name into `laboratoryRequest`
+  // and adds/removes it from the billing basket, mirroring what picking it
+  // through the old Search flow used to do.
+  function toggleLabTest(item) {
+    setForm((current) => {
+      const existingNames = String(current.laboratoryRequest || "")
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const nextNames = existingNames.includes(item.item_name)
+        ? existingNames.filter((name) => name !== item.item_name)
+        : [...existingNames, item.item_name];
+      return { ...current, laboratoryRequest: nextNames.join(", ") };
+    });
+
+    const inBasket = (form.templateData?.inventoryItems || []).some(
+      (entry) => entry.id === item.id
+    );
+    if (inBasket) {
+      removeInventoryItem(item.id);
+    } else {
+      pickInventoryItem(item.id);
+    }
   }
 
   // Staff and pet owners get a read-only view; only the veterinarian who
@@ -1081,6 +1131,12 @@ export default function MedicalRecordsModule({
         profile
       );
 
+      // Frees up the veterinarian's queue slot -- without this the ticket
+      // stays stuck on "Serving" even after the visit is actually done,
+      // which is what let a second patient also show as "Serving" for the
+      // same vet at once.
+      await completeQueueEntry(queueContext.queueEntryId, profile);
+
       setSuccess(
         "Consultation completed. The record was finalized and sent to Staff POS for billing."
       );
@@ -1160,6 +1216,12 @@ export default function MedicalRecordsModule({
           queueContext.queueEntryId,
           profile
         );
+
+        // Frees up the veterinarian's queue slot -- without this the ticket
+        // stays stuck on "Serving" even after the visit is actually done,
+        // which is what let a second patient also show as "Serving" for
+        // the same vet at once.
+        await completeQueueEntry(queueContext.queueEntryId, profile);
 
         setSuccess(
           "Consultation completed. The record was finalized and sent to Staff POS for billing."
@@ -1315,7 +1377,9 @@ export default function MedicalRecordsModule({
   // (or resumes the target template's own saved data if it already has
   // some) before switching.
   function selectTemplate(template) {
-    if (template === form.recordTemplate || saving) return;
+    if (saving) return;
+    setViewingHistoryId(null);
+    if (template === form.recordTemplate) return;
 
     if (visitSavedRecords.length === 0 && !form.id) {
       setForm((current) => ({
@@ -1448,35 +1512,6 @@ export default function MedicalRecordsModule({
 
       {show && (
         <div className="mrp">
-          <div className="mrp-header">
-            <div>
-              <p className="mrp-eyebrow">Medical Record</p>
-              <h1>{form.id ? "Update" : "Create"} {activeTemplate.label}</h1>
-            </div>
-
-            <button
-              type="button"
-              className="mrp-back"
-              onClick={() => {
-                setPendingQueueCompletion(null);
-                setQueueContext(null);
-                setShow(false);
-                setForm(blank);
-
-                // Closing without completing returns straight to the
-                // veterinarian's queue -- this form is only ever reached
-                // from there now, never from a standalone records page.
-                const queuePath =
-                  profile?.role === "admin" ? "/admin/queue" :
-                  profile?.role === "staff" ? "/staff/queue" :
-                  "/veterinarian/queue";
-                navigate(queuePath);
-              }}
-            >
-              <X size={16} /> Back to Queue
-            </button>
-          </div>
-
           {error && (
             <div className="alert err">
               {error}
@@ -1489,22 +1524,49 @@ export default function MedicalRecordsModule({
             </div>
           )}
 
-          {queueContext && (
-            <div className="queue-context-banner">
-              {pendingQueueCompletion
-                ? `${pendingQueueCompletion.templateLabel} is already saved. Retry Complete to send this consultation to billing without creating another record.`
-                : <>
-                    Adding {activeTemplate.label} for pet{" "}
-                    {queueContext.currentIndex + 1}{" "}
-                    of {queueContext.petIds.length}{" "}
-                    in this visit. Choose a
-                    different template on the left
-                    whenever you need to, then
-                    choose Complete to
-                    finish this consultation.
-                  </>}
-            </div>
-          )}
+          <div className="mrp-top-row">
+            {queueContext && (
+              <div className="queue-context-banner">
+                {pendingQueueCompletion
+                  ? `${pendingQueueCompletion.templateLabel} is already saved. Retry Complete to send this consultation to billing without creating another record.`
+                  : <>
+                      Adding {activeTemplate.label} for pet{" "}
+                      {queueContext.currentIndex + 1}{" "}
+                      of {queueContext.petIds.length}{" "}
+                      in this visit. Choose a
+                      different template on the left
+                      whenever you need to, then
+                      choose Complete to
+                      finish this consultation.
+                    </>}
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="mrp-back"
+              aria-label="Back to Queue"
+              title="Back to Queue"
+              onClick={() => {
+                setPendingQueueCompletion(null);
+                setQueueContext(null);
+                setShow(false);
+                setForm(blank);
+                setViewingHistoryId(null);
+
+                // Closing without completing returns straight to the
+                // veterinarian's queue -- this form is only ever reached
+                // from there now, never from a standalone records page.
+                const queuePath =
+                  profile?.role === "admin" ? "/admin/queue" :
+                  profile?.role === "staff" ? "/staff/queue" :
+                  "/veterinarian/queue";
+                navigate(queuePath);
+              }}
+            >
+              <X size={18} />
+            </button>
+          </div>
 
           <form
             onSubmit={
@@ -1628,49 +1690,50 @@ export default function MedicalRecordsModule({
                 )}
               </label>
 
-              <label>
-                Veterinarian<span className="required-mark"> *</span>
+              {profile.role !== "veterinarian" && (
+                <label>
+                  Veterinarian<span className="required-mark"> *</span>
 
-                <select
-                  required
-                  disabled={
-                    !!queueContext ||
-                    profile.role === "veterinarian"
-                  }
-                  value={
-                    form.veterinarianId
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      veterinarianId:
-                        e.target
-                          .value,
-                    })
-                  }
-                >
-                  <option value="">
-                    Select veterinarian
-                  </option>
+                  <select
+                    required
+                    disabled={
+                      !!queueContext
+                    }
+                    value={
+                      form.veterinarianId
+                    }
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        veterinarianId:
+                          e.target
+                            .value,
+                      })
+                    }
+                  >
+                    <option value="">
+                      Select veterinarian
+                    </option>
 
-                  {vets.map(
-                    (vet) => (
-                      <option
-                        key={
-                          vet.id
-                        }
-                        value={
-                          vet.id
-                        }
-                      >
-                        {
-                          vet.full_name
-                        }
-                      </option>
-                    )
-                  )}
-                </select>
-              </label>
+                    {vets.map(
+                      (vet) => (
+                        <option
+                          key={
+                            vet.id
+                          }
+                          value={
+                            vet.id
+                          }
+                        >
+                          {
+                            vet.full_name
+                          }
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+              )}
 
               <label>
                 Appointment
@@ -1793,6 +1856,177 @@ export default function MedicalRecordsModule({
               </aside>
 
               <section className="mr-panel">
+                {viewingHistoryRecord ? (
+                  <div className="mrp-history-view">
+                    <div className="mrp-history-view-head">
+                      <div>
+                        <p className="mrp-eyebrow">Past Visit — Read Only</p>
+                        <h2>{getMedicalRecordTemplate(viewingHistoryRecord.record_template).label}</h2>
+                        <span className="mrp-history-view-meta">
+                          {formatDateLong(viewingHistoryRecord.consultation_date)}
+                          {viewingHistoryRecord.created_at ? ` · ${formatClockTime(viewingHistoryRecord.created_at)}` : ""}
+                          {" · "}{formatVetName(viewingHistoryRecord.veterinarian)}
+                        </span>
+                      </div>
+                      <button type="button" className="mrp-history-view-close" aria-label="Back to current consultation" title="Back to current consultation" onClick={() => setViewingHistoryId(null)}>
+                        <X size={16} />
+                      </button>
+                    </div>
+
+                    <p className="mrp-history-readonly-note">
+                      Finalized record — shown as read-only so past visits can't be altered.
+                    </p>
+
+                    <div className="mrp-history-section">
+                      <h4>Complaint &amp; Findings</h4>
+
+                      <div className="mrp-history-field">
+                        <span>Chief Complaint</span>
+                        <p>{viewingHistoryRecord.chief_complaint || "Not recorded"}</p>
+                      </div>
+
+                      <div className="mrp-history-field">
+                        <span>Symptoms</span>
+                        <p>{viewingHistoryRecord.symptoms || "Not recorded"}</p>
+                      </div>
+
+                      <div className="mrp-history-field">
+                        <span>Vital Signs</span>
+                        <p>{viewingHistoryRecord.vital_signs || "Not recorded"}</p>
+                      </div>
+                    </div>
+
+                    <div className="mrp-history-section">
+                      <h4>Diagnosis &amp; Treatment</h4>
+
+                      <div className="mrp-history-field">
+                        <span>Diagnosis</span>
+                        <p>{viewingHistoryRecord.diagnosis || "Not recorded"}</p>
+                      </div>
+
+                      <div className="mrp-history-field">
+                        <span>Treatment</span>
+                        <p>{viewingHistoryRecord.treatment || viewingHistoryRecord.treatment_plan || "Not recorded"}</p>
+                      </div>
+
+                      <div className="mrp-history-field">
+                        <span>Medications</span>
+                        <p>
+                          {viewingHistoryRecord.medication
+                            ? `${viewingHistoryRecord.medication}${viewingHistoryRecord.dosage ? ` · ${viewingHistoryRecord.dosage}` : ""}${viewingHistoryRecord.frequency ? ` · ${viewingHistoryRecord.frequency}` : ""}${viewingHistoryRecord.duration ? ` · ${viewingHistoryRecord.duration}` : ""}`
+                            : "Not recorded"}
+                        </p>
+                      </div>
+
+                      <div className="mrp-history-field">
+                        <span>Laboratory Results</span>
+                        <p>{viewingHistoryRecord.laboratory_result || "Not recorded"}</p>
+                      </div>
+
+                      {viewingHistoryRecord.vaccination && (
+                        <div className="mrp-history-field">
+                          <span>Vaccination</span>
+                          <p>{viewingHistoryRecord.vaccination}</p>
+                        </div>
+                      )}
+
+                      {(viewingHistoryRecord.template_data?.inventoryItems || []).filter((item) => !item.isNA).length > 0 && (
+                        <div className="mrp-history-field">
+                          <span>Services, Tests &amp; Prescribed Medicine</span>
+                          <ul className="mrp-history-items-list">
+                            {viewingHistoryRecord.template_data.inventoryItems.filter((item) => !item.isNA).map((item) => (
+                              <li key={item.id}>
+                                {item.item_name}{item.category ? ` (${item.category})` : ""} × {item.quantity ?? 1}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mrp-history-section">
+                      <h4>Notes</h4>
+
+                      <div className="mrp-history-field">
+                        <span>Veterinarian Notes</span>
+                        <p>{viewingHistoryRecord.veterinarian_notes || "No additional notes."}</p>
+                      </div>
+                    </div>
+
+                    {viewingHistoryRecord.follow_up_date && (
+                      <p className="mrp-history-followup">
+                        Next visit: {formatDateLong(viewingHistoryRecord.follow_up_date)}
+                      </p>
+                    )}
+
+                    <div className="mrp-history-actions">
+                      <button
+                        type="button"
+                        className="mrp-history-pdf-btn"
+                        onClick={async () => {
+                          try {
+                            await printMedicalRecordDocument(viewingHistoryRecord, selectedPet, {
+                              veterinarianName: (viewingHistoryRecord.veterinarian?.full_name || "").replace(/^dr\.?\s*/i, ""),
+                              veterinarianPhone: viewingHistoryRecord.veterinarian?.phone || "",
+                              visitDateTime: viewingHistoryRecord.consultation_date ? formatHistoryDate(viewingHistoryRecord.consultation_date) : "",
+                              petAge: formatPetAge(selectedPet?.date_of_birth),
+                            });
+                          } catch (pdfError) {
+                            setError(pdfError.message || "Unable to generate this record's PDF.");
+                          }
+                        }}
+                      >
+                        <Printer size={13} /> PDF
+                      </button>
+
+                      <button
+                        type="button"
+                        className="mrp-history-insight-btn"
+                        onClick={() => openHistoryInsight(viewingHistoryRecord)}
+                      >
+                        <BrainCircuit size={13} /> AI Insight
+                      </button>
+
+                      {historyPrescriptions[viewingHistoryRecord.id]?.loading ? (
+                        <span className="mrp-history-rx-status">Checking…</span>
+                      ) : (historyPrescriptions[viewingHistoryRecord.id]?.data || []).length > 0 ? (
+                        <button
+                          type="button"
+                          className="mrp-history-pdf-btn"
+                          onClick={() => {
+                            try {
+                              downloadPrescriptionPadPdf(historyPrescriptions[viewingHistoryRecord.id].data, {
+                                veterinarianName: formatVetName(viewingHistoryRecord.veterinarian, ""),
+                                veterinarianPhone: viewingHistoryRecord.veterinarian?.phone || "",
+                                veterinarianLicense: viewingHistoryRecord.veterinarian?.license_number || "",
+                                ownerName: selectedPet?.owner?.full_name,
+                                ownerAddress: selectedPet?.owner?.address,
+                                petName: selectedPet?.pet_name,
+                                petSpecies: selectedPet?.species,
+                                petBreed: selectedPet?.breed,
+                                petAge: formatPetAge(selectedPet?.date_of_birth),
+                                date: viewingHistoryRecord.consultation_date ? formatHistoryDate(viewingHistoryRecord.consultation_date) : "",
+                              });
+                            } catch (pdfError) {
+                              setError(pdfError.message || "Unable to generate the prescription PDF.");
+                            }
+                          }}
+                        >
+                          <Pill size={13} /> Rx PDF
+                        </button>
+                      ) : (
+                        <span className="mrp-history-rx-status mrp-history-rx-none">No Prescription Given</span>
+                      )}
+                    </div>
+
+                    {historyInsights[viewingHistoryRecord.id]?.riskLevel && (
+                      <span className={`consultation-risk-badge mrp-history-risk-badge risk-${historyInsights[viewingHistoryRecord.id].riskLevel.toLowerCase()}`}>
+                        {historyInsights[viewingHistoryRecord.id].riskLevel} Risk
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <>
                 <div className="template-intro">
                   <b>{activeTemplate.label}</b>
                   <span>{activeTemplate.description}</span>
@@ -1950,34 +2184,35 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
-              <label className="wide checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={form.medicationEnabled}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setForm((current) => {
-                      const rows = current.templateData?.medications || [];
-                      return {
-                        ...current,
-                        medicationEnabled: checked,
-                        ...(checked
-                          ? {}
-                          : { medication: "", dosage: "", frequency: "", duration: "" }),
-                        templateData: {
-                          ...(current.templateData || {}),
-                          medications: checked
-                            ? rows.length
-                              ? rows
-                              : [{ medication: "", dosage: "", frequency: "", duration: "" }]
-                            : [],
-                        },
-                      };
-                    });
-                  }}
-                />
+              <button
+                type="button"
+                className="wide checkbox-field"
+                aria-expanded={form.medicationEnabled}
+                onClick={() => {
+                  const checked = !form.medicationEnabled;
+                  setForm((current) => {
+                    const rows = current.templateData?.medications || [];
+                    return {
+                      ...current,
+                      medicationEnabled: checked,
+                      ...(checked
+                        ? {}
+                        : { medication: "", dosage: "", frequency: "", duration: "" }),
+                      templateData: {
+                        ...(current.templateData || {}),
+                        medications: checked
+                          ? rows.length
+                            ? rows
+                            : [{ medication: "", dosage: "", frequency: "", duration: "" }]
+                          : [],
+                      },
+                    };
+                  });
+                }}
+              >
                 Medication prescribed
-              </label>
+                <ChevronDown size={16} className={`checkbox-field-chevron${form.medicationEnabled ? " open" : ""}`} />
+              </button>
 
               {form.medicationEnabled && (
                 <div className="wide record-section">
@@ -1994,36 +2229,54 @@ export default function MedicalRecordsModule({
                         </button>
                       )}
                       <div className="med-line-grid">
-                        <div className="med-input-with-picker">
+                        <label className="med-line-field med-line-field-wide">
+                          <span>Medication</span>
+                          <div className="med-input-with-picker">
+                            <input
+                              placeholder="e.g. Amoxicillin"
+                              value={row.medication}
+                              onChange={(e) => updateMedicationLine(index, { medication: e.target.value })}
+                            />
+                            <button
+                              type="button"
+                              className="mrp-field-picker-btn"
+                              title="Search inventory for medicine"
+                              onClick={() => openFieldPicker("medication", index)}
+                            >
+                              <Search size={13} /> Search
+                            </button>
+                          </div>
+                        </label>
+
+                        <label className="med-line-field">
+                          <span>Dosage</span>
                           <input
-                            placeholder="Medication"
-                            value={row.medication}
-                            onChange={(e) => updateMedicationLine(index, { medication: e.target.value })}
+                            list="dosage-presets"
+                            placeholder="e.g. 500mg"
+                            value={row.dosage}
+                            onChange={(e) => updateMedicationLine(index, { dosage: e.target.value })}
                           />
-                          <button
-                            type="button"
-                            className="mrp-field-picker-btn"
-                            title="Search inventory for medicine"
-                            onClick={() => openFieldPicker("medication", index)}
-                          >
-                            <Search size={13} /> Search
-                          </button>
-                        </div>
-                        <input
-                          placeholder="Dosage"
-                          value={row.dosage}
-                          onChange={(e) => updateMedicationLine(index, { dosage: e.target.value })}
-                        />
-                        <input
-                          placeholder="Frequency"
-                          value={row.frequency}
-                          onChange={(e) => updateMedicationLine(index, { frequency: e.target.value })}
-                        />
-                        <input
-                          placeholder="Duration"
-                          value={row.duration}
-                          onChange={(e) => updateMedicationLine(index, { duration: e.target.value })}
-                        />
+                        </label>
+
+                        <label className="med-line-field">
+                          <span>Frequency</span>
+                          <input
+                            list="frequency-presets"
+                            placeholder="e.g. Daily"
+                            value={row.frequency}
+                            onChange={(e) => updateMedicationLine(index, { frequency: e.target.value })}
+                          />
+                        </label>
+
+                        <label className="med-line-field">
+                          <span>Duration</span>
+                          <input
+                            list="duration-presets"
+                            placeholder="e.g. 3 days"
+                            value={row.duration}
+                            onChange={(e) => updateMedicationLine(index, { duration: e.target.value })}
+                          />
+                        </label>
                       </div>
                     </div>
                   ))}
@@ -2031,56 +2284,69 @@ export default function MedicalRecordsModule({
                   <button type="button" className="add-row" onClick={addMedicationLine}>
                     <Plus size={14} /> Add Prescription
                   </button>
+
+                  <datalist id="dosage-presets">
+                    {DOSAGE_PRESETS.map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                  <datalist id="frequency-presets">
+                    {FREQUENCY_PRESETS.map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                  <datalist id="duration-presets">
+                    {DURATION_PRESETS.map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
                 </div>
               )}
 
-              <label className="wide checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={form.labEnabled}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setForm((current) => ({
-                      ...current,
-                      labEnabled: checked,
-                      ...(checked
-                        ? {}
-                        : { laboratoryRequest: "", laboratoryResult: "" }),
-                    }));
-                  }}
-                />
+              <button
+                type="button"
+                className="wide checkbox-field"
+                aria-expanded={form.labEnabled}
+                onClick={() => {
+                  const checked = !form.labEnabled;
+                  setForm((current) => ({
+                    ...current,
+                    labEnabled: checked,
+                    ...(checked
+                      ? {}
+                      : { laboratoryRequest: "", laboratoryResult: "" }),
+                  }));
+                }}
+              >
                 Laboratory test requested
-              </label>
+                <ChevronDown size={16} className={`checkbox-field-chevron${form.labEnabled ? " open" : ""}`} />
+              </button>
 
               {form.labEnabled && (
                 <>
-              <label className="wide">
-                <span className="mrp-field-label-row">
-                  Laboratory Request
-                  <button
-                    type="button"
-                    className="mrp-field-picker-btn"
-                    title="Search inventory for lab tests"
-                    onClick={() => openFieldPicker("lab")}
-                  >
-                    <Search size={13} /> Search
-                  </button>
-                </span>
+              <div className="wide field-block">
+                Laboratory Tests Requested
 
-                <textarea
-                  value={
-                    form.laboratoryRequest
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      laboratoryRequest:
-                        e.target
-                          .value,
-                    })
-                  }
-                />
-              </label>
+                {labTestOptions.length === 0 ? (
+                  <p className="section-empty">
+                    No "Test Kits" items found in Inventory yet. Add lab tests there first.
+                  </p>
+                ) : (
+                  <div className="lab-test-checks">
+                    {labTestOptions.map((item) => (
+                      <label className="lab-test-check" key={item.id}>
+                        <input
+                          type="checkbox"
+                          checked={laboratoryRequestNames.includes(item.item_name)}
+                          disabled={!canEdit}
+                          onChange={() => toggleLabTest(item)}
+                        />
+                        {item.item_name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <label className="wide">
                 Laboratory Result
@@ -2463,21 +2729,22 @@ export default function MedicalRecordsModule({
                 </>
               )}
 
-              <label className="wide checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={form.followUpEnabled}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setForm((current) => ({
-                      ...current,
-                      followUpEnabled: checked,
-                      ...(checked ? {} : { followUpDate: "" }),
-                    }));
-                  }}
-                />
+              <button
+                type="button"
+                className="wide checkbox-field"
+                aria-expanded={form.followUpEnabled}
+                onClick={() => {
+                  const checked = !form.followUpEnabled;
+                  setForm((current) => ({
+                    ...current,
+                    followUpEnabled: checked,
+                    ...(checked ? {} : { followUpDate: "" }),
+                  }));
+                }}
+              >
                 Follow-up needed
-              </label>
+                <ChevronDown size={16} className={`checkbox-field-chevron${form.followUpEnabled ? " open" : ""}`} />
+              </button>
 
               {form.followUpEnabled && (
               <label>
@@ -2713,6 +2980,8 @@ export default function MedicalRecordsModule({
                 )}
               </label>
                 </div>
+                  </>
+                )}
               </section>
 
               <aside className="mrp-history">
@@ -2724,154 +2993,85 @@ export default function MedicalRecordsModule({
                   </p>
                 ) : (
                   historyRecords.map((record) => {
-                    const expanded = expandedHistoryId === record.id;
+                    const expanded = viewingHistoryId === record.id;
                     const template = getMedicalRecordTemplate(record.record_template);
 
                     return (
-                      <div id={`mrp-history-card-${record.id}`} className={`mrp-history-card${expanded ? " expanded" : ""}`} key={record.id}>
-                        <button
-                          type="button"
-                          className="mrp-history-summary"
-                          onClick={() => setExpandedHistoryId(expanded ? null : record.id)}
-                        >
-                          <span className="mrp-history-date">{formatHistoryDate(record.consultation_date)}</span>
+                      <button
+                        type="button"
+                        id={`mrp-history-card-${record.id}`}
+                        className={`mrp-history-card${expanded ? " selected" : ""}`}
+                        aria-pressed={expanded}
+                        key={record.id}
+                        onClick={() => setViewingHistoryId(expanded ? null : record.id)}
+                      >
+                        <div className="mrp-history-card-top">
+                          <span className="mrp-history-date">
+                            {formatHistoryDate(record.consultation_date)}
+                            {record.created_at ? ` · ${formatClockTime(record.created_at)}` : ""}
+                          </span>
                           <span className="mrp-history-label">{template.label}</span>
-                          <span className="mrp-history-title-text">{record.diagnosis || record.chief_complaint || "General consultation"}</span>
-                          <span className="mrp-history-vet">{record.veterinarian?.full_name ? `Dr. ${record.veterinarian.full_name}` : "Veterinarian not recorded"}</span>
-                        </button>
-
-                        {expanded && (
-                          <div className="mrp-history-details">
-                            <p className="mrp-history-hint">Download the PDF for the full record, or view the AI health insight below.</p>
-
-                            <div className="mrp-history-actions">
-                              <button
-                                type="button"
-                                className="mrp-history-pdf-btn"
-                                onClick={async (event) => {
-                                  event.stopPropagation();
-                                  try {
-                                    await printMedicalRecordDocument(record, selectedPet, {
-                                      veterinarianName: record.veterinarian?.full_name || "",
-                                      veterinarianPhone: record.veterinarian?.phone || "",
-                                      visitDateTime: record.consultation_date ? formatHistoryDate(record.consultation_date) : "",
-                                      petAge: formatPetAge(selectedPet?.date_of_birth),
-                                    });
-                                  } catch (pdfError) {
-                                    setError(pdfError.message || "Unable to generate this record's PDF.");
-                                  }
-                                }}
-                              >
-                                <Printer size={13} /> PDF
-                              </button>
-
-                              <button
-                                type="button"
-                                className="mrp-history-insight-btn"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  openHistoryInsight(record);
-                                }}
-                              >
-                                <BrainCircuit size={13} /> AI Insight
-                              </button>
-
-                              {historyPrescriptions[record.id]?.loading ? (
-                                <span className="mrp-history-rx-status">Checking…</span>
-                              ) : (historyPrescriptions[record.id]?.data || []).length > 0 ? (
-                                <button
-                                  type="button"
-                                  className="mrp-history-pdf-btn"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    try {
-                                      downloadPrescriptionPadPdf(historyPrescriptions[record.id].data, {
-                                        veterinarianName: record.veterinarian?.full_name ? `Dr. ${record.veterinarian.full_name}` : "",
-                                        veterinarianPhone: record.veterinarian?.phone || "",
-                                        veterinarianLicense: record.veterinarian?.license_number || "",
-                                        ownerName: selectedPet?.owner?.full_name,
-                                        ownerAddress: selectedPet?.owner?.address,
-                                        petName: selectedPet?.pet_name,
-                                        petSpecies: selectedPet?.species,
-                                        petBreed: selectedPet?.breed,
-                                        petAge: formatPetAge(selectedPet?.date_of_birth),
-                                        date: record.consultation_date ? formatHistoryDate(record.consultation_date) : "",
-                                      });
-                                    } catch (pdfError) {
-                                      setError(pdfError.message || "Unable to generate the prescription PDF.");
-                                    }
-                                  }}
-                                >
-                                  <Pill size={13} /> Rx PDF
-                                </button>
-                              ) : (
-                                <span className="mrp-history-rx-status mrp-history-rx-none">No Prescription Given</span>
-                              )}
-                            </div>
-
-                            {historyInsights[record.id]?.riskLevel && (
-                              <span className={`consultation-risk-badge mrp-history-risk-badge risk-${historyInsights[record.id].riskLevel.toLowerCase()}`}>
-                                {historyInsights[record.id].riskLevel} Risk
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                        </div>
+                        <span className="mrp-history-title-text">{record.diagnosis || record.chief_complaint || "General consultation"}</span>
+                        <span className="mrp-history-vet">{formatVetName(record.veterinarian)}</span>
+                      </button>
                     );
                   })
                 )}
               </aside>
             </div>
 
-            <div className="mrp-actions">
-              {queueContext ? (
-                <>
-                  {!pendingQueueCompletion && (
+            {!viewingHistoryRecord && (
+              <div className="mrp-actions">
+                {queueContext ? (
+                  <>
+                    {!pendingQueueCompletion && (
+                      <button
+                        type="button"
+                        className="save-draft"
+                        disabled={saving}
+                        onClick={saveAsDraft}
+                      >
+                        Save as Draft
+                      </button>
+                    )}
+
                     <button
                       type="button"
-                      className="save-draft"
+                      className="ai-insight"
                       disabled={saving}
-                      onClick={saveAsDraft}
+                      onClick={openCurrentInsight}
                     >
-                      Save as Draft
+                      <BrainCircuit size={16} /> AI Insight
                     </button>
-                  )}
 
+                    <button
+                      type="submit"
+                      className="save"
+                      disabled={saving}
+                      formNoValidate={
+                        Boolean(pendingQueueCompletion)
+                      }
+                    >
+                      {saving
+                        ? "Saving..."
+                        : pendingQueueCompletion
+                          ? "Retry Complete"
+                          : "Complete"}
+                    </button>
+                  </>
+                ) : (
                   <button
-                    type="button"
-                    className="ai-insight"
-                    disabled={saving}
-                    onClick={openCurrentInsight}
-                  >
-                    <BrainCircuit size={16} /> AI Insight
-                  </button>
-
-                  <button
-                    type="submit"
                     className="save"
                     disabled={saving}
-                    formNoValidate={
-                      Boolean(pendingQueueCompletion)
-                    }
                   >
                     {saving
                       ? "Saving..."
-                      : pendingQueueCompletion
-                        ? "Retry Complete"
-                        : "Complete"}
+                      : "Save Medical Record"}
                   </button>
-                </>
-              ) : (
-                <button
-                  className="save"
-                  disabled={saving}
-                >
-                  {saving
-                    ? "Saving..."
-                    : "Save Medical Record"}
-                </button>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </form>
         </div>
       )}
@@ -3017,34 +3217,32 @@ export default function MedicalRecordsModule({
               <Search size={26} className="mrp-profile-avatar-fallback" />
               <div>
                 <p className="mrp-profile-eyebrow">Search Inventory</p>
-                <h3>{fieldPicker.type === "medication" ? "Medicine" : "Lab Test"}</h3>
+                <h3>Medicine</h3>
               </div>
             </div>
 
             <div className="inventory-picker">
-              {fieldPicker.type === "medication" && (
-                <div className="inventory-category-tabs" role="tablist" aria-label="Filter by item type">
-                  <div
-                    className="inventory-category-tabs-slider"
-                    style={{
-                      width: `${100 / fieldPickerTabs.length}%`,
-                      left: `${(fieldPickerTabs.indexOf(fieldPickerCategoryTab) * 100) / fieldPickerTabs.length}%`,
-                    }}
-                  />
-                  {fieldPickerTabs.map((tab) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      role="tab"
-                      aria-selected={fieldPickerCategoryTab === tab}
-                      className={`inventory-category-tab${fieldPickerCategoryTab === tab ? " active" : ""}`}
-                      onClick={() => setFieldPickerCategoryTab(tab)}
-                    >
-                      {tab}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="inventory-category-tabs" role="tablist" aria-label="Filter by item type">
+                <div
+                  className="inventory-category-tabs-slider"
+                  style={{
+                    width: `${100 / fieldPickerTabs.length}%`,
+                    left: `${(fieldPickerTabs.indexOf(fieldPickerCategoryTab) * 100) / fieldPickerTabs.length}%`,
+                  }}
+                />
+                {fieldPickerTabs.map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={fieldPickerCategoryTab === tab}
+                    className={`inventory-category-tab${fieldPickerCategoryTab === tab ? " active" : ""}`}
+                    onClick={() => setFieldPickerCategoryTab(tab)}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
 
               <div className="inventory-picker-search">
                 <Search size={15} />
@@ -3114,11 +3312,11 @@ export default function MedicalRecordsModule({
           width: 100%;
         }
 
-        .mrp-header {
+        .mrp-top-row {
           display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 16px;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 12px;
           margin-bottom: 18px;
         }
 
@@ -3138,17 +3336,15 @@ export default function MedicalRecordsModule({
         }
 
         .mrp-back {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
+          display: grid;
+          place-items: center;
           flex-shrink: 0;
+          width: 36px;
+          height: 36px;
           border: 1px solid #cfe2ea;
           background: #fff;
           color: #21697f;
-          border-radius: 10px;
-          padding: 10px 15px;
-          font-weight: 700;
-          font-size: 13px;
+          border-radius: 50%;
           cursor: pointer;
         }
 
@@ -3326,30 +3522,34 @@ export default function MedicalRecordsModule({
         }
 
         .mrp-history-card {
-          border: 1px solid #e1eef3;
-          border-radius: 12px;
-          background: #fff;
-          overflow: hidden;
-        }
-
-        .mrp-history-card.expanded {
-          border-color: #a9dff0;
-        }
-
-        .mrp-history-summary {
           display: flex;
           flex-direction: column;
           gap: 2px;
           width: 100%;
-          border: 0;
-          background: none;
+          border: 1px solid #e1eef3;
+          border-radius: 12px;
+          background: #fff;
           padding: 12px 13px;
           text-align: left;
           cursor: pointer;
+          font: inherit;
         }
 
-        .mrp-history-summary:hover {
+        .mrp-history-card:hover {
           background: #f7fbfd;
+        }
+
+        .mrp-history-card.selected {
+          border-color: #257fa9;
+          background: #f2fafd;
+          box-shadow: 0 0 0 1px #257fa9 inset;
+        }
+
+        .mrp-history-card-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
         }
 
         .mrp-history-date {
@@ -3361,15 +3561,30 @@ export default function MedicalRecordsModule({
         }
 
         .mrp-history-label {
+          flex-shrink: 0;
+          padding: 2px 8px;
+          border-radius: 20px;
+          background: #eaf6fb;
           color: #267da3;
           font-weight: 700;
-          font-size: 11.5px;
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: .02em;
         }
 
+        /* Diagnosis text can run long (free-typed by the vet) -- clamped to
+           2 lines so one wordy record doesn't blow up the card's height and
+           throw off the rhythm of the whole list; the full text is always
+           there in the read-only view once opened. */
         .mrp-history-title-text {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
           color: #20313b;
           font-weight: 700;
           font-size: 13px;
+          line-height: 1.4;
         }
 
         .mrp-history-vet {
@@ -3377,26 +3592,122 @@ export default function MedicalRecordsModule({
           font-size: 12px;
         }
 
-        .mrp-history-details {
+        .mrp-history-view {
           display: grid;
-          gap: 6px;
-          padding: 0 13px 13px;
-          font-size: 12.5px;
-          color: #48717f;
+          gap: 14px;
         }
 
-        .mrp-history-details p {
-          margin: 0;
+        .mrp-history-view-head {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 14px;
+          flex-wrap: wrap;
         }
 
-        .mrp-history-details b {
-          color: #294653;
+        .mrp-history-view-head h2 {
+          margin: 2px 0 4px;
+          color: #17445a;
+          font-size: 20px;
+        }
+
+        .mrp-history-view-meta {
+          color: #6f8792;
+          font-size: 13px;
+          font-weight: 600;
+        }
+
+        .mrp-history-view-close {
+          display: grid;
+          place-items: center;
+          flex-shrink: 0;
+          width: 32px;
+          height: 32px;
+          border: 1px solid #cfe2ea;
+          background: #fff;
+          border-radius: 50%;
+          color: #17445a;
+          cursor: pointer;
+        }
+
+        .mrp-history-view-close:hover {
+          background: #eaf6fb;
         }
 
         .mrp-history-hint {
           margin: 0;
           color: #8496a0;
           font-size: 12px;
+        }
+
+        .mrp-history-readonly-note {
+          margin: 0;
+          padding: 6px 9px;
+          border-radius: 8px;
+          background: #f3f9fb;
+          color: #48717f;
+          font-size: 11.5px;
+          font-weight: 600;
+        }
+
+        /* One reading column instead of a 2-col grid -- clinical notes
+           run long and uneven, so pairing them side by side just produced
+           ragged, hard-to-scan rows. Each section groups related fields
+           under a small heading instead. */
+        .mrp-history-section {
+          display: grid;
+          gap: 12px;
+        }
+
+        .mrp-history-section + .mrp-history-section {
+          padding-top: 12px;
+          border-top: 1px solid #eaf2f6;
+        }
+
+        .mrp-history-section h4 {
+          margin: 0;
+          color: #257fa9;
+          font-size: 11.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+        }
+
+        .mrp-history-field span {
+          display: block;
+          color: #6f8792;
+          font-size: 10.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .03em;
+          margin-bottom: 3px;
+        }
+
+        .mrp-history-field p {
+          margin: 0;
+          color: #294653;
+          font-size: 13px;
+          line-height: 1.55;
+          white-space: pre-wrap;
+        }
+
+        .mrp-history-items-list {
+          margin: 0;
+          padding-left: 16px;
+          color: #294653;
+          font-size: 13px;
+          line-height: 1.55;
+        }
+
+        .mrp-history-followup {
+          margin: 0;
+          padding: 8px 12px;
+          border-left: 3px solid #318fbe;
+          border-radius: 0 8px 8px 0;
+          background: #eaf6fb;
+          color: #17445a;
+          font-weight: 700;
+          font-size: 12.5px;
         }
 
         .mrp-history-actions {
@@ -3718,10 +4029,19 @@ export default function MedicalRecordsModule({
           position: relative;
         }
 
+        /* Medication gets its own full-width row (it also carries the
+           Search button and tends to hold the longest text); Dosage,
+           Frequency and Duration share an even 3-column row underneath so
+           each gets real room instead of being squeezed into a 4th of the
+           width alongside Medication. */
         .mr-panel .med-line-grid {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 10px;
+        }
+
+        .mr-panel .med-line-field-wide {
+          grid-column: 1 / -1;
         }
 
         .mr-panel .med-line-grid input {
@@ -3733,6 +4053,17 @@ export default function MedicalRecordsModule({
           font: inherit;
           font-size: 14px;
           box-sizing: border-box;
+        }
+
+        /* No display/gap rule needed here -- ".mr-panel .fields label"
+           already stacks any label's text above its control at a 7px gap,
+           which this inherits for free since .med-line-field is a <label>. */
+        .mr-panel .med-line-field span {
+          font-weight: 700;
+          font-size: 11px;
+          color: #6f8792;
+          text-transform: uppercase;
+          letter-spacing: .03em;
         }
 
         .med-input-with-picker {
@@ -3983,25 +4314,36 @@ export default function MedicalRecordsModule({
           grid-column: 1 / -1;
         }
 
+        /* A plain toggle button now (no checkbox square) -- the chevron on
+           the right is the only on/off indicator, flipping to point up
+           once expanded. */
         .mr-panel .fields .checkbox-field {
           display: flex !important;
           flex-direction: row;
           align-items: center;
+          justify-content: space-between;
           gap: 10px;
+          width: 100%;
           padding: 12px 14px;
           border: 1px solid #d7eaf2;
           border-radius: 10px;
           background: #f4fbfe;
           color: #21697f;
+          font: inherit;
+          font-weight: 700;
+          font-size: 13px;
+          text-align: left;
           cursor: pointer;
         }
 
-        .mr-panel .fields .checkbox-field input[type="checkbox"] {
-          width: 17px;
-          height: 17px;
+        .mr-panel .fields .checkbox-field-chevron {
           flex-shrink: 0;
-          accent-color: #318fbe;
-          cursor: pointer;
+          color: #6f96a3;
+          transition: transform .18s ease;
+        }
+
+        .mr-panel .fields .checkbox-field-chevron.open {
+          transform: rotate(180deg);
         }
 
         .mr-panel .field-hint {
@@ -4343,7 +4685,9 @@ export default function MedicalRecordsModule({
         }
 
         .queue-context-banner {
-          margin: 0 0 18px;
+          flex: 1;
+          min-width: 0;
+          margin: 0;
           padding: 12px 15px;
           border-radius: 12px;
           background: #eaf7fc;
@@ -4520,6 +4864,58 @@ export default function MedicalRecordsModule({
           accent-color: #4da8da;
         }
 
+        /* Flows as compact wrapping pills (not a fixed-height grid box or a
+           textarea) so a short test list takes only the one or two rows it
+           actually needs instead of always reserving a fixed block of
+           vertical space. The extra ".fields" step (and !important on
+           display) is needed to outrank ".mr-panel .fields label", which
+           otherwise stacks each pill's checkbox above its text instead of
+           beside it -- same fix already used for ".checkbox-field" above. */
+        .mr-panel .fields .lab-test-checks {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 12px 14px;
+          border: 1px solid #d7eaf2;
+          border-radius: 10px;
+          background: #f4fbfe;
+        }
+
+        .mr-panel .fields .lab-test-check {
+          display: flex !important;
+          flex-direction: row;
+          align-items: center;
+          gap: 7px;
+          padding: 7px 12px;
+          border: 1px solid #cfe2ea;
+          border-radius: 20px;
+          background: #fff;
+          font-weight: 600;
+          font-size: 12.5px;
+          color: #21697f;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: background .15s ease, border-color .15s ease, color .15s ease;
+        }
+
+        .mr-panel .fields .lab-test-check:hover {
+          background: #eaf6fb;
+        }
+
+        .mr-panel .fields .lab-test-check:has(input:checked) {
+          background: #d9eef6;
+          border-color: #318fbe;
+          color: #17445a;
+        }
+
+        .mr-panel .fields .lab-test-check input {
+          width: 15px;
+          height: 15px;
+          flex-shrink: 0;
+          accent-color: #318fbe;
+          cursor: pointer;
+        }
+
         @media(max-width:1100px) {
           .mrp-grid {
             grid-template-columns: 1fr;
@@ -4542,8 +4938,13 @@ export default function MedicalRecordsModule({
         }
 
         @media(max-width:650px) {
-          .mrp-header {
+          .mrp-top-row {
             flex-direction: column;
+            align-items: stretch;
+          }
+
+          .mrp-top-row .mrp-back {
+            align-self: flex-end;
           }
 
           .mrp-actions {

@@ -164,6 +164,7 @@ export default function PetManagementModule({
 
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [photoError, setPhotoError] = useState("");
   const [search, setSearch] = useState("");
   const [speciesFilter, setSpeciesFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
@@ -574,6 +575,7 @@ export default function PetManagementModule({
     });
 
     setFile(null);
+    setPhotoError("");
     setOwnerQuery("");
     setOwnerDropdownOpen(false);
     setSpeciesQuery("");
@@ -739,6 +741,14 @@ export default function PetManagementModule({
     if (trimmedWeight && (!/^\d+(\.\d+)?$/.test(trimmedWeight) || Number(trimmedWeight) <= 0)) {
       errors.weight = "Enter a valid weight greater than 0.";
       if (petFieldRefs.weight) allFieldRefs.weight = petFieldRefs.weight;
+    }
+    if (!form.sex) {
+      errors.sex = "Please select the pet's sex.";
+      if (petFieldRefs.sex) allFieldRefs.sex = petFieldRefs.sex;
+    }
+    if (!form.dateOfBirth) {
+      errors.dateOfBirth = "Date of birth is required.";
+      if (petFieldRefs.dateOfBirth) allFieldRefs.dateOfBirth = petFieldRefs.dateOfBirth;
     }
 
     setFieldErrors(errors);
@@ -1049,6 +1059,7 @@ export default function PetManagementModule({
             <form
               className="form-card"
               onSubmit={handleSubmit}
+              noValidate
             >
               <div className="form-head">
                 <div>
@@ -1404,6 +1415,8 @@ export default function PetManagementModule({
                     </span>
 
                     <select
+                      ref={registerPetFieldRef("sex")}
+                      className={invalidClass(fieldErrors, "sex")}
                       required
                       value={form.sex}
                       onChange={(event) =>
@@ -1422,6 +1435,7 @@ export default function PetManagementModule({
                         </option>
                       ))}
                     </select>
+                    {fieldErrors.sex && <span className="field-error-text">{fieldErrors.sex}</span>}
                   </label>
 
                   <label>
@@ -1431,6 +1445,8 @@ export default function PetManagementModule({
                     </span>
 
                     <input
+                      ref={registerPetFieldRef("dateOfBirth")}
+                      className={invalidClass(fieldErrors, "dateOfBirth")}
                       required
                       type="date"
                       max={new Date()
@@ -1444,6 +1460,7 @@ export default function PetManagementModule({
                         )
                       }
                     />
+                    {fieldErrors.dateOfBirth && <span className="field-error-text">{fieldErrors.dateOfBirth}</span>}
                   </label>
 
                   <label>
@@ -1621,7 +1638,7 @@ export default function PetManagementModule({
                   Photo
                 </h3>
 
-                <div className="photo-upload">
+                <div className={`photo-upload${photoError ? " field-invalid" : ""}`}>
                   <div className="photo-preview">
                     {previewUrl ? (
                       <img src={previewUrl} alt="Pet preview" />
@@ -1632,6 +1649,7 @@ export default function PetManagementModule({
                     <label
                       className="photo-camera"
                       title="Upload pet photo"
+                      ref={registerPetFieldRef("photo")}
                     >
                       <Camera size={15} />
 
@@ -1644,14 +1662,18 @@ export default function PetManagementModule({
                           event.target.value = "";
                           if (!selected) {
                             setFile(null);
+                            setPhotoError("");
                             return;
                           }
                           try {
                             validateImageFile(selected);
                             setMessage("");
+                            setPhotoError("");
                             setFile(selected);
                           } catch (error) {
                             setMessage(error.message);
+                            setPhotoError(error.message);
+                            petFieldRefs.photo?.focus?.();
                           }
                         }}
                       />
@@ -1676,6 +1698,8 @@ export default function PetManagementModule({
                         Remove selected photo
                       </button>
                     )}
+
+                    {photoError && <span className="field-error-text">{photoError}</span>}
                   </div>
                 </div>
               </div>
@@ -1716,10 +1740,6 @@ export default function PetManagementModule({
                 </button>
               )}
             </div>
-
-            <p className="list-description">
-              Search and review registered animal patients.
-            </p>
           </div>
 
           <div className="toolbar-controls">
@@ -2476,8 +2496,7 @@ export default function PetManagementModule({
           color: #20313b;
         }
 
-        .form-description,
-        .list-description {
+        .form-description {
           margin: 7px 0 0;
           color: #6f7f88;
           line-height: 1.5;

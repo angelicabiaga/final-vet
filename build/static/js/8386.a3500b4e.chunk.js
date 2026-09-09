@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[8386],{88386(e,n,r){r.r(n),r.d(n,{default:()=>i});r(65043);var t=r(34498),a=r(6090),s=r(70579);function i(e){let n=e.profile;return(0,s.jsx)(t.A,{profile:n,title:"Animal Patients",children:(0,s.jsx)(a.A,{profile:n,ownerOnly:!0})})}}}]);
+//# sourceMappingURL=8386.a3500b4e.chunk.js.map

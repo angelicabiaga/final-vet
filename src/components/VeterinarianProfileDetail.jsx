@@ -32,6 +32,51 @@ import {
   validatePasswordsMatch,
   sanitizePhoneInput,
 } from "../utils/validators";
+import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
+
+function validateVetProfileField(name, value) {
+  switch (name) {
+    case "firstName":
+      return String(value || "").trim() ? "" : "First name is required.";
+    case "lastName":
+      return String(value || "").trim() ? "" : "Last name is required.";
+    case "username":
+      return String(value || "").trim() ? "" : "Username is required.";
+    case "email": {
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "Email is required.";
+      return /^\S+@\S+\.\S+$/.test(trimmed) ? "" : "Please enter a valid email address.";
+    }
+    case "phone": {
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "Contact number is required.";
+      return isValidPhMobile(trimmed) ? "" : INVALID_PH_MOBILE_MESSAGE;
+    }
+    case "address":
+      return String(value || "").trim() ? "" : "Address is required.";
+    case "specialization":
+      return String(value || "").trim() ? "" : "Specialization is required.";
+    default:
+      return "";
+  }
+}
+
+function validateVetPasswordField(name, passwords) {
+  switch (name) {
+    case "current":
+      return String(passwords.current || "") ? "" : "Current password is required.";
+    case "next": {
+      if (!String(passwords.next || "")) return "New password is required.";
+      try { validatePassword(passwords.next); return ""; } catch (error) { return error.message; }
+    }
+    case "confirm": {
+      if (!String(passwords.confirm || "")) return "Please confirm your new password.";
+      try { validatePasswordsMatch(passwords.next, passwords.confirm); return ""; } catch (error) { return error.message; }
+    }
+    default:
+      return "";
+  }
+}
 
 function splitFullName(fullName) {
   const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
@@ -64,13 +109,18 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
-  const [errors, setErrors] = useState({ phone: "", address: "", specialization: "" });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const fieldRefs = useRef({}).current;
+  const registerFieldRef = (name) => (el) => { fieldRefs[name] = el; };
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [avatarDraft, setAvatarDraft] = useState(null);
   const [message, setMessage] = useState({ type: "", text: "" });
 
   const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
+  const [passwordFieldErrors, setPasswordFieldErrors] = useState({});
+  const passwordFieldRefs = useRef({}).current;
+  const registerPasswordFieldRef = (name) => (el) => { passwordFieldRefs[name] = el; };
   const [show, setShow] = useState({ current: false, next: false, confirm: false });
   const [otpModal, setOtpModal] = useState({ open: false, email: "", purpose: "", title: "" });
   const passwordSectionRef = useRef(null);
@@ -126,23 +176,25 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
 
   function field(name, value) {
     setForm((current) => ({ ...current, [name]: value }));
-    setErrors((current) => (current[name] ? { ...current, [name]: "" } : current));
+    setFieldErrors((current) => (
+      current[name] ? { ...current, [name]: validateVetProfileField(name, value) } : current
+    ));
   }
 
   async function saveDetails(event) {
     event.preventDefault();
     setMessage({ type: "", text: "" });
-    const trimmedPhone = form.phone.trim();
-    const nextErrors = { phone: "", address: "", specialization: "" };
-    if (!trimmedPhone) nextErrors.phone = "Contact number is required.";
-    else if (!isValidPhMobile(trimmedPhone)) nextErrors.phone = INVALID_PH_MOBILE_MESSAGE;
-    if (!form.address.trim()) nextErrors.address = "Address is required.";
-    if (!form.specialization.trim()) nextErrors.specialization = "Specialization is required.";
-    if (nextErrors.phone || nextErrors.address || nextErrors.specialization) {
-      setErrors(nextErrors);
-      return setMessage({ type: "error", text: "Please fix the highlighted fields before saving." });
+    const errors = {};
+    ["firstName", "lastName", "username", "email", "phone", "address", "specialization"].forEach((name) => {
+      const errorMessage = validateVetProfileField(name, form[name]);
+      if (errorMessage) errors[name] = errorMessage;
+    });
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setMessage({ type: "error", text: "Please fix the highlighted fields before saving." });
+      focusFirstInvalidField(fieldRefs, errors);
+      return;
     }
-    setErrors(nextErrors);
     setSaving(true);
     try {
       const updated = await updateVeterinarianProfile(vetId, { ...form, full_name: joinFullName(form) }, viewerProfile);
@@ -213,11 +265,16 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
   async function savePassword(event) {
     event.preventDefault();
     setMessage({ type: "", text: "" });
-    try {
-      validatePassword(passwords.next);
-      validatePasswordsMatch(passwords.next, passwords.confirm);
-    } catch (error) {
-      return setMessage({ type: "error", text: error.message });
+    const errors = {};
+    ["current", "next", "confirm"].forEach((name) => {
+      const errorMessage = validateVetPasswordField(name, passwords);
+      if (errorMessage) errors[name] = errorMessage;
+    });
+    setPasswordFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setMessage({ type: "error", text: "Please fix the highlighted fields before saving." });
+      focusFirstInvalidField(passwordFieldRefs, errors);
+      return;
     }
     setSaving(true);
     try {
@@ -234,15 +291,34 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
   async function verifyOtp(code) {
     await confirmPasswordChange(code);
     setPasswords({ current: "", next: "", confirm: "" });
+    setPasswordFieldErrors({});
     setMessage({ type: "success", text: "Password changed successfully." });
     setOtpModal({ open: false, email: "", purpose: "", title: "" });
   }
 
+  function passwordField(name, value) {
+    setPasswords((current) => {
+      const next = { ...current, [name]: value };
+      if (passwordFieldErrors[name] || (name === "next" && passwordFieldErrors.confirm)) {
+        setPasswordFieldErrors((currentErrors) => {
+          const nextErrors = { ...currentErrors, [name]: validateVetPasswordField(name, next) };
+          if (name === "next" && currentErrors.confirm) {
+            nextErrors.confirm = validateVetPasswordField("confirm", next);
+          }
+          return nextErrors;
+        });
+      }
+      return next;
+    });
+  }
+
   const PasswordField = ({ name, label }) => (
-    <label><span>{label}<span className="required-mark"> *</span></span><div className="vpd-passwordBox">
-      <input type={show[name] ? "text" : "password"} value={passwords[name]} onChange={(e) => setPasswords((p) => ({ ...p, [name]: e.target.value }))} required />
+    <label><span>{label}<span className="required-mark"> *</span></span><div className={`vpd-passwordBox${passwordFieldErrors[name] ? " field-invalid" : ""}`}>
+      <input ref={registerPasswordFieldRef(name)} type={show[name] ? "text" : "password"} value={passwords[name]} onChange={(e) => passwordField(name, e.target.value)} required />
       <button type="button" onClick={() => setShow((s) => ({ ...s, [name]: !s[name] }))}>{show[name] ? <EyeOff size={18} /> : <Eye size={18} />}</button>
-    </div></label>
+    </div>
+    {passwordFieldErrors[name] && <span className="field-error-text">{passwordFieldErrors[name]}</span>}
+    </label>
   );
 
   if (loading) return <div className="vpd vpd-loading">Loading veterinarian profile...</div>;
@@ -307,29 +383,29 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
         </div>
 
         {isSelf ? (
-          <form onSubmit={saveDetails} className="vpd-form">
+          <form onSubmit={saveDetails} className="vpd-form" noValidate>
             <div className="vpd-pair">
-              <label><span>First name<span className="required-mark"> *</span></span><input value={form.firstName} onChange={(e) => field("firstName", e.target.value)} required /></label>
-              <label><span>Last name<span className="required-mark"> *</span></span><input value={form.lastName} onChange={(e) => field("lastName", e.target.value)} required /></label>
+              <label><span>First name<span className="required-mark"> *</span></span><input ref={registerFieldRef("firstName")} className={invalidClass(fieldErrors, "firstName")} value={form.firstName} onChange={(e) => field("firstName", e.target.value)} required />{fieldErrors.firstName && <span className="field-error-text">{fieldErrors.firstName}</span>}</label>
+              <label><span>Last name<span className="required-mark"> *</span></span><input ref={registerFieldRef("lastName")} className={invalidClass(fieldErrors, "lastName")} value={form.lastName} onChange={(e) => field("lastName", e.target.value)} required />{fieldErrors.lastName && <span className="field-error-text">{fieldErrors.lastName}</span>}</label>
             </div>
             <label><span>Middle name<span className="optional-mark"> (Optional)</span></span><input value={form.middleName} onChange={(e) => field("middleName", e.target.value)} /></label>
             <div className="vpd-pair">
-              <label><span>Username<span className="required-mark"> *</span></span><input value={form.username} onChange={(e) => field("username", e.target.value)} required /></label>
-              <label><span>Email<span className="required-mark"> *</span></span><input type="email" value={form.email} onChange={(e) => field("email", e.target.value)} required /></label>
+              <label><span>Username<span className="required-mark"> *</span></span><input ref={registerFieldRef("username")} className={invalidClass(fieldErrors, "username")} value={form.username} onChange={(e) => field("username", e.target.value)} required />{fieldErrors.username && <span className="field-error-text">{fieldErrors.username}</span>}</label>
+              <label><span>Email<span className="required-mark"> *</span></span><input ref={registerFieldRef("email")} className={invalidClass(fieldErrors, "email")} type="email" value={form.email} onChange={(e) => field("email", e.target.value)} required />{fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}</label>
             </div>
             <div className="vpd-pair">
               <label><span>Contact number<span className="required-mark"> *</span></span>
-                <input type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={(e) => field("phone", sanitizePhoneInput(e.target.value))} placeholder="09XXXXXXXXX" aria-invalid={!!errors.phone} required />
-                {errors.phone && <span className="vpd-fieldError">{errors.phone}</span>}
+                <input ref={registerFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={(e) => field("phone", sanitizePhoneInput(e.target.value))} placeholder="09XXXXXXXXX" required />
+                {fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}
               </label>
               <label><span>Specialization<span className="required-mark"> *</span></span>
-                <input value={form.specialization} onChange={(e) => field("specialization", e.target.value)} placeholder="e.g. Small Animal Medicine" aria-invalid={!!errors.specialization} required />
-                {errors.specialization && <span className="vpd-fieldError">{errors.specialization}</span>}
+                <input ref={registerFieldRef("specialization")} className={invalidClass(fieldErrors, "specialization")} value={form.specialization} onChange={(e) => field("specialization", e.target.value)} placeholder="e.g. Small Animal Medicine" required />
+                {fieldErrors.specialization && <span className="field-error-text">{fieldErrors.specialization}</span>}
               </label>
             </div>
             <label><span>Address<span className="required-mark"> *</span></span>
-              <textarea value={form.address} onChange={(e) => field("address", e.target.value)} aria-invalid={!!errors.address} required />
-              {errors.address && <span className="vpd-fieldError">{errors.address}</span>}
+              <textarea ref={registerFieldRef("address")} className={invalidClass(fieldErrors, "address")} value={form.address} onChange={(e) => field("address", e.target.value)} required />
+              {fieldErrors.address && <span className="field-error-text">{fieldErrors.address}</span>}
             </label>
 
             <h4 className="vpd-subheading"><GraduationCap size={16} /> Background in Veterinary Medicine</h4>
@@ -365,7 +441,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
       {isSelf && (
         <section className={`vpd-card${forcePasswordChange ? " highlight" : ""}`} ref={passwordSectionRef}>
           <h3><LockKeyhole size={20} /> Change Password</h3>
-          <form onSubmit={savePassword} className="vpd-form">
+          <form onSubmit={savePassword} className="vpd-form" noValidate>
             <PasswordField name="current" label="Current password" />
             <PasswordField name="next" label="New password" />
             <PasswordChecklist password={passwords.next} />
@@ -427,9 +503,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
 
         .vpd-form{display:grid;gap:13px}
         .vpd-form label{display:grid;gap:6px;font-size:13px;font-weight:700;color:#334e5a}
-        .vpd-fieldError{color:#d14b4b;font-size:11.5px;font-weight:600}
         .vpd-form input,.vpd-form textarea{width:100%;border:1px solid #d8e8ef;border-radius:10px;padding:11px;font:inherit;box-sizing:border-box}
-        .vpd-form input[aria-invalid="true"],.vpd-form textarea[aria-invalid="true"]{border-color:#e2a3a3}
         .vpd-form textarea{min-height:78px;resize:vertical}
         .vpd-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
         .vpd-save-btn{justify-self:start;border:0;border-radius:10px;padding:11px 15px;background:#4DA8DA;color:#fff;display:flex;align-items:center;gap:7px;cursor:pointer;font-weight:700}

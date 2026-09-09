@@ -245,7 +245,7 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
       <div className="profileHeroInfo"><h2>{joinFullName(form) || profile.full_name}</h2><p>@{form.username || profile.username}</p><span>{String(profile.role || "").replaceAll("_", " ")}</span>{uploading && <small> Uploading photo...</small>}</div>
     </section>
     {loading ? <div className="card">Loading profile...</div> : <div className="columns">
-      <form className="card form" onSubmit={saveDetails}><h3><UserCircle size={20}/> Personal Information</h3>
+      <form className="card form" onSubmit={saveDetails} noValidate><h3><UserCircle size={20}/> Personal Information</h3>
         <div className="pair">
           <label><span>First name<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("firstName")} className={invalidClass(fieldErrors, "firstName")} value={form.firstName} onChange={(e)=>field("firstName",e.target.value)} required/>{fieldErrors.firstName && <span className="field-error-text">{fieldErrors.firstName}</span>}</label>
           <label><span>Last name<span className="required-mark"> *</span></span><input ref={registerDetailFieldRef("lastName")} className={invalidClass(fieldErrors, "lastName")} value={form.lastName} onChange={(e)=>field("lastName",e.target.value)} required/>{fieldErrors.lastName && <span className="field-error-text">{fieldErrors.lastName}</span>}</label>
@@ -261,7 +261,7 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
         <label><span>Address<span className="optional-mark"> (Optional)</span></span><textarea value={form.address} onChange={(e)=>field("address",e.target.value)}/></label>
         <button disabled={saving}><Save size={17}/>{saving?"Saving...":"Save Profile"}</button>
       </form>
-      <form className={`card form${forcePasswordChange ? " highlight" : ""}`} onSubmit={savePassword} ref={passwordSectionRef}><h3><LockKeyhole size={20}/> Change Password</h3>
+      <form className={`card form${forcePasswordChange ? " highlight" : ""}`} onSubmit={savePassword} ref={passwordSectionRef} noValidate><h3><LockKeyhole size={20}/> Change Password</h3>
         <PasswordField name="current" label="Current password"/>
         <PasswordField name="next" label="New password"/>
         <PasswordChecklist password={passwords.next}/>

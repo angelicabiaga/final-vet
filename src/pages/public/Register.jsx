@@ -1391,7 +1391,6 @@ export default function Register() {
               {message && (
                 <div
                   className="register-error"
-                  role="alert"
                   aria-live="assertive"
                 >
                   {message}
