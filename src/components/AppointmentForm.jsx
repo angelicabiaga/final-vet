@@ -306,7 +306,30 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
       setPetModalOpen(true);
       setPetDropdownOpen(false);
     } catch (error) {
-      if (error.message !== CONSENT_REQUIRED_ERROR) setMessage({ type: "error", text: error.message });
+      if (error.message === CONSENT_REQUIRED_ERROR) return;
+
+      // ensureOwnerId's own error message ("Fill in the guest's first
+      // name...") only ever showed as a passive banner, easy to miss --
+      // this instead highlights and scrolls to the actual empty field(s),
+      // the same way the main Complete/Register Walk-In submit already
+      // does, so "Add Pet" failing silently doesn't read as broken.
+      if (isStaff && guestFlow && !ownerRecord) {
+        const errors = {};
+        const allFieldRefs = {};
+        ["firstName", "lastName", "phone", "email", "address"].forEach((name) => {
+          const errorMessage = validateGuestField(name, guestForm[name]);
+          if (errorMessage) errors[name] = errorMessage;
+          if (guestFieldRefs[name]) allFieldRefs[name] = guestFieldRefs[name];
+        });
+        if (Object.keys(errors).length) {
+          setFieldErrors((current) => ({ ...current, ...errors }));
+          setMessage({ type: "error", text: "Fill in the guest's details above before adding a pet." });
+          focusFirstInvalidField(allFieldRefs, errors);
+          return;
+        }
+      }
+
+      setMessage({ type: "error", text: error.message });
     }
   }
 
@@ -563,7 +586,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   return (
     <div className="appointment-grid">
       <form className="appointment-card" onSubmit={submit}>
-        <div className="form-title"><CalendarDays /> <div><h2>{isStaff ? "Create Appointment" : "Book an Appointment"}</h2><p>General Consultation · 10-minute time slots</p></div></div>
+        <div className="form-title"><CalendarDays /> <div><h2>{isStaff ? (guestFlow ? "Create Pet Owner" : "Create Appointment") : "Book an Appointment"}</h2><p>General Consultation · 10-minute time slots</p></div></div>
         {message.text && <div className={`notice ${message.type}`}>{message.text}</div>}
 
         {isStaff && !lockOwnerSelection && (
