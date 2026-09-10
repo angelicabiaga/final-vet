@@ -53,6 +53,19 @@ function bookingTime(r){
  return "—";
 }
 
+// Fixed set so every reassignment is reportable/consistent -- the free-typed
+// detail staff actually want the owner to read goes in the separate Notes
+// field instead (reassignment_notes), which is what the owner notification
+// shows.
+const REASSIGN_OTHER_REASON="Other (add notes)";
+const REASSIGN_REASONS=[
+ "Doctor Unavailable (Emergency)",
+ "Doctor On Leave / Sick",
+ "Doctor Overbooked / At Capacity",
+ "Doctor Called Away",
+ REASSIGN_OTHER_REASON
+];
+
 // Reflects what Staff has actually done in POS for this consultation's
 // visit -- billing_status lives on queue_entries, not medical_records, so
 // the History tab looks it up separately (see getBillingStatusesByEntryIds).
@@ -94,6 +107,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
  const [reassignTarget,setReassignTarget]=useState(null);
  const [reassignVetId,setReassignVetId]=useState("");
  const [reassignReason,setReassignReason]=useState("");
+ const [reassignNotes,setReassignNotes]=useState("");
  const [reassignSaving,setReassignSaving]=useState(false);
  const [reassignError,setReassignError]=useState("");
  const [availability,setAvailability]=useState({vets:[],slotMap:{}});
@@ -109,7 +123,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
   navigate(`/veterinarian/medical-records?${params.toString()}`);
  }
  async function openReassign(r){
-  setReassignTarget(r);setReassignVetId("");setReassignReason("");setReassignError("");
+  setReassignTarget(r);setReassignVetId("");setReassignReason("");setReassignNotes("");setReassignError("");
   try{
    setAvailabilityLoading(true);
    setAvailability(await getVeterinarianAvailability(todayLocal()));
@@ -118,15 +132,15 @@ export default function QueueManagementModule({profile,mode="staff"}){
  }
  function closeReassign(){
   if(reassignSaving)return;
-  setReassignTarget(null);setReassignVetId("");setReassignReason("");setReassignError("");
+  setReassignTarget(null);setReassignVetId("");setReassignReason("");setReassignNotes("");setReassignError("");
  }
  async function submitReassign(){
-  if(!reassignTarget||!reassignVetId||reassignSaving)return;
+  if(!reassignTarget||!reassignVetId||!reassignReason||reassignSaving)return;
   try{
    setReassignSaving(true);setReassignError("");
-   await reassignQueueVeterinarian(reassignTarget.id,reassignVetId,reassignReason,profile);
+   await reassignQueueVeterinarian(reassignTarget.id,reassignVetId,reassignReason,reassignNotes,profile);
    setMessage("Doctor reassigned for this visit.");
-   setReassignTarget(null);setReassignVetId("");setReassignReason("");
+   setReassignTarget(null);setReassignVetId("");setReassignReason("");setReassignNotes("");
    await load();
   }catch(e){setReassignError(e.message)}
   finally{setReassignSaving(false)}
@@ -262,7 +276,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
    setError(e.message);
   }finally{setCheckingIn(null)}
  }
- return <AppShell profile={profile} title={profile?.role==="veterinarian"?"My Queue":"Queue Management"}>
+ return <AppShell profile={profile} title={profile?.role==="veterinarian"?"Queue":"Queue Management"}>
   {message&&<div className="ok">{message}</div>}{error&&<div className="err">{error}</div>}
   <div className="stats">{Object.entries(stats).map(([k,v])=><div className="stat" key={k}><strong>{v}</strong><span>{k}</span></div>)}</div>
   {profile?.role!=="veterinarian"&&<div className="card filters"><select value={vet} onChange={e=>setVet(e.target.value)}><option value="">All veterinarians</option>{vets.map(v=><option key={v.id} value={v.id}>{v.full_name}</option>)}</select><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{QUEUE_STATUSES.map(s=><option key={s}>{s}</option>)}</select><button onClick={load}>Refresh</button></div>}
@@ -371,12 +385,18 @@ export default function QueueManagementModule({profile,mode="staff"}){
      </select>
     </label>
     {!availabilityLoading&&availableDoctors.length===0&&<p className="reassign-empty">No other doctor is both scheduled today and free right now.</p>}
-    <label className="reassign-field">Reason <span className="optional-mark"> (Optional)</span>
-     <textarea rows={3} value={reassignReason} onChange={e=>setReassignReason(e.target.value)} placeholder="e.g. Dr. Redmond is out for an emergency"/>
+    <label className="reassign-field">Reason
+     <select value={reassignReason} onChange={e=>{setReassignReason(e.target.value);if(e.target.value!==REASSIGN_OTHER_REASON)setReassignNotes("");}}>
+      <option value="">Select a reason</option>
+      {REASSIGN_REASONS.map(r=><option key={r} value={r}>{r}</option>)}
+     </select>
     </label>
+    {reassignReason===REASSIGN_OTHER_REASON&&<label className="reassign-field">Notes <span className="optional-mark"> (Shown to the pet owner)</span>
+     <textarea rows={3} value={reassignNotes} onChange={e=>setReassignNotes(e.target.value)} placeholder="e.g. Dr. Redmond is out for a family emergency and will be back next week." autoFocus/>
+    </label>}
     <div className="reassign-actions">
      <button type="button" className="link" onClick={closeReassign} disabled={reassignSaving}>Cancel</button>
-     <button type="button" className="serve-btn" disabled={!reassignVetId||reassignSaving} onClick={submitReassign}>{reassignSaving?"Reassigning…":"Reassign Doctor"}</button>
+     <button type="button" className="serve-btn" disabled={!reassignVetId||!reassignReason||reassignSaving} onClick={submitReassign}>{reassignSaving?"Reassigning…":"Reassign Doctor"}</button>
     </div>
    </div>
   </div>}

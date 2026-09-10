@@ -30,7 +30,7 @@ export default function MyAppointments({ profile }) {
       setCancelling(false);
     }
   }
-  return <AppShell profile={profile} title="My Appointments">
+  return <AppShell profile={profile} title="Appointments">
     <div className="appt-page">
       <div className="toolbar"><div><h2>Appointment History</h2><p>View and cancel eligible appointments.</p></div><button onClick={load}><RefreshCw size={17}/> Refresh</button></div>
       {notice && <div className={`notice ${notice.type}`}>{notice.text}</div>}

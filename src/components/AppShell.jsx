@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Menu, LogOut, UserCircle, Users, X, ChevronLeft, ChevronRight,
-  LayoutDashboard, ClipboardPlus, Bell, UserCog, CreditCard
+  LayoutDashboard, ClipboardPlus, Bell, UserCog,
+  CalendarDays, CalendarPlus, CalendarClock, Clock3, BarChart3
 } from "lucide-react";
 import { logoutUser } from "../services/authService";
 import { reconcileInventoryStatus, getInventoryItems, subscribeToInventoryChanges } from "../services/inventoryService";
@@ -18,20 +19,22 @@ import dashboardIcon from "../assets/reference/Dashboard_Icon.png";
 import paymentIcon from "../assets/reference/payment_icon.png";
 import inventoryIcon from "../assets/reference/Inventory_Icon.png";
 import petsIcon from "../assets/reference/Pets_Icon.png";
-import appointmentIcon from "../assets/reference/Appointment_Icon.png";
 import messageIcon from "../assets/reference/Message_Icon.png";
 
-// Most nav types keep their original PNG icons; only the types with no
-// strong original identity (medical/report, notification, profile, user)
-// use the shared lucide-react set (already used for every other icon in
-// this file). A string value here means "render as an <img>"; a
-// component value means "render as a lucide icon" -- see the
+// Most nav types keep their original PNG icons; types with no strong
+// original identity, or that used to all share one identical PNG
+// (appointment/queue/schedule/bookAppointment all pointed at the same
+// Appointment_Icon.png, making those sidebar rows visually indistinguishable
+// from each other), use distinct lucide-react icons instead (already used
+// for every other icon in this file). A string value here means "render as
+// an <img>"; a component value means "render as a lucide icon" -- see the
 // isImageIcon check below.
 const iconByType = {
   dashboard: dashboardIcon,
-  appointment: appointmentIcon,
-  queue: appointmentIcon,
-  schedule: appointmentIcon,
+  appointment: CalendarDays,
+  bookAppointment: CalendarPlus,
+  queue: Clock3,
+  schedule: CalendarClock,
   owner: Users,
   pet: petsIcon,
   medical: ClipboardPlus,
@@ -40,7 +43,7 @@ const iconByType = {
   notification: Bell,
   profile: UserCircle,
   user: UserCog,
-  report: ClipboardPlus,
+  report: BarChart3,
   payment: paymentIcon
 };
 
@@ -243,9 +246,9 @@ export default function AppShell({ profile, title, children }) {
     pet_owner: [
       { label: "Dashboard", to: "/pet-owner/dashboard", type: "dashboard" },
       { label: "Animal Patients", to: "/pet-owner/pets", type: "pet" },
-      { label: "Book Appointment", to: "/pet-owner/book-appointment", type: "appointment" },
-      { label: "My Appointments", to: "/pet-owner/appointments", type: "appointment" },
-      { label: "My Queue", to: "/pet-owner/queue", type: "queue" },
+      { label: "Book Appointment", to: "/pet-owner/book-appointment", type: "bookAppointment" },
+      { label: "Appointments", to: "/pet-owner/appointments", type: "appointment" },
+      { label: "Queue", to: "/pet-owner/queue", type: "queue" },
       { label: "Messages", to: "/pet-owner/messages", type: "message" },
 
     ],
@@ -263,8 +266,8 @@ export default function AppShell({ profile, title, children }) {
     ],
     veterinarian: [
       { label: "Dashboard", to: "/veterinarian/dashboard", type: "dashboard" },
-      { label: "My Appointments", to: "/veterinarian/appointments", type: "appointment" },
-      { label: "My Queue", to: "/veterinarian/queue", type: "queue" },
+      { label: "Appointments", to: "/veterinarian/appointments", type: "appointment" },
+      { label: "Queue", to: "/veterinarian/queue", type: "queue" },
       { label: "Animal Patients", to: "/veterinarian/patients", type: "pet" },
 
       { label: "Messages", to: "/veterinarian/messages", type: "message" },

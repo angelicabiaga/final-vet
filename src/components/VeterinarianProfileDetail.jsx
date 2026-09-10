@@ -377,8 +377,8 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
           </div>
           <p className="vpd-license-locked-note">
             {vet.license_number
-              ? "Read automatically from the approved PRC ID scan. It can never be typed or edited by anyone."
-              : "Not on file until the PRC ID and face verification below are submitted and approved by an administrator."}
+              ? "Confirmed by an administrator from your submitted PRC license number. It can't be edited here directly — see Verification Status below to resubmit."
+              : "Not on file until you submit your PRC license number below and an administrator approves it."}
           </p>
         </div>
 

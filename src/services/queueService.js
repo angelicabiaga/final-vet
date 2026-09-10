@@ -429,8 +429,9 @@ export async function requeueToNextAvailable(id,profile){
 // (emergency substitution). Only the first reassignment for a visit records
 // original_veterinarian_id -- a second reassignment during the same visit
 // swaps veterinarian_id again but leaves the true original doctor in place.
-export async function reassignQueueVeterinarian(id,newVeterinarianId,reason,profile){
+export async function reassignQueueVeterinarian(id,newVeterinarianId,reason,notes,profile){
   if(!newVeterinarianId)throw new Error("Select a doctor to reassign this visit to.");
+  if(!reason)throw new Error("Select a reason for this reassignment.");
   const {data:entry,error:loadError}=await supabase.from("queue_entries").select("id,status,veterinarian_id,original_veterinarian_id").eq("id",id).single();
   if(loadError)throw new Error(`Unable to load the queue entry: ${loadError.message}`);
   if(entry.status!=="Waiting")throw new Error("Only a Waiting ticket can be reassigned to another doctor.");
@@ -439,7 +440,8 @@ export async function reassignQueueVeterinarian(id,newVeterinarianId,reason,prof
   const {error}=await supabase.from("queue_entries").update({
     veterinarian_id:newVeterinarianId,
     original_veterinarian_id:entry.original_veterinarian_id||entry.veterinarian_id,
-    reassignment_reason:reason?.trim()||null,
+    reassignment_reason:reason,
+    reassignment_notes:notes?.trim()||null,
     reassigned_at:new Date().toISOString(),
     reassigned_by:profile.id
   }).eq("id",id);

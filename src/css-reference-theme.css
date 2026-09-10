@@ -22,7 +22,7 @@ button:not(:disabled):active{transform:translateY(0)}
 .shell{background:transparent!important}
 .shell main{min-width:0}
 .shell .content{background:linear-gradient(145deg,#fff 0%,#e7f5fa 58%,#c9eaf7 100%)!important;min-height:calc(100vh - 85px)}
-.shell .card,.dash-panel,.dash-cards article,.quick-links a,.stat,.panel,.profileHero{
+.shell .card,.dash-panel,.dash-cards article,.stat,.panel,.profileHero{
   border:1px solid rgba(67,143,181,.12)!important;
   box-shadow:var(--pc-shadow)!important;
 }
@@ -73,8 +73,6 @@ button:not(:disabled):active{transform:translateY(0)}
 .dash-cards article:nth-child(3){border-left-color:#e9c46a!important}
 .dash-cards article:nth-child(4){border-left-color:#e76f51!important}
 .dash-cards .icon{background:#eaf5f9!important;color:var(--pc-blue)!important}
-.quick-links a{background:#fff!important;color:var(--pc-navy)!important}
-.quick-links a:hover{background:var(--pc-blue)!important;color:#fff!important;transform:translateY(-2px)}
 
 /* Public/auth pages */
 .auth{background:linear-gradient(135deg,#fff 0%,#d7eff8 55%,#b9dce9 100%)!important}

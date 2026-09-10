@@ -1,24 +1,20 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
-  Camera,
   CheckCircle2,
   Clock3,
   IdCard,
   RefreshCw,
-  ScanLine,
   ShieldCheck,
   UploadCloud,
   XCircle,
 } from "lucide-react";
 import {
-  getSignedVerificationUrls,
   getVerificationRecord,
   reviewVerification,
   submitVerification,
-  uploadVerificationImage,
 } from "../services/veterinarianVerificationService";
-import { extractPrcIdText, parsePrcFields } from "../services/prcOcrService";
+import { isValidPrcLicense, INVALID_PRC_LICENSE_MESSAGE } from "../utils/validators";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 
 const STATUS_META = {
@@ -41,14 +37,11 @@ export function VerificationStatusBadge({ status }) {
 
 // Verification review + submission. Everyone who can see a veterinarian's
 // full profile sees the status badge; only an Administrator can see the
-// documents and record a decision; only the veterinarian themselves can
-// submit or resubmit. The license number, name, and profession are never
-// typed by anyone -- they come only from OCR run on the uploaded PRC ID,
-// right here in the browser. There is no automated liveness or
-// face-matching step, and no automated pass/fail on the OCR reading
-// either -- every submission is a plain "Pending Review" until an
-// administrator makes the call by eye, and they can only accept or ask
-// for a clearer resubmission, never hand-edit what was read.
+// submitted license number and record a decision; only the veterinarian
+// themselves can submit or resubmit. No photos of any kind (ID card, face
+// scan) are collected -- PRC has no public verification API, so the
+// license number the veterinarian types in is confirmed by an
+// administrator's own judgment, not by any automated check.
 export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewerProfile }) {
   const isSelf = viewerProfile?.id === vetId;
   const isAdmin = viewerProfile?.role === "admin";
@@ -57,27 +50,13 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState({ type: "", text: "" });
 
-  const [idFrontFile, setIdFrontFile] = useState(null);
-  const [idBackFile, setIdBackFile] = useState(null);
-  const [ocrRunning, setOcrRunning] = useState(false);
-  const [ocrResult, setOcrResult] = useState(null);
-  const [correctedFields, setCorrectedFields] = useState(null);
-  const [consent, setConsent] = useState(false);
-  const [consentGivenAt, setConsentGivenAt] = useState("");
-  const [cameraActive, setCameraActive] = useState(false);
-  const [faceScanPreview, setFaceScanPreview] = useState("");
-  const [faceScanFile, setFaceScanFile] = useState(null);
-  const [uploading, setUploading] = useState("");
+  const [licenseNumber, setLicenseNumber] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const [reviewUrls, setReviewUrls] = useState(null);
-  const [reviewLoading, setReviewLoading] = useState(false);
   const [decisionReason, setDecisionReason] = useState("");
   const [decisionFieldError, setDecisionFieldError] = useState("");
   const [deciding, setDeciding] = useState("");
 
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
   const decisionReasonRef = useRef(null);
 
   const [fieldErrors, setFieldErrors] = useState({});
@@ -101,170 +80,31 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vetId]);
 
-  useEffect(() => {
-    return () => { streamRef.current?.getTracks().forEach((track) => track.stop()); };
-  }, []);
-
-  async function pickIdFront(event) {
-    const file = event.target.files?.[0] || null;
-    setIdFrontFile(file);
-    setOcrResult(null);
-    setCorrectedFields(null);
-    setMessage({ type: "", text: "" });
-    setFieldErrors((current) => (current.idFront ? { ...current, idFront: "" } : current));
-    if (!file) return;
-
-    setOcrRunning(true);
-    try {
-      const { text, confidence } = await extractPrcIdText(file);
-      const parsed = parsePrcFields(text);
-      setOcrResult({ ...parsed, confidence });
-      setCorrectedFields({
-        nameCandidate: parsed.nameCandidate,
-        profession: parsed.profession,
-        registrationDate: parsed.registrationDate,
-        expirationDate: parsed.expirationDate,
-      });
-    } catch (error) {
-      setMessage({ type: "error", text: "Unable to read this ID photo. Try a clearer, well-lit photo." });
-    } finally {
-      setOcrRunning(false);
-    }
-  }
-
-  function pickIdBack(file) {
-    setIdBackFile(file);
-    setFieldErrors((current) => (current.idBack && file ? { ...current, idBack: "" } : current));
-  }
-
-  function correctField(name, value) {
-    setCorrectedFields((current) => ({ ...current, [name]: value }));
-    setFieldErrors((current) => (
-      current[name] && String(value || "").trim() ? { ...current, [name]: "" } : current
-    ));
-  }
-
-  async function startCamera() {
-    setMessage({ type: "", text: "" });
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setCameraActive(true);
-    } catch (error) {
-      setMessage({ type: "error", text: "Unable to access the camera. Check your browser's camera permission." });
-    }
-  }
-
-  function stopCamera() {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    setCameraActive(false);
-  }
-
-  function capturePhoto() {
-    const video = videoRef.current;
-    if (!video) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const file = new File([blob], `face-scan-${Date.now()}.jpg`, { type: "image/jpeg" });
-      setFaceScanFile(file);
-      setFieldErrors((current) => (current.faceScan ? { ...current, faceScan: "" } : current));
-      setFaceScanPreview(URL.createObjectURL(blob));
-      stopCamera();
-    }, "image/jpeg", 0.9);
-  }
-
-  function retakePhoto() {
-    if (faceScanPreview) URL.revokeObjectURL(faceScanPreview);
-    setFaceScanPreview("");
-    setFaceScanFile(null);
-  }
-
   async function submit(event) {
     event.preventDefault();
     setMessage({ type: "", text: "" });
 
-    if (ocrRunning) {
-      setMessage({ type: "error", text: "Still reading your ID -- please wait a moment." });
-      return;
-    }
-
     const errors = {};
-    const allFieldRefs = {};
-    if (!idFrontFile) errors.idFront = "Upload the front of your PRC ID.";
-    else if (!ocrResult?.licenseNumber) errors.idFront = "A license number could not be read from this photo. Upload a clearer, well-lit photo -- it cannot be typed in manually.";
-    if (!idBackFile) errors.idBack = "Upload the back of your PRC ID.";
-    if (idFrontFile && ocrResult?.licenseNumber) {
-      if (!correctedFields?.nameCandidate?.trim()) errors.nameCandidate = "Full name is required.";
-      if (!correctedFields?.profession?.trim()) errors.profession = "Profession is required.";
-      if (!correctedFields?.registrationDate) errors.registrationDate = "Registration date is required.";
-      if (!correctedFields?.expirationDate) errors.expirationDate = "Expiration date is required.";
-    }
-    if (!consent || !consentGivenAt) errors.consent = "Face-scan consent is required before submitting.";
-    if (!faceScanFile) errors.faceScan = "Capture a live face scan before submitting.";
+    if (!licenseNumber.trim()) errors.licenseNumber = "Enter your PRC license number.";
+    else if (!isValidPrcLicense(licenseNumber)) errors.licenseNumber = INVALID_PRC_LICENSE_MESSAGE;
 
-    Object.keys(errors).forEach((name) => { if (fieldRefs[name]) allFieldRefs[name] = fieldRefs[name]; });
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
-      focusFirstInvalidField(allFieldRefs, errors);
+      focusFirstInvalidField(fieldRefs, errors);
       return;
     }
 
     setSubmitting(true);
     try {
-      setUploading("id-front");
-      const idFrontPath = await uploadVerificationImage(vetId, idFrontFile, "id-front");
-      setUploading("id-back");
-      const idBackPath = await uploadVerificationImage(vetId, idBackFile, "id-back");
-      setUploading("face-scan");
-      const faceScanPath = await uploadVerificationImage(vetId, faceScanFile, "face-scan");
-      setUploading("");
-
-      const updated = await submitVerification(vetId, vetProfile, {
-        idFrontPath,
-        idBackPath,
-        faceScanPath,
-        consentGivenAt,
-        ocrConfidence: ocrResult.confidence,
-        extracted: {
-          licenseNumber: ocrResult.licenseNumber,
-          rawText: ocrResult.rawText,
-          ...correctedFields,
-        },
-      });
+      const updated = await submitVerification(vetId, vetProfile, { licenseNumber });
       setRecord(updated);
-      setIdFrontFile(null);
-      setIdBackFile(null);
-      setOcrResult(null);
-      setCorrectedFields(null);
-      setConsent(false);
-      setConsentGivenAt("");
+      setLicenseNumber("");
       setFieldErrors({});
-      retakePhoto();
       setMessage({ type: "success", text: "Submitted for review. An administrator will confirm your verification." });
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     } finally {
-      setUploading("");
       setSubmitting(false);
-    }
-  }
-
-  async function loadReviewDocuments() {
-    setReviewLoading(true);
-    setMessage({ type: "", text: "" });
-    try {
-      const urls = await getSignedVerificationUrls(record, viewerProfile);
-      setReviewUrls(urls);
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
-    } finally {
-      setReviewLoading(false);
     }
   }
 
@@ -281,7 +121,6 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
     try {
       const updated = await reviewVerification(vetId, { decision, reason: decisionReason }, viewerProfile);
       setRecord(updated);
-      setReviewUrls(null);
       setDecisionReason("");
       setDecisionFieldError("");
       setMessage({ type: "success", text: `Verification set to ${decision}.` });
@@ -309,7 +148,7 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
       )}
 
       {isSelf && status === "Pending Review" && (
-        <p className="vvp-muted">Your PRC ID and face scan are submitted and awaiting administrator review.</p>
+        <p className="vvp-muted">Your PRC license number is submitted and awaiting administrator review.</p>
       )}
 
       {isSelf && status === "Verified" && (
@@ -319,151 +158,54 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
       {canSubmit && (
         <form onSubmit={submit} className="vvp-form" noValidate>
           <p className="vvp-instructions">
-            Upload clear photos of the front and back of your PRC Professional Identification Card, then complete a
-            live face scan. Your details are read automatically from the front photo -- if a personal detail was
-            misread you can correct it below, but the license number can never be typed or edited by anyone.
+            Enter your PRC (Professional Regulation Commission) veterinary license number. An administrator will
+            confirm it before your account shows as Verified.
           </p>
 
-          <div className="vvp-pair">
-            <label ref={registerFieldRef("idFront")} className={invalidClass(fieldErrors, "idFront")}>PRC ID (Front)<input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickIdFront} />{idFrontFile && <span className="vvp-file-name">{idFrontFile.name}</span>}{fieldErrors.idFront && <span className="field-error-text">{fieldErrors.idFront}</span>}</label>
-            <label ref={registerFieldRef("idBack")} className={invalidClass(fieldErrors, "idBack")}>PRC ID (Back)<input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={(e) => pickIdBack(e.target.files?.[0] || null)} />{idBackFile && <span className="vvp-file-name">{idBackFile.name}</span>}{fieldErrors.idBack && <span className="field-error-text">{fieldErrors.idBack}</span>}</label>
-          </div>
-
-          {ocrRunning && <p className="vvp-ocr-status"><ScanLine size={14} className="vvp-scan-spin" /> Reading your ID...</p>}
-
-          {!ocrRunning && ocrResult && correctedFields && (
-            <div className="vvp-ocr-result">
-              <span className="vvp-label"><ScanLine size={12} /> Extracted from your ID</span>
-
-              <label>Veterinary License Number (read-only, cannot be edited)
-                <input value={ocrResult.licenseNumber || "Unable to Detect"} readOnly disabled />
-              </label>
-              {!ocrResult.licenseNumber && (
-                <p className="vvp-ocr-warn">No license number could be read. Upload a clearer, well-lit, non-glare photo of the front of the card -- this field can't be typed in.</p>
-              )}
-
-              <p className="vvp-ocr-correct-hint">You may correct the fields below if any were misread:</p>
-              <div className="vvp-pair">
-                <label>Full Name<span className="required-mark"> *</span>
-                  <input ref={registerFieldRef("nameCandidate")} className={invalidClass(fieldErrors, "nameCandidate")} value={correctedFields.nameCandidate} onChange={(e) => correctField("nameCandidate", e.target.value)} placeholder="Unable to Detect" required />
-                  {fieldErrors.nameCandidate && <span className="field-error-text">{fieldErrors.nameCandidate}</span>}
-                </label>
-                <label>Profession<span className="required-mark"> *</span>
-                  <input ref={registerFieldRef("profession")} className={invalidClass(fieldErrors, "profession")} value={correctedFields.profession} onChange={(e) => correctField("profession", e.target.value)} placeholder="Unable to Detect" required />
-                  {fieldErrors.profession && <span className="field-error-text">{fieldErrors.profession}</span>}
-                </label>
-              </div>
-              <div className="vvp-pair">
-                <label>Registration Date<span className="required-mark"> *</span>
-                  <input ref={registerFieldRef("registrationDate")} className={invalidClass(fieldErrors, "registrationDate")} type="date" value={correctedFields.registrationDate} onChange={(e) => correctField("registrationDate", e.target.value)} required />
-                  {fieldErrors.registrationDate ? <span className="field-error-text">{fieldErrors.registrationDate}</span> : !correctedFields.registrationDate && <span className="vvp-hint-text">Unable to Detect -- enter it manually</span>}
-                </label>
-                <label>Expiration Date<span className="required-mark"> *</span>
-                  <input ref={registerFieldRef("expirationDate")} className={invalidClass(fieldErrors, "expirationDate")} type="date" value={correctedFields.expirationDate} onChange={(e) => correctField("expirationDate", e.target.value)} required />
-                  {fieldErrors.expirationDate ? <span className="field-error-text">{fieldErrors.expirationDate}</span> : !correctedFields.expirationDate && <span className="vvp-hint-text">Unable to Detect -- enter it manually</span>}
-                </label>
-              </div>
-            </div>
-          )}
-
-          <div ref={registerFieldRef("consent")} className={invalidClass(fieldErrors, "consent", "vvp-consent")}>
-            <label className="vvp-consent-check">
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => {
-                  setConsent(e.target.checked);
-                  setConsentGivenAt(e.target.checked ? new Date().toISOString() : "");
-                  if (fieldErrors.consent && e.target.checked) setFieldErrors({ ...fieldErrors, consent: "" });
-                }}
-              />
-              I consent to a live camera capture of my face, used only to support identity verification of my
-              veterinarian account. This is not an uploaded photo -- it must be captured live.
-            </label>
-            {fieldErrors.consent && <span className="field-error-text">{fieldErrors.consent}</span>}
-          </div>
-
-          <div ref={registerFieldRef("faceScan")} className={invalidClass(fieldErrors, "faceScan", "vvp-face-scan")}>
-            {faceScanPreview ? (
-              <div className="vvp-face-result">
-                <img src={faceScanPreview} alt="Captured face scan" />
-                <button type="button" onClick={retakePhoto}>Retake</button>
-              </div>
-            ) : cameraActive ? (
-              <div className="vvp-face-camera">
-                <video ref={videoRef} autoPlay playsInline muted />
-                <div className="vvp-face-camera-actions">
-                  <button type="button" onClick={capturePhoto}><Camera size={15} /> Capture</button>
-                  <button type="button" className="ghost" onClick={stopCamera}>Cancel</button>
-                </div>
-              </div>
-            ) : (
-              <button type="button" className="vvp-start-camera" onClick={startCamera} disabled={!consent}>
-                <Camera size={16} /> Start Live Face Scan
-              </button>
-            )}
-            {fieldErrors.faceScan && <span className="field-error-text">{fieldErrors.faceScan}</span>}
-          </div>
+          <label ref={registerFieldRef("licenseNumber")} className={invalidClass(fieldErrors, "licenseNumber")}>
+            PRC License Number<span className="required-mark"> *</span>
+            <input
+              value={licenseNumber}
+              onChange={(e) => {
+                setLicenseNumber(e.target.value);
+                if (fieldErrors.licenseNumber) setFieldErrors((current) => ({ ...current, licenseNumber: "" }));
+              }}
+              placeholder="e.g. 0123456"
+              required
+            />
+            {fieldErrors.licenseNumber && <span className="field-error-text">{fieldErrors.licenseNumber}</span>}
+          </label>
 
           <button className="vvp-submit-btn" disabled={submitting}>
             <UploadCloud size={16} />
-            {submitting ? (uploading ? `Uploading ${uploading.replace("-", " ")}...` : "Submitting...") : "Submit for Verification"}
+            {submitting ? "Submitting..." : "Submit for Verification"}
           </button>
         </form>
       )}
 
-      {isAdmin && (
-        <div className="vvp-review">
-          {!reviewUrls ? (
-            (record.id_front_path || record.face_scan_path) && (
-              <button type="button" className="vvp-load-docs" onClick={loadReviewDocuments} disabled={reviewLoading}>
-                {reviewLoading ? "Loading documents..." : "Load Submitted Documents"}
-              </button>
-            )
-          ) : (
-            <>
-              <div className="vvp-doc-grid">
-                {reviewUrls.idFront && <div><span className="vvp-label">PRC ID - Front</span><img src={reviewUrls.idFront} alt="PRC ID front" /></div>}
-                {reviewUrls.idBack && <div><span className="vvp-label">PRC ID - Back</span><img src={reviewUrls.idBack} alt="PRC ID back" /></div>}
-                {reviewUrls.faceScan && <div><span className="vvp-label">Live Face Scan</span><img src={reviewUrls.faceScan} alt="Live face scan" /></div>}
-              </div>
-              <dl className="vvp-prc-details">
-                <div><dt>Name (veterinarian-confirmed)</dt><dd>{record.prc_name_on_card || "—"}</dd></div>
-                <div><dt>Profession (veterinarian-confirmed)</dt><dd>{record.prc_profession || "—"}</dd></div>
-                <div><dt>License Number (read-only, from ID)</dt><dd>{record.prc_license_number || "—"}</dd></div>
-                <div><dt>Registration Date</dt><dd>{record.prc_registration_date || "—"}</dd></div>
-                <div><dt>Expiration Date</dt><dd>{record.prc_expiration_date || "—"}</dd></div>
-              </dl>
-              {record.ocr_raw_text && (
-                <details className="vvp-raw-text">
-                  <summary>Full text read from the ID (for cross-checking)</summary>
-                  <pre>{record.ocr_raw_text}</pre>
-                </details>
-              )}
-            </>
-          )}
+      {isAdmin && record.prc_license_number && (
+        <p className="vvp-submitted-license">Submitted PRC License Number: <b>{record.prc_license_number}</b></p>
+      )}
 
-          {status === "Pending Review" && (
-            <div className="vvp-decision">
-              <label>Reason (required for Reject / Needs Resubmission)
-                <textarea
-                  ref={decisionReasonRef}
-                  className={decisionFieldError ? "field-invalid" : ""}
-                  value={decisionReason}
-                  onChange={(e) => {
-                    setDecisionReason(e.target.value);
-                    if (decisionFieldError && e.target.value.trim()) setDecisionFieldError("");
-                  }}
-                />
-                {decisionFieldError && <span className="field-error-text">{decisionFieldError}</span>}
-              </label>
-              <div className="vvp-decision-actions">
-                <button type="button" className="approve" onClick={() => decide("Verified")} disabled={!!deciding}>{deciding === "Verified" ? "Saving..." : "Approve - Verified"}</button>
-                <button type="button" className="resubmit" onClick={() => decide("Needs Resubmission")} disabled={!!deciding}>{deciding === "Needs Resubmission" ? "Saving..." : "Needs Resubmission"}</button>
-                <button type="button" className="reject" onClick={() => decide("Rejected")} disabled={!!deciding}>{deciding === "Rejected" ? "Saving..." : "Reject"}</button>
-              </div>
-            </div>
-          )}
+      {isAdmin && status === "Pending Review" && (
+        <div className="vvp-decision">
+          <label>Reason (required for Reject / Needs Resubmission)
+            <textarea
+              ref={decisionReasonRef}
+              className={decisionFieldError ? "field-invalid" : ""}
+              value={decisionReason}
+              onChange={(e) => {
+                setDecisionReason(e.target.value);
+                if (decisionFieldError && e.target.value.trim()) setDecisionFieldError("");
+              }}
+            />
+            {decisionFieldError && <span className="field-error-text">{decisionFieldError}</span>}
+          </label>
+          <div className="vvp-decision-actions">
+            <button type="button" className="approve" onClick={() => decide("Verified")} disabled={!!deciding}>{deciding === "Verified" ? "Saving..." : "Approve - Verified"}</button>
+            <button type="button" className="resubmit" onClick={() => decide("Needs Resubmission")} disabled={!!deciding}>{deciding === "Needs Resubmission" ? "Saving..." : "Needs Resubmission"}</button>
+            <button type="button" className="reject" onClick={() => decide("Rejected")} disabled={!!deciding}>{deciding === "Rejected" ? "Saving..." : "Reject"}</button>
+          </div>
         </div>
       )}
 
@@ -488,52 +230,15 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
 
         .vvp-form{display:grid;gap:12px;margin-top:8px}
         .vvp-form label{display:grid;gap:6px;font-size:12.5px;font-weight:700;color:#334e5a}
-        .vvp-form input,.vvp-form textarea{width:100%;border:1px solid #d8e8ef;border-radius:10px;padding:10px;font:inherit;box-sizing:border-box}
-        .vvp-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-        .vvp-file-name{font-weight:400;color:#6f7f88;font-size:11.5px}
-
-        .vvp-ocr-status{display:flex;align-items:center;gap:7px;margin:0;color:#267fa9;font-size:12.5px;font-weight:700}
-        .vvp-scan-spin{animation:vvpSpin 1.1s linear infinite}
-        @keyframes vvpSpin{to{transform:rotate(360deg)}}
-
-        .vvp-ocr-result{background:#f4f9fb;border:1px solid #e1edf2;border-radius:10px;padding:12px;display:grid;gap:10px}
-        .vvp-ocr-result input[readonly]{background:#eef1f2;color:#657a84;cursor:not-allowed}
-        .vvp-ocr-warn{margin:0;color:#a5680b;font-size:12px;font-weight:600}
-        .vvp-ocr-correct-hint{margin:2px 0 0;color:#6f7f88;font-size:11.5px;font-weight:600}
-        .vvp-hint-text{color:#a5680b;font-size:11px;font-weight:600}
-
-        .vvp-consent{background:#f4f9fb;border:1px solid #e1edf2;border-radius:10px;padding:12px}
-        .vvp-consent-check{display:flex!important;flex-direction:row;align-items:flex-start;gap:9px;font-weight:600!important;font-size:12.5px!important;color:#334e5a;cursor:pointer}
-        .vvp-consent-check input{width:auto;margin-top:2px}
-
-        .vvp-face-scan{display:flex;justify-content:center}
-        .vvp-start-camera{display:inline-flex;align-items:center;gap:7px;border:1px dashed #a9dff0;background:#f4fbfd;color:#267fa9;border-radius:12px;padding:14px 20px;font-weight:700;cursor:pointer}
-        .vvp-start-camera:disabled{opacity:.5;cursor:not-allowed}
-        .vvp-face-camera{display:grid;gap:8px;justify-items:center}
-        .vvp-face-camera video{width:280px;max-width:100%;border-radius:14px;background:#000;transform:scaleX(-1)}
-        .vvp-face-camera-actions{display:flex;gap:8px}
-        .vvp-face-camera-actions button{border:0;border-radius:9px;padding:9px 14px;font-weight:700;cursor:pointer;background:#4DA8DA;color:#fff}
-        .vvp-face-camera-actions button.ghost{background:#eef4f6;color:#536b78}
-        .vvp-face-result{display:grid;gap:8px;justify-items:center}
-        .vvp-face-result img{width:200px;border-radius:14px;transform:scaleX(-1)}
-        .vvp-face-result button{border:1px solid #cfe4ed;background:#fff;color:#257fa9;border-radius:9px;padding:8px 13px;font-weight:700;cursor:pointer}
+        .vvp-form input{width:100%;border:1px solid #d8e8ef;border-radius:10px;padding:10px;font:inherit;box-sizing:border-box}
 
         .vvp-submit-btn{justify-self:start;display:flex;align-items:center;gap:8px;border:0;border-radius:10px;padding:11px 16px;background:#4DA8DA;color:#fff;font-weight:700;cursor:pointer}
         .vvp-submit-btn:disabled{opacity:.65;cursor:not-allowed}
 
-        .vvp-review{margin-top:14px;display:grid;gap:14px}
-        .vvp-load-docs{justify-self:start;border:1px solid #cfe4ed;background:#fff;color:#257fa9;border-radius:10px;padding:9px 14px;font-weight:700;cursor:pointer}
-        .vvp-doc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
-        .vvp-doc-grid img{width:100%;border-radius:10px;border:1px solid #eaf1f4}
-        .vvp-label{display:flex;align-items:center;gap:5px;margin-bottom:5px;color:#6f7f88;font-size:11px;font-weight:700;text-transform:uppercase}
-        .vvp-prc-details{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
-        .vvp-prc-details dt{color:#8a9aa2;font-size:11px;text-transform:uppercase}
-        .vvp-prc-details dd{margin:2px 0 0;color:#334e5a;font-weight:700;font-size:13px;overflow-wrap:anywhere}
-        .vvp-raw-text{font-size:12px;color:#536b78}
-        .vvp-raw-text summary{cursor:pointer;font-weight:700}
-        .vvp-raw-text pre{margin:8px 0 0;padding:10px;background:#f7fbfd;border:1px solid #eaf1f4;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px}
+        .vvp-submitted-license{margin:14px 0 0;padding:12px 14px;background:#f4f9fb;border:1px solid #e1edf2;border-radius:10px;color:#334e5a;font-size:13px}
+        .vvp-submitted-license b{color:#20313b}
 
-        .vvp-decision{display:grid;gap:10px}
+        .vvp-decision{display:grid;gap:10px;margin-top:14px}
         .vvp-decision label{display:grid;gap:6px;font-size:12.5px;font-weight:700;color:#334e5a}
         .vvp-decision textarea{border:1px solid #d8e8ef;border-radius:10px;padding:10px;font:inherit;min-height:60px}
         .vvp-decision-actions{display:flex;gap:8px;flex-wrap:wrap}
@@ -542,8 +247,6 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
         .vvp-decision-actions button.resubmit{background:#a5680b}
         .vvp-decision-actions button.reject{background:#c0392b}
         .vvp-decision-actions button:disabled{opacity:.6;cursor:not-allowed}
-
-        @media(max-width:640px){.vvp-pair{grid-template-columns:1fr}}
       `}</style>
     </section>
   );
