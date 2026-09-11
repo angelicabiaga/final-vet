@@ -2091,63 +2091,47 @@ export default function MedicalRecordsModule({
                 />
               </label>
 
-              <label>
-                Vital Signs
+              <div className="wide vitals-row">
+                <label>
+                  Weight (kg)
 
-                <input
-                  value={
-                    form.vitalSigns
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      vitalSigns:
-                        e.target
-                          .value,
-                    })
-                  }
-                />
-              </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={
+                      form.weight
+                    }
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        weight:
+                          e.target
+                            .value,
+                      })
+                    }
+                  />
+                </label>
 
-              <label>
-                Weight (kg)
+                <label>
+                  Temperature °C
 
-                <input
-                  type="number"
-                  step="0.01"
-                  value={
-                    form.weight
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      weight:
-                        e.target
-                          .value,
-                    })
-                  }
-                />
-              </label>
-
-              <label>
-                Temperature °C
-
-                <input
-                  type="number"
-                  step="0.1"
-                  value={
-                    form.temperature
-                  }
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      temperature:
-                        e.target
-                          .value,
-                    })
-                  }
-                />
-              </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={
+                      form.temperature
+                    }
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        temperature:
+                          e.target
+                            .value,
+                      })
+                    }
+                  />
+                </label>
+              </div>
 
               <label className="wide">
                 Diagnosis
@@ -4366,6 +4350,20 @@ export default function MedicalRecordsModule({
           grid-column: 1 / -1;
         }
 
+        /* Weight and Temperature are just numbers, so they don't need a
+           full grid column each -- sit them side by side in a compact
+           row instead of the wasted space a full-width text input would
+           leave. */
+        .mr-panel .fields .vitals-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 16px 18px;
+        }
+
+        .mr-panel .fields .vitals-row label {
+          width: 140px;
+        }
+
         /* A plain toggle button now (no checkbox square) -- the chevron on
            the right is the only on/off indicator, flipping to point up
            once expanded. */
@@ -5020,6 +5018,10 @@ export default function MedicalRecordsModule({
           .mr-panel .row-grid.three,
           .mr-panel .med-line-grid {
             grid-template-columns: 1fr;
+          }
+
+          .mr-panel .fields .vitals-row label {
+            width: 160px;
           }
 
           .mr-panel .vaccine-checks {

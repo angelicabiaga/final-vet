@@ -80,6 +80,12 @@ function friendly(error, fallback) {
     );
   }
 
+  if (error?.code === "23502") {
+    return new Error(
+      `A required field (${error.column || "unknown"}) was missing. Please fill in every required field and try again.`
+    );
+  }
+
   // A `raise exception '...'` inside one of the pawcruz_* RPCs surfaces as
   // code P0001 with the raised text as the message -- use it directly
   // instead of the generic fallback, since it's already written to be
@@ -513,22 +519,10 @@ export async function saveInventoryItem(
     );
   }
 
-  const initialQuantity =
-    Math.floor(Number(
-      values.quantity || 0
-    ));
-
-  if (
-    !Number.isFinite(
-      initialQuantity
-    ) ||
-    initialQuantity < 0
-  ) {
-    throw new Error(
-      "Initial quantity must be zero or greater."
-    );
-  }
-
+  // New items always start at 0 stock -- the first batch (quantity, batch
+  // number, and expiry date together) is recorded afterward through Add
+  // Stock, which goes through recordInventoryTransaction/FIFO batches
+  // instead of being guessed here without an expiry date.
   const {
     data,
     error,
@@ -548,38 +542,6 @@ export async function saveInventoryItem(
       error,
       "Unable to create inventory item."
     );
-  }
-
-  if (initialQuantity > 0) {
-    try {
-      await recordInventoryTransaction(
-        {
-          itemId: data.id,
-          transactionType:
-            "Stock In",
-          quantity:
-            initialQuantity,
-          reason:
-            "Initial stock",
-          notes:
-            "Opening inventory quantity",
-          batchNumber:
-            payload.batch_number,
-          expiryDate:
-            payload.expiry_date,
-        },
-        profile
-      );
-    } catch (transactionError) {
-      console.error(
-        "Unable to create initial inventory transaction.",
-        transactionError
-      );
-
-      throw new Error(
-        "The inventory item was created, but the initial stock quantity could not be recorded."
-      );
-    }
   }
 
   return data;

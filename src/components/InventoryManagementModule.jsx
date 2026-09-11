@@ -64,7 +64,6 @@ const EMPTY_ITEM = {
   custom_category: "",
   sku: "",
   description: "",
-  quantity: "0",
   unit: "pcs",
   unit_price: "0",
   reorder_level: "5",
@@ -89,6 +88,48 @@ const BATCH_CREATING_TX_TYPES = [
   "Stock In",
   "Adjustment Add",
 ];
+
+// Short, recognizable prefixes for the built-in category list -- anything
+// else (including a typed "Others" category) falls back to the first few
+// letters of the category name itself.
+const CATEGORY_SKU_PREFIXES = {
+  "Vaccines": "VAC",
+  "Test Kits": "TK",
+  "Antibiotics": "ANT",
+  "Supplements": "SUP",
+  "Food Supplements": "FSUP",
+  "Anti Parasite": "APAR",
+  "Anti Inflammatory": "AINF",
+  "Eye Drops": "EYE",
+  "Ear Drops": "EAR",
+};
+
+// The Add Item "Product Category" dropdown and the list filter's "All
+// categories" dropdown both read from this single list, so they can never
+// drift apart -- adding a category here updates both at once.
+const PRODUCT_CATEGORIES = Object.keys(CATEGORY_SKU_PREFIXES);
+
+function skuPrefixForCategory(category) {
+  const trimmed = String(category || "").trim();
+  if (CATEGORY_SKU_PREFIXES[trimmed]) return CATEGORY_SKU_PREFIXES[trimmed];
+  const letters = trimmed.toUpperCase().replace(/[^A-Z]/g, "");
+  return letters.slice(0, 4) || "ITEM";
+}
+
+// Next free "PREFIX-NNN" for a category, based on the highest existing
+// suffix number among currently-loaded items in that category -- using the
+// highest number seen (not a plain count) so archiving/merging items never
+// causes a generated code to collide with one already in use.
+function generateNextSku(category, existingItems) {
+  const prefix = skuPrefixForCategory(category);
+  const highest = (existingItems || []).reduce((max, item) => {
+    if (item.category !== category) return max;
+    const match = /-(\d+)$/.exec(item.sku || "");
+    const value = match ? parseInt(match[1], 10) : 0;
+    return value > max ? value : max;
+  }, 0);
+  return `${prefix}-${String(highest + 1).padStart(3, "0")}`;
+}
 
 const BATCH_PAGE_SIZE = 10;
 const UNIT_PAGE_SIZE = 12;
@@ -324,6 +365,17 @@ export default function InventoryManagementModule({
 
   const [categories, setCategories] = useState([]);
   const [forecasts, setForecasts] = useState([]);
+
+  // Same standard list as Add Item's Product Category dropdown, plus any
+  // one-off "Others" categories that were actually typed in and already
+  // have items -- so the filter always offers the full standard set, and
+  // never silently drops a custom category that's still in use.
+  const filterCategoryOptions = useMemo(() => {
+    const extra = categories
+      .filter((category) => !PRODUCT_CATEGORIES.includes(category))
+      .sort();
+    return [...PRODUCT_CATEGORIES, ...extra];
+  }, [categories]);
 
   const [
     forecastSummary,
@@ -1873,7 +1925,7 @@ export default function InventoryManagementModule({
             All categories
           </option>
 
-          {categories.map(
+          {filterCategoryOptions.map(
             (category) => (
               <option
                 key={category}
@@ -2362,19 +2414,9 @@ export default function InventoryManagementModule({
                   itemForm.sku
                 }
                 required
-                disabled={!!itemForm.id}
-                placeholder="Example: VAC-001"
-                onChange={(e) => {
-                  setItemForm({
-                    ...itemForm,
-                    sku:
-                      e.target
-                        .value,
-                  });
-                  if (itemFieldErrors.sku && e.target.value.trim()) {
-                    setItemFieldErrors((current) => ({ ...current, sku: "" }));
-                  }
-                }}
+                disabled
+                readOnly
+                placeholder="Fills in automatically once you pick a product category"
               />
             </Field>
 
@@ -2386,29 +2428,37 @@ export default function InventoryManagementModule({
                 required
                 disabled={!!itemForm.id}
                 onChange={(e) => {
+                  const nextCategory = e.target.value;
+                  const shouldAutoFillSku =
+                    !itemForm.id &&
+                    nextCategory &&
+                    nextCategory !== "Others";
+
                   setItemForm({
                     ...itemForm,
-                    category: e.target.value,
+                    category: nextCategory,
                     custom_category:
-                      e.target.value === "Others"
+                      nextCategory === "Others"
                         ? itemForm.custom_category || ""
                         : "",
+                    sku: shouldAutoFillSku
+                      ? generateNextSku(nextCategory, items)
+                      : itemForm.sku,
                   });
+                  if (shouldAutoFillSku && itemFieldErrors.sku) {
+                    setItemFieldErrors((current) => ({ ...current, sku: "" }));
+                  }
                   if (itemFieldErrors.category && e.target.value && e.target.value !== "Others") {
                     setItemFieldErrors((current) => ({ ...current, category: "" }));
                   }
                 }}
               >
                 <option value="">Select product category</option>
-                <option value="Vaccines">Vaccines</option>
-                <option value="Test Kits">Test Kits</option>
-                <option value="Antibiotics">Antibiotics</option>
-                <option value="Supplements">Supplements</option>
-                <option value="Food Supplements">Food Supplements</option>
-                <option value="Anti Parasite">Anti Parasite</option>
-                <option value="Anti Inflammatory">Anti Inflammatory</option>
-                <option value="Eye Drops">Eye Drops</option>
-                <option value="Ear Drops">Ear Drops</option>
+                {PRODUCT_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
                 <option value="Others">Others</option>
               </select>
 
@@ -2427,6 +2477,18 @@ export default function InventoryManagementModule({
                     });
                     if (itemFieldErrors.category && e.target.value.trim()) {
                       setItemFieldErrors((current) => ({ ...current, category: "" }));
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const typed = e.target.value.trim();
+                    if (!itemForm.id && typed) {
+                      setItemForm((current) => ({
+                        ...current,
+                        sku: generateNextSku(typed, items),
+                      }));
+                      if (itemFieldErrors.sku) {
+                        setItemFieldErrors((curr) => ({ ...curr, sku: "" }));
+                      }
                     }
                   }}
                 />
@@ -2461,22 +2523,11 @@ export default function InventoryManagementModule({
             </Field>
 
             {!itemForm.id && (
-              <Field label="Current Stock Quantity" optional>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={
-                    itemForm.quantity
-                  }
-                  onChange={(e) =>
-                    setItemForm({
-                      ...itemForm,
-                      quantity: e.target.value.replace(/[^\d]/g, ""),
-                    })
-                  }
-                />
-              </Field>
+              <div className="wide field-lock-note">
+                New items start with 0 stock — use Add Stock afterward to
+                record its first batch (quantity, batch number, and expiry
+                date together).
+              </div>
             )}
 
             <Field label="Price per Unit (₱)" optional>
