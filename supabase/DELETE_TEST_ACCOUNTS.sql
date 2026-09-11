@@ -14,6 +14,16 @@
 -- Everything runs inside one transaction -- if anything fails partway,
 -- nothing is left half-deleted. RAISE NOTICE lines show exactly what got
 -- deleted from where when you run this in the Supabase SQL editor.
+--
+-- consent_records is a deliberate exception -- it has an append-only
+-- trigger (see DATA_PRIVACY_CONSENT.sql) that blocks ANY delete, by
+-- design, so a consent decision always survives even if the account is
+-- later deleted. Fully wiping these 4 test accounts' data means
+-- consciously overriding that safeguard for just this operation: the
+-- loop below disables consent_records' two block-mutation triggers only
+-- immediately before deleting these 4 accounts' own consent rows, then
+-- re-enables them immediately after, inside the same transaction. No
+-- other consent_records row, and no other account's data, is affected.
 
 begin;
 
@@ -80,6 +90,11 @@ begin
       and ccu.table_schema = 'public' and ccu.table_name = 'profiles' and ccu.column_name = 'id'
       and tc.table_name <> 'profiles'
   loop
+    if rec.table_name = 'consent_records' then
+      execute 'alter table public.consent_records disable trigger trg_pawcruz_block_consent_record_update';
+      execute 'alter table public.consent_records disable trigger trg_pawcruz_block_consent_record_delete';
+    end if;
+
     execute format(
       'delete from %I.%I where %I in (select id from _target_profiles)',
       rec.table_schema, rec.table_name, rec.column_name
@@ -87,6 +102,11 @@ begin
     get diagnostics affected = row_count;
     if affected > 0 then
       raise notice 'Deleted % row(s) from %.% (%)', affected, rec.table_schema, rec.table_name, rec.column_name;
+    end if;
+
+    if rec.table_name = 'consent_records' then
+      execute 'alter table public.consent_records enable trigger trg_pawcruz_block_consent_record_update';
+      execute 'alter table public.consent_records enable trigger trg_pawcruz_block_consent_record_delete';
     end if;
   end loop;
 end $$;
