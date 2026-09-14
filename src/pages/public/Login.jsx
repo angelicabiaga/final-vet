@@ -598,7 +598,6 @@ export function LoginLayout({ title, subtitle, children, showBackToHome = false 
 
             <span className='login-screen-brand-copy'>
               <strong>PawCruz</strong>
-              <small>Cruz Veterinary Clinic</small>
             </span>
           </Link>
         </header>

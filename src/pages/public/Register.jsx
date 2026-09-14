@@ -952,7 +952,6 @@ function RegisterHeader() {
 
         <span className="register-brand-copy">
           <strong>PawCruz</strong>
-          <small>Cruz Veterinary Clinic</small>
         </span>
       </Link>
 

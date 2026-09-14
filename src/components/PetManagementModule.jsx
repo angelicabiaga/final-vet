@@ -1731,11 +1731,6 @@ export default function PetManagementModule({
         <div className="toolbar">
           <div>
             <div className="list-heading-row">
-              <h2>
-                <PawPrint />
-                List of Animal Patients
-              </h2>
-
               {canRegisterPet && (
                 <button
                   type="button"

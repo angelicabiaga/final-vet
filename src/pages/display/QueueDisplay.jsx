@@ -587,7 +587,6 @@ export default function QueueDisplay() {
 
             <span>
               <strong>PawCruz</strong>
-              <small>Cruz Veterinary Clinic</small>
             </span>
           </div>
 

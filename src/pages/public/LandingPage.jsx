@@ -702,7 +702,6 @@ export default function LandingPage() {
 
             <span className='landing-brand-copy'>
               <strong>PawCruz</strong>
-              <small>Cruz Veterinary Clinic</small>
             </span>
           </Link>
 
@@ -723,10 +722,6 @@ export default function LandingPage() {
         <main className='landing-main'>
           <div className='landing-content'>
             <section className='welcome-card'>
-              <span className='clinic-tag'>
-                Cruz Veterinary Clinic
-              </span>
-
               <h1>Compassionate care for every paw.</h1>
 
               <p>

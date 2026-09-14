@@ -1898,7 +1898,7 @@ export default function InventoryManagementModule({
 
           <input
             value={filters.search}
-            placeholder="Search item, SKU, supplier, or batch"
+            placeholder="Search item, SKU, or supplier"
             onChange={(e) =>
               setFilters({
                 ...filters,
@@ -3963,7 +3963,7 @@ export default function InventoryManagementModule({
 
         .toolbar {
           display: flex;
-          gap: 10px;
+          gap: 8px;
           align-items: center;
           flex-wrap: wrap;
         }
@@ -3973,7 +3973,7 @@ export default function InventoryManagementModule({
           align-items: center;
           gap: 7px;
           flex: 1;
-          min-width: 230px;
+          min-width: 190px;
           border: 1px solid #cfe4ec;
           border-radius: 10px;
           padding: 0 10px;
@@ -3984,6 +3984,7 @@ export default function InventoryManagementModule({
           outline: 0;
           width: 100%;
           padding: 10px 0;
+          font-size: 14px;
         }
 
         .toolbar select,
@@ -3995,11 +3996,40 @@ export default function InventoryManagementModule({
           padding: 10px;
           background: #fff;
           color: #20313b;
+          font-size: 14px;
+        }
+
+        .toolbar select {
+          padding: 9px 8px;
         }
 
         .check {
-          font-size: 13px;
-          color: #526b77;
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          font-size: 14px;
+          color: #20313b;
+          background: #fff;
+          border: 1px solid #cfe4ec;
+          border-radius: 10px;
+          padding: 9px 11px;
+          cursor: pointer;
+          white-space: nowrap;
+          user-select: none;
+          transition: border-color .15s ease, background .15s ease;
+        }
+
+        .check:hover {
+          border-color: #9fcbe0;
+          background: #f5fbfd;
+        }
+
+        .check input[type="checkbox"] {
+          width: 16px;
+          height: 16px;
+          margin: 0;
+          accent-color: #4da8da;
+          cursor: pointer;
         }
 
         .primary,

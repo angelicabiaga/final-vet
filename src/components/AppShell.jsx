@@ -330,7 +330,6 @@ export default function AppShell({ profile, title, children }) {
           {!isCollapsed && sidebarToggleButton}
           <button className="sidebarClose" type="button" onClick={() => setOpen(false)} aria-label="Close navigation"><X size={20}/></button>
         </div>
-        <div className="clinic">Cruz Veterinary Clinic</div>
         {isCollapsed && <div className="sidebarToggleRow">{sidebarToggleButton}</div>}
         <nav className="sidebarNav">
           {nav.map((item) => {
@@ -515,9 +514,9 @@ export default function AppShell({ profile, title, children }) {
 
             .logoutConfirmAccept {
               color: #ffffff;
-              background: linear-gradient(115deg, #237da4, #174e69);
-              border: 1px solid #1e6687;
-              box-shadow: 0 8px 18px rgba(28, 94, 124, 0.2);
+              background: linear-gradient(115deg, #ef4444, #b91c1c);
+              border: 1px solid #dc2626;
+              box-shadow: 0 8px 18px rgba(220, 38, 38, 0.25);
             }
 
             .logoutConfirmCancel:hover {
@@ -525,7 +524,7 @@ export default function AppShell({ profile, title, children }) {
             }
 
             .logoutConfirmAccept:hover {
-              background: linear-gradient(115deg, #1e7095, #123f56);
+              background: linear-gradient(115deg, #dc2626, #991b1b);
             }
 
             @media (max-width: 480px) {

@@ -223,9 +223,6 @@ export default function WalkInRegistration({ profile }) {
             <p className="wr-list-description">
               Search registered pet owners, then create an appointment for one.
             </p>
-            <p className="wr-result-summary">
-              {loading ? "Loading pet owners..." : `Showing ${visibleOwners.length} of ${owners.length} pet owners`}
-            </p>
           </div>
 
           <div className="wr-toolbar-right">
@@ -546,14 +543,13 @@ export default function WalkInRegistration({ profile }) {
 const styles = `
 .wr-list-card{padding:24px}
 
-.wr-toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:20px}
+.wr-toolbar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:16px;margin-bottom:14px}
 .wr-toolbar-left{display:flex;flex-direction:column;gap:5px;min-width:240px}
 .wr-toolbar-left h2{display:flex;align-items:center;gap:8px;margin:0;color:#20313b}
 .wr-list-description{margin:0;color:#6f7f88;font-size:13.5px}
-.wr-result-summary{margin:2px 0 0;color:#6f7f88;font-size:13px}
 
-.wr-toolbar-right{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:12px}
-.wr-new-account-btn{display:inline-flex;align-items:center;gap:7px;border:0;border-radius:11px;padding:0 16px;height:43px;background:#4DA8DA;color:#fff;font-weight:800;font-size:13.5px;cursor:pointer;white-space:nowrap}
+.wr-toolbar-right{display:flex;flex-wrap:nowrap;align-items:center;justify-content:flex-end;gap:12px}
+.wr-new-account-btn{display:inline-flex;flex-shrink:0;align-items:center;gap:7px;border:0;border-radius:11px;padding:0 16px;height:43px;background:#4DA8DA;color:#fff;font-weight:800;font-size:13.5px;cursor:pointer;white-space:nowrap}
 .wr-list-card .search{display:flex;align-items:center;gap:7px;height:43px;min-width:280px;flex:1 1 300px;max-width:420px;border:1px solid #cfe4ed;border-radius:11px;background:#fff;color:#4da8da;padding-left:11px}
 .wr-list-card .search input{width:100%;min-width:0;padding:10px 4px;font:inherit;font-size:13.5px;color:#20313b}
 .wr-clear-search{display:grid;place-items:center;margin-right:6px;border:0;border-radius:7px;padding:5px;background:#edf5f8;color:#5d7782;cursor:pointer}
