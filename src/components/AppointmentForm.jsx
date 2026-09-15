@@ -1061,11 +1061,16 @@ const styles = `
 .appt-pet-chip{display:inline-flex;align-items:center;gap:6px;background:#eaf8fd;color:#267da3;border-radius:999px;padding:6px 6px 6px 12px;font-size:13px;font-weight:700}
 .appt-pet-chip button{display:grid;place-items:center;border:0;background:rgba(38,125,163,.14);color:#267da3;border-radius:50%;padding:3px;cursor:pointer}
 .appt-modal-backdrop{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px;background:rgba(24,50,63,.62);backdrop-filter:blur(4px)}
-.appt-modal{position:relative;width:min(520px,100%);max-height:86vh;overflow:auto;border-radius:19px;padding:25px;background:#fff;box-shadow:0 22px 55px rgba(22,56,72,.24)}
-.appt-modal h3{margin:0 0 16px;display:flex;align-items:center;gap:8px;color:#20313B;padding-right:30px}
-.appt-modal-close{position:absolute;top:12px;right:12px;display:grid;place-items:center;border:0;border-radius:9px;padding:7px;background:#edf5f8;color:#456472;cursor:pointer}
-.appt-modal-form label{display:grid;gap:7px;font-weight:700;margin-bottom:14px}.appt-modal-form label span{font-weight:400;color:#7c8c94}.appt-modal-form label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}
-.appt-modal-form input,.appt-modal-form select,.appt-modal-form textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:11px 13px;font:inherit;color:#20313B;background:#fbfeff}
+.appt-modal{position:relative;width:min(520px,100%);max-height:86vh;overflow:auto;border:1px solid #eef3f6;border-radius:20px;padding:28px;background:#fff;box-shadow:0 22px 55px rgba(22,56,72,.24)}
+.appt-modal h3{margin:0 0 18px;display:flex;align-items:center;gap:8px;color:#17262f;font-size:19px;font-weight:800;padding-right:34px}
+.appt-modal-close{position:absolute;top:20px;right:20px;display:grid;place-items:center;border:0;border-radius:9px;padding:7px;background:#edf5f8;color:#456472;cursor:pointer}
+.appt-modal-form label{display:grid;gap:8px;color:#17262f;font-size:13px;font-weight:700;margin-bottom:0}
+.appt-modal-form > label,.appt-modal-form > .two-cols{margin-bottom:16px}
+.appt-modal-form label span{font-weight:600;color:#8b9aa3;font-size:11px}
+.appt-modal-form label .field-error-text{color:#a94444;font-weight:700;font-size:12.5px}
+.appt-modal-form input,.appt-modal-form select,.appt-modal-form textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 14px;font-family:inherit;font-size:14px;font-weight:400;color:#1c2e3a;background:#fbfeff}
+.appt-modal-form input::placeholder,.appt-modal-form textarea::placeholder{color:#a7b6bf;font-weight:400;opacity:1}
+.appt-modal-form input:focus,.appt-modal-form select:focus,.appt-modal-form textarea:focus{outline:none;border-color:#4da8da;box-shadow:0 0 0 3px rgba(77,168,218,.13)}
 .appt-modal-form textarea{min-height:76px;resize:vertical}
 .appt-modal-form input:disabled{background:#f4f7f9;color:#7c8c94;cursor:not-allowed}
 

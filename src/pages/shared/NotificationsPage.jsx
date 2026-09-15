@@ -1,16 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BellRing,
+  CalendarDays,
   Check,
   CheckCheck,
+  Clock3,
+  Megaphone,
+  MessageSquare,
+  PackageX,
   RefreshCw,
   Send,
+  ShieldAlert,
 } from "lucide-react";
 
 import AppShell from "../../components/AppShell";
 
 import {
-  createTestNotification,
   getNotifications,
   markAllRead,
   markNotificationRead,
@@ -34,6 +39,19 @@ const INITIAL_BROADCAST_FORM = {
   message: "",
   related_module: "",
 };
+
+function iconForNotificationType(notificationType) {
+  const type = (notificationType || "").toLowerCase();
+
+  if (type.includes("queue")) return Clock3;
+  if (type.includes("appointment")) return CalendarDays;
+  if (type.includes("stock") || type.includes("inventory")) return PackageX;
+  if (type.includes("broadcast") || type.includes("announcement")) return Megaphone;
+  if (type.includes("message")) return MessageSquare;
+  if (type.includes("account") || type.includes("security")) return ShieldAlert;
+
+  return BellRing;
+}
 
 export default function NotificationsPage({ profile }) {
   const [items, setItems] = useState([]);
@@ -242,40 +260,6 @@ export default function NotificationsPage({ profile }) {
     }
   }
 
-  async function handleTestNotification() {
-    if (!profile?.id) {
-      setError("Your profile information is unavailable.");
-      return;
-    }
-
-    clearMessages();
-
-    try {
-      const notification = await createTestNotification(profile.id);
-
-      setItems((currentItems) => {
-        const alreadyExists = currentItems.some(
-          (item) => item.id === notification.id
-        );
-
-        if (alreadyExists) {
-          return currentItems;
-        }
-
-        return [notification, ...currentItems];
-      });
-
-      setSuccess("Test notification created successfully.");
-    } catch (testError) {
-      console.error("Unable to create test notification:", testError);
-
-      setError(
-        testError?.message ||
-          "Unable to create a test notification."
-      );
-    }
-  }
-
   async function handleEnablePush() {
     clearMessages();
 
@@ -382,17 +366,6 @@ export default function NotificationsPage({ profile }) {
   return (
     <AppShell profile={profile} title="Notifications">
       <div className="notifications-page">
-        <div className="notifications-header">
-          <div>
-            <h2>Notification Center</h2>
-
-            <p>
-              View appointments, queue updates, inventory alerts,
-              messages, announcements, and account notices.
-            </p>
-          </div>
-        </div>
-
         <div className="notification-actions" aria-label="Notification actions">
           <div className="action-group">
             <button
@@ -407,15 +380,6 @@ export default function NotificationsPage({ profile }) {
               />
 
               {refreshing ? "Refreshing..." : "Refresh"}
-            </button>
-
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={handleTestNotification}
-            >
-              <BellRing size={17} />
-              Test Notification
             </button>
 
             <button
@@ -585,7 +549,10 @@ export default function NotificationsPage({ profile }) {
               </p>
             </div>
           ) : (
-            shownNotifications.map((notification) => (
+            shownNotifications.map((notification) => {
+              const ItemIcon = iconForNotificationType(notification.notification_type);
+
+              return (
               <article
                 key={notification.id}
                 className={
@@ -606,7 +573,7 @@ export default function NotificationsPage({ profile }) {
                 }}
               >
                 <div className="notification-icon">
-                  <BellRing size={21} />
+                  <ItemIcon size={21} />
                 </div>
 
                 <div className="notification-content">
@@ -640,7 +607,8 @@ export default function NotificationsPage({ profile }) {
                   <Check size={18} />
                 )}
               </article>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -648,24 +616,6 @@ export default function NotificationsPage({ profile }) {
           .notifications-page {
             display: grid;
             gap: 18px;
-          }
-
-          .notifications-header {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 20px;
-          }
-
-          .notifications-header h2 {
-            margin: 0;
-            color: #20313b;
-          }
-
-          .notifications-header p {
-            margin: 7px 0 0;
-            color: #6f7f88;
-            line-height: 1.5;
           }
 
           .notification-actions {
@@ -960,10 +910,6 @@ export default function NotificationsPage({ profile }) {
           }
 
           @media (max-width: 850px) {
-            .notifications-header {
-              flex-direction: column;
-            }
-
             .notification-actions {
               align-items: stretch;
               flex-direction: column;

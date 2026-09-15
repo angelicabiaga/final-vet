@@ -244,7 +244,6 @@ export default function NotificationBell({ profile }) {
             <div>
               <span className="eyebrow">Stay updated</span>
               <h3>Notifications</h3>
-              <p className="panelSubtitle">{unread ? `${unread} unread notification${unread > 1 ? "s" : ""}` : "You are all caught up"}</p>
             </div>
             <button className="closeButton" onClick={() => setOpen(false)} aria-label="Close notifications">
               <X size={19} />
@@ -256,7 +255,7 @@ export default function NotificationBell({ profile }) {
               <span className="actionIcon"><ShieldCheck size={18} /></span>
               <span>
                 <strong>Browser push notifications</strong>
-                <small>Receive updates even when this panel is closed</small>
+                <small>Stay updated when this panel is closed</small>
               </span>
               <ChevronRight size={18} />
             </button>
@@ -356,24 +355,23 @@ export default function NotificationBell({ profile }) {
         .nb .panelHead>div{min-width:0}
         .nb .eyebrow{display:block;color:#2696c4!important;font-size:12px!important;font-weight:900!important;letter-spacing:.13em;text-transform:uppercase}
         .nb .panelHead h3{margin:5px 0 7px!important;color:#174e67!important;font-size:27px!important;line-height:1.08!important;font-weight:900!important}
-        .nb .panelSubtitle{margin:0!important;color:#658393!important;font-size:14px!important;line-height:1.4!important;font-weight:700!important}
         .nb .closeButton{
           width:44px;height:44px;border:1px solid #e3edf1;border-radius:14px;background:#fff;color:#658493;
           display:grid;place-items:center;cursor:pointer;box-shadow:0 5px 14px rgba(31,94,120,.09);flex:0 0 auto
         }
 
-        .nb .panelActions{flex:0 0 auto;padding:16px 20px 14px;border-bottom:1px solid #e8f0f3;background:#fff}
+        .nb .panelActions{flex:0 0 auto;padding:16px 20px 14px;border-bottom:1px solid #e8f0f3;background:#fff;display:flex;align-items:center;gap:10px}
         .nb .push{
-          width:100%;border:1px solid #cfe7d8;border-radius:18px;padding:14px 15px;cursor:pointer;
-          display:grid;grid-template-columns:40px minmax(0,1fr) 20px;align-items:center;gap:13px;
+          flex:1;min-width:0;border:1px solid #cfe7d8;border-radius:18px;padding:10px 14px;cursor:pointer;
+          display:grid;grid-template-columns:36px minmax(0,1fr) 20px;align-items:center;gap:12px;
           background:linear-gradient(135deg,#f2fbf5,#e8f7ee);color:#2b7950;text-align:left
         }
         .nb .push span:nth-child(2){display:flex;flex-direction:column;gap:3px;min-width:0}
-        .nb .push strong{font-size:15px!important;color:#2e7650!important;line-height:1.25!important;font-weight:900!important}
-        .nb .push small{font-size:12px!important;color:#678c79!important;line-height:1.4!important;font-weight:600!important;white-space:normal!important}
-        .nb .actionIcon{width:40px;height:40px;border-radius:13px;background:#fff;display:grid;place-items:center;box-shadow:0 4px 10px rgba(56,130,87,.1)}
+        .nb .push strong{font-size:15px!important;color:#2e7650!important;line-height:1.25!important;font-weight:900!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+        .nb .push small{font-size:12px!important;color:#678c79!important;line-height:1.3!important;font-weight:600!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+        .nb .actionIcon{width:36px;height:36px;border-radius:12px;background:#fff;display:grid;place-items:center;box-shadow:0 4px 10px rgba(56,130,87,.1)}
         .nb .readAll{
-          margin-top:12px;margin-left:auto;border:0;border-radius:12px;padding:10px 13px;cursor:pointer;
+          flex:0 0 auto;align-self:stretch;margin:0;border:0;border-radius:12px;padding:0 13px;cursor:pointer;
           display:flex;align-items:center;gap:7px;background:#edf7fb;color:#237da5;font-weight:800;font-size:12.5px
         }
         .nb .readAll:disabled{opacity:.46;cursor:not-allowed}
@@ -462,8 +460,9 @@ export default function NotificationBell({ profile }) {
           .nb .panel{left:8px;right:8px;top:72px;border-radius:20px;max-height:calc(100dvh - 80px)}
           .nb .panelHead{padding:18px 16px 15px}
           .nb .panelHead h3{font-size:23px!important}
-          .nb .panelActions{padding:13px 12px}
+          .nb .panelActions{padding:13px 12px;flex-direction:column;align-items:stretch}
           .nb .push{grid-template-columns:36px minmax(0,1fr) 18px;padding:12px}
+          .nb .readAll{align-self:flex-end}
           .nb .actionIcon{width:36px;height:36px}
           .nb .list{padding:10px}
           .nb .list article{gap:10px!important;padding:14px 12px!important;border-radius:16px!important}
