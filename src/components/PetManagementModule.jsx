@@ -1753,7 +1753,7 @@ export default function PetManagementModule({
                 onChange={(event) =>
                   setSearch(event.target.value)
                 }
-                placeholder="Search pet, owner, species, breed, color, or microchip"
+                placeholder="Search pet, owner, species, or breed"
               />
 
               {search && (
@@ -4030,7 +4030,7 @@ export default function PetManagementModule({
         }
 
         .list-card { padding: 28px 30px; }
-        .list-card .toolbar { display:grid; grid-template-columns:minmax(240px, 1fr) minmax(560px, auto); align-items:end; gap:24px; }
+        .list-card .toolbar { display:grid; grid-template-columns:auto minmax(300px, 1fr); align-items:end; gap:24px; }
         .list-card .toolbar-controls { display:grid; grid-template-columns:minmax(300px, 1fr) 220px auto; width:100%; justify-content:stretch; gap:12px; }
         .list-card .search, .list-card .species-filter, .list-card .archive-check { min-height:48px; border-radius:12px; }
         .list-card .search { min-width:0; }
