@@ -1077,11 +1077,6 @@ export default function PetManagementModule({
                       ? "Edit Pet Record"
                       : "Register Animal Patient"}
                   </h2>
-
-                  <p className="form-description">
-                    Enter the pet's basic profile, health notes,
-                    identification details, and owner information.
-                  </p>
                 </div>
               </div>
 
@@ -1100,10 +1095,6 @@ export default function PetManagementModule({
 
               {canManageAll && (
                 <div className="form-section">
-                  <h3 className="form-section-title">
-                    Pet Owner
-                  </h3>
-
                   <label>
                     <span>
                       Pet Owner

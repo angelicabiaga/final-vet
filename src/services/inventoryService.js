@@ -414,18 +414,27 @@ export async function saveInventoryItem(
   values,
   profile
 ) {
-  // Editing an existing item is intentionally restricted to renaming it --
-  // category, unit, price, expiry, supplier, and batch number are either
-  // structural identifiers or values now tracked per-batch, so changing them
+  // Editing an existing item is intentionally restricted to its name and
+  // price -- category, unit, expiry, supplier, and batch number are
+  // structural identifiers or values tracked per-batch, so changing them
   // through this form (instead of Stock / Batch Records) would silently
   // desync inventory_items from the batches and transactions that reference
-  // it.
+  // it. unit_price has no per-batch equivalent (inventory_batches carries no
+  // price column), so it's the one non-name field that's safe to correct
+  // here without desyncing anything.
   if (values.id) {
     const itemName = values.item_name?.trim();
+    const unitPrice = Number(values.unit_price || 0);
 
     if (!itemName) {
       throw new Error(
         "Item name is required."
+      );
+    }
+
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      throw new Error(
+        "Unit price must be zero or greater."
       );
     }
 
@@ -438,6 +447,7 @@ export async function saveInventoryItem(
       )
       .update({
         item_name: itemName,
+        unit_price: unitPrice,
         updated_at: new Date().toISOString(),
       })
       .eq("id", values.id)

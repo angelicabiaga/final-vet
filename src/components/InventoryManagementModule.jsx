@@ -251,6 +251,20 @@ function batchDisplayStatus(batch) {
   return "Active";
 }
 
+// A unit's stored `status` only flips to Expired via the DB cascade trigger
+// in INVENTORY_UNIT_TRACKING.sql, which fires when something writes to its
+// batch row -- not just because the expiry date quietly passed. Recompute it
+// here the same way batchDisplayStatus() already does for the batch itself,
+// so "View Units" doesn't keep showing a stale "Available" once the batch
+// row already reads Expired.
+function unitDisplayStatus(unit, batch) {
+  if (unit.status === "Available") {
+    const days = daysUntil(batch?.expiry_date);
+    if (days !== null && days < 0) return "Expired";
+  }
+  return unit.status;
+}
+
 // FEFO order: nearest expiration first (no-expiry batches sorted last,
 // since they carry no expiry urgency), tied broken by whichever arrived
 // earlier -- the same order the checkout RPC deducts from.
@@ -2380,10 +2394,10 @@ export default function InventoryManagementModule({
 
             {itemForm.id && (
               <div className="wide field-lock-note">
-                Only the item name can be edited here. The other details are
-                locked to keep stock and batch records accurate — use Stock
-                to record incoming/outgoing quantity or Batch Records to
-                update pricing, expiry, or batch details.
+                Only the item name and price per unit can be edited here.
+                The other details are locked to keep stock and batch records
+                accurate — use Stock to record incoming/outgoing quantity or
+                Batch Records to update expiry or batch details.
               </div>
             )}
 
@@ -2538,7 +2552,6 @@ export default function InventoryManagementModule({
                 value={
                   itemForm.unit_price
                 }
-                disabled={!!itemForm.id}
                 onChange={(e) =>
                   setItemForm({
                     ...itemForm,
@@ -3621,20 +3634,24 @@ export default function InventoryManagementModule({
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedUnitRows.map((unit) => (
-                    <tr key={unit.id}>
-                      <td>{unit.unit_code || formatUnitId(unit.unit_no)}</td>
-                      <td>{viewingUnitsBatch.batch_number || "—"}</td>
-                      <td>{formatDate(viewingUnitsBatch.expiry_date)}</td>
-                      <td>
-                        <span
-                          className={`badge ${unit.status.toLowerCase()}`}
-                        >
-                          {unit.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {paginatedUnitRows.map((unit) => {
+                    const unitStatus = unitDisplayStatus(unit, viewingUnitsBatch);
+
+                    return (
+                      <tr key={unit.id}>
+                        <td>{unit.unit_code || formatUnitId(unit.unit_no)}</td>
+                        <td>{viewingUnitsBatch.batch_number || "—"}</td>
+                        <td>{formatDate(viewingUnitsBatch.expiry_date)}</td>
+                        <td>
+                          <span
+                            className={`badge ${unitStatus.toLowerCase()}`}
+                          >
+                            {unitStatus}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
