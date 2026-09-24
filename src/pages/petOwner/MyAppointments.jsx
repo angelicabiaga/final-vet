@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { CalendarDays, RefreshCw, XCircle } from "lucide-react";
+import { CalendarDays, PawPrint } from "lucide-react";
 import AppShell from "../../components/AppShell";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { cancelAppointment, formatTime, getAppointments, todayLocal } from "../../services/appointmentService";
@@ -32,13 +32,16 @@ export default function MyAppointments({ profile }) {
   }
   return <AppShell profile={profile} title="Appointments">
     <div className="appt-page">
-      <div className="toolbar"><div><h2>Appointment History</h2><p>View and cancel eligible appointments.</p></div><button onClick={load}><RefreshCw size={17}/> Refresh</button></div>
       {notice && <div className={`notice ${notice.type}`}>{notice.text}</div>}
-      {loading ? <div className="card">Loading appointments…</div> : rows.length === 0 ? <div className="card empty"><CalendarDays/>No appointments yet.</div> : <div className="cards">{rows.map(row => <article className="appointment" key={row.id}>
-        <div><span className={`status ${row.status.replaceAll(" ","-").toLowerCase()}`}>{row.status}</span><h3>{row.pet?.pet_name}</h3><p>{row.pet?.species} · General Consultation</p></div>
-        <div className="details"><span><b>Date:</b> {formatDateLong(row.appointment_date)}</span><span><b>Time:</b> {formatTime(row.start_time)} – {formatTime(row.end_time)}</span><span><b>Veterinarian:</b> {row.veterinarian?.full_name}</span><span><b>Source:</b> {row.appointment_source}</span>{row.visit_reason && <span><b>Reason:</b> {row.visit_reason}</span>}</div>
-        {row.appointment_date >= todayLocal() && row.status === "Confirmed" && <button className="cancel" onClick={() => setPendingCancel(row)}><XCircle size={16}/> Cancel</button>}
-      </article>)}</div>}
+      {loading ? <div className="card">Loading appointments…</div> : rows.length === 0 ? <div className="card empty"><CalendarDays/>No appointments yet.</div> : <div className="table-wrap"><table><thead><tr><th>Date/Time</th><th>Pet</th><th>Veterinarian</th><th>Source</th><th>Reason</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}>
+        <td>{formatDateLong(row.appointment_date)}<br/><small>{formatTime(row.start_time)} – {formatTime(row.end_time)}</small></td>
+        <td><div className="appt-pet-cell">{row.pet?.photo_url ? <img className="appt-pet-photo" src={row.pet.photo_url} alt={row.pet?.pet_name || "Pet"}/> : <div className="appt-pet-photo appt-pet-photo-fallback"><PawPrint size={15}/></div>}<div><b>{row.pet?.pet_name}</b><br/><small>{row.pet?.species} · General Consultation</small></div></div></td>
+        <td>{row.veterinarian?.full_name}</td>
+        <td>{row.appointment_source}</td>
+        <td>{row.visit_reason || "N/A"}</td>
+        <td><span className={`action-badge badge-${row.status.replaceAll(" ","-").toLowerCase()}`}>{row.status}</span></td>
+        <td>{row.appointment_date >= todayLocal() && row.status === "Confirmed" ? <button type="button" className="action-btn cancel" onClick={() => setPendingCancel(row)}>Cancel</button> : "—"}</td>
+      </tr>)}</tbody></table></div>}
     </div>
 
     <ConfirmDialog
@@ -56,4 +59,4 @@ export default function MyAppointments({ profile }) {
     <style>{css}</style>
   </AppShell>;
 }
-const css=`.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.toolbar h2{margin:0}.toolbar p{margin:5px 0;color:#6F7F88}.toolbar button,.cancel{border:0;border-radius:11px;padding:10px 13px;display:flex;align-items:center;gap:7px;cursor:pointer}.toolbar button{background:#e8f7fc;color:#257fa9}.notice{padding:12px;border-radius:11px;margin-bottom:15px}.notice.success{background:#eafaf0;color:#227a52}.notice.error{background:#fff0f0;color:#b94b4b}.cards{display:grid;gap:15px}.appointment{background:white;border-radius:18px;padding:20px;box-shadow:0 8px 24px rgba(47,117,150,.09);display:grid;grid-template-columns:1fr 1.5fr auto;gap:20px;align-items:center}.appointment h3{margin:9px 0 3px}.appointment p{margin:0;color:#6F7F88}.details{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:14px}.status{display:inline-block;padding:5px 9px;border-radius:99px;background:#eaf7fc;color:#2884ad;font-size:12px;font-weight:800}.status.cancelled{background:#fff0f0;color:#bd5050}.status.completed{background:#eaf8ef;color:#348359}.cancel{background:#fff0f0;color:#b84e4e}.empty{display:grid;place-items:center;gap:10px;color:#6F7F88;min-height:180px}@media(max-width:800px){.appointment{grid-template-columns:1fr}.details{grid-template-columns:1fr}}`;
+const css=`.notice{padding:12px;border-radius:11px;margin-bottom:15px}.notice.success{background:#eafaf0;color:#227a52}.notice.error{background:#fff0f0;color:#b94b4b}.card{background:white;border-radius:18px;padding:20px;box-shadow:0 8px 24px rgba(47,117,150,.09)}.empty{display:grid;place-items:center;gap:10px;color:#6F7F88;min-height:180px}.table-wrap{overflow:auto;background:white;border-radius:18px;box-shadow:0 8px 24px rgba(47,117,150,.09)}table{width:100%;border-collapse:collapse;min-width:860px}th,td{text-align:left;padding:13px;border-bottom:1px solid #edf3f6}th{background:#f2fafd;color:#52707d}small{color:#72848d}.appt-pet-cell{display:flex;align-items:center;gap:10px}.appt-pet-photo{flex-shrink:0;width:34px;height:34px;border-radius:9px;object-fit:cover;background:#eaf8fd;color:#4da8da}.appt-pet-photo-fallback{display:grid;place-items:center}.action-badge{display:inline-block;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800}.action-badge.badge-confirmed{background:#eaf7fc;color:#2884ad}.action-badge.badge-completed{background:#eaf8ef;color:#26754a}.action-badge.badge-cancelled{background:#fdeceb;color:#b34848}.action-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-width:76px;height:34px;text-align:center;border:0;border-radius:9px;padding:8px 14px;font-weight:700;cursor:pointer;color:#fff;white-space:nowrap}.action-btn.cancel{background:#e35b5b}`;
