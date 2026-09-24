@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Menu, LogOut, UserCircle, X } from "lucide-react";
 import { logoutUser } from "../services/authService";
 import NotificationBell from "./NotificationBell";
+import PetOwnerTutorial, { hasSeenPetOwnerTutorial } from "./PetOwnerTutorial";
 
 import pawLogo from "../assets/reference/paw.png";
 import dashboardIcon from "../assets/reference/Dashboard_Icon.png";
@@ -35,6 +36,15 @@ const iconByType = {
 
 export default function AppShell({ profile, title, children }) {
   const [open, setOpen] = useState(false);
+  // Onboarding walkthrough for Pet Owner accounts only -- shown once per
+  // account (tracked in localStorage, see PetOwnerTutorial) the first time
+  // they land on any page in the shell, never again after they close it.
+  const [showTutorial, setShowTutorial] = useState(false);
+  useEffect(() => {
+    if (profile?.role === "pet_owner" && profile?.id && !hasSeenPetOwnerTutorial(profile.id)) {
+      setShowTutorial(true);
+    }
+  }, [profile?.role, profile?.id]);
   const location = useLocation();
   const navigate = useNavigate();
   const rolePath = profile?.role === "pet_owner" ? "pet-owner" : profile?.role;
@@ -151,6 +161,10 @@ export default function AppShell({ profile, title, children }) {
         >
           <img src={chatbotIcon} alt="" aria-hidden="true" />
         </Link>
+      )}
+
+      {showTutorial && (
+        <PetOwnerTutorial profileId={profile?.id} onClose={() => setShowTutorial(false)} />
       )}
 
       <style>{`

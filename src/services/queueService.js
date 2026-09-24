@@ -132,12 +132,17 @@ async function enrichCheckinGroups(cards){
 }
 
 export async function getQueue(filters={}){
+  // ownerId/status/source narrow which rows the caller gets back, but must
+  // NOT narrow the pool the DB query fetches -- clientsAhead/estimatedWait
+  // below has to see the clinic's whole live queue for the day to count
+  // correctly. Filtering the query itself by ownerId (as the pet owner's
+  // Queue page does) would leave `sorted` holding only that owner's own
+  // row(s), so ahead would always compute to 0 regardless of how many other
+  // clients are actually waiting. Those filters are applied as a final step
+  // instead, after the real queue-wide stats are computed.
   let q=supabase.from("queue_entries").select("*").eq("queue_date",filters.date||todayLocal())
     .order("arrived_at",{ascending:true});
   if(filters.veterinarianId)q=q.eq("veterinarian_id",filters.veterinarianId);
-  if(filters.ownerId)q=q.eq("owner_id",filters.ownerId);
-  if(filters.status)q=q.eq("status",filters.status);
-  if(filters.source)q=q.eq("source",filters.source);
   const {data,error}=await q;
   if(error)throw new Error(`Unable to load queue: ${error.message}`);
   const enriched=await enrich(data||[]);
@@ -156,11 +161,17 @@ export async function getQueue(filters={}){
     return new Date(a.arrived_at)-new Date(b.arrived_at);
   });
 
-  return sorted.map((r,i)=>{
+  const withQueueStats=sorted.map((r,i)=>{
     const ahead=sorted.slice(0,i).filter(x=>x.veterinarian_id===r.veterinarian_id&&x.owner_id!==r.owner_id&&active.includes(x.status));
     const waitMinutes=ahead.reduce((sum,x)=>sum+(x.visitDurationMinutes||10),0);
     return {...r,clientsAhead:ahead.length,estimatedWaitMinutes:waitMinutes};
   });
+
+  return withQueueStats.filter(r=>
+    (!filters.ownerId||r.owner_id===filters.ownerId)&&
+    (!filters.status||r.status===filters.status)&&
+    (!filters.source||r.source===filters.source)
+  );
 }
 
 export async function getTodayCheckinAppointments(){

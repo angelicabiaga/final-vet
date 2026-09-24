@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Camera,
+  ChevronDown,
   Edit3,
   History,
   PawPrint,
@@ -158,6 +159,9 @@ export default function PetManagementModule({
   const [file, setFile] = useState(null);
   const [search, setSearch] = useState("");
   const [speciesFilter, setSpeciesFilter] = useState("all");
+  const [speciesFilterDropdownOpen, setSpeciesFilterDropdownOpen] = useState(false);
+  const [speciesSearchTerm, setSpeciesSearchTerm] = useState("");
+  const speciesFilterRef = useRef(null);
   const [showArchived, setShowArchived] = useState(false);
 
   const [message, setMessage] = useState("");
@@ -200,9 +204,13 @@ export default function PetManagementModule({
           pet.breed,
           pet.sex,
           pet.color,
-          pet.owner?.full_name,
-          pet.owner?.username,
-          pet.owner?.email,
+          ...(ownerOnly
+            ? []
+            : [
+                pet.owner?.full_name,
+                pet.owner?.username,
+                pet.owner?.email,
+              ]),
           pet.microchip_number,
           pet.allergies,
           pet.existing_conditions,
@@ -215,7 +223,67 @@ export default function PetManagementModule({
 
       return matchesSpecies && matchesSearch;
     });
-  }, [pets, search, speciesFilter]);
+  }, [pets, search, speciesFilter, ownerOnly]);
+
+  const speciesFilterLabel =
+    speciesFilter === "all"
+      ? "All species"
+      : speciesFilter === "Other"
+        ? "Other species"
+        : speciesFilter;
+
+  const speciesSearchKeyword = speciesSearchTerm.trim().toLowerCase();
+
+  const showAllSpeciesOption =
+    !speciesSearchKeyword ||
+    "all species".includes(speciesSearchKeyword);
+
+  const showOtherSpeciesOption =
+    !speciesSearchKeyword ||
+    "other species".includes(speciesSearchKeyword);
+
+  const filteredSpeciesFilterGroups = useMemo(
+    () =>
+      SPECIES_GROUPS.map((group) => ({
+        label: group.label,
+        options: group.options.filter(
+          (species) =>
+            species !== "Other" &&
+            (!speciesSearchKeyword ||
+              species.toLowerCase().includes(speciesSearchKeyword))
+        ),
+      })).filter((group) => group.options.length > 0),
+    [speciesSearchKeyword]
+  );
+
+  const hasSpeciesMatches =
+    showAllSpeciesOption ||
+    showOtherSpeciesOption ||
+    filteredSpeciesFilterGroups.length > 0;
+
+  const selectSpeciesFilter = (value) => {
+    setSpeciesFilter(value);
+    setSpeciesSearchTerm("");
+    setSpeciesFilterDropdownOpen(false);
+  };
+
+  useEffect(() => {
+    if (!speciesFilterDropdownOpen) return undefined;
+
+    const handleClickOutside = (event) => {
+      if (
+        speciesFilterRef.current &&
+        !speciesFilterRef.current.contains(event.target)
+      ) {
+        setSpeciesFilterDropdownOpen(false);
+        setSpeciesSearchTerm("");
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () =>
+      document.removeEventListener("mousedown", handleClickOutside);
+  }, [speciesFilterDropdownOpen]);
 
   useEffect(() => {
     let active = true;
@@ -802,7 +870,11 @@ export default function PetManagementModule({
                 onChange={(event) =>
                   setSearch(event.target.value)
                 }
-                placeholder="Search pet, owner, species, breed, color, or microchip"
+                placeholder={
+                  ownerOnly
+                    ? "Search pet, species, breed, color, or microchip"
+                    : "Search pet, owner, species, breed, color, or microchip"
+                }
               />
 
               {search && (
@@ -817,46 +889,123 @@ export default function PetManagementModule({
               )}
             </div>
 
-            <div className="species-filter">
+            <div
+              className={
+                speciesFilterDropdownOpen
+                  ? "species-filter open"
+                  : "species-filter"
+              }
+              ref={speciesFilterRef}
+            >
               <PawPrint size={17} />
 
-              <select
-                value={speciesFilter}
-                onChange={(event) =>
-                  setSpeciesFilter(
-                    event.target.value
-                  )
+              <input
+                type="text"
+                value={
+                  speciesFilterDropdownOpen
+                    ? speciesSearchTerm
+                    : speciesFilterLabel
                 }
-              >
-                <option value="all">
-                  All species
-                </option>
+                onChange={(event) => {
+                  setSpeciesSearchTerm(event.target.value);
+                  if (!speciesFilterDropdownOpen) {
+                    setSpeciesFilterDropdownOpen(true);
+                  }
+                }}
+                onFocus={() => {
+                  setSpeciesFilterDropdownOpen(true);
+                  setSpeciesSearchTerm("");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setSpeciesFilterDropdownOpen(false);
+                    setSpeciesSearchTerm("");
+                    event.target.blur();
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    if (showAllSpeciesOption) {
+                      selectSpeciesFilter("all");
+                    } else if (filteredSpeciesFilterGroups[0]?.options[0]) {
+                      selectSpeciesFilter(
+                        filteredSpeciesFilterGroups[0].options[0]
+                      );
+                    } else if (showOtherSpeciesOption) {
+                      selectSpeciesFilter("Other");
+                    }
+                  }
+                }}
+                placeholder="Search species"
+                autoComplete="off"
+              />
 
-                {SPECIES_GROUPS.map((group) => (
-                  <optgroup
-                    key={group.label}
-                    label={group.label}
-                  >
-                    {group.options
-                      .filter(
-                        (species) =>
-                          species !== "Other"
-                      )
-                      .map((species) => (
-                        <option
+              <ChevronDown
+                size={15}
+                className="species-filter-chevron"
+              />
+
+              {speciesFilterDropdownOpen && (
+                <div className="species-dropdown">
+                  {showAllSpeciesOption && (
+                    <button
+                      type="button"
+                      className={
+                        speciesFilter === "all"
+                          ? "species-dropdown-option active"
+                          : "species-dropdown-option"
+                      }
+                      onClick={() => selectSpeciesFilter("all")}
+                    >
+                      All species
+                    </button>
+                  )}
+
+                  {filteredSpeciesFilterGroups.map((group) => (
+                    <div
+                      key={group.label}
+                      className="species-dropdown-group"
+                    >
+                      <div className="species-dropdown-group-label">
+                        {group.label}
+                      </div>
+
+                      {group.options.map((species) => (
+                        <button
                           key={species}
-                          value={species}
+                          type="button"
+                          className={
+                            speciesFilter === species
+                              ? "species-dropdown-option active"
+                              : "species-dropdown-option"
+                          }
+                          onClick={() => selectSpeciesFilter(species)}
                         >
                           {species}
-                        </option>
+                        </button>
                       ))}
-                  </optgroup>
-                ))}
+                    </div>
+                  ))}
 
-                <option value="Other">
-                  Other species
-                </option>
-              </select>
+                  {showOtherSpeciesOption && (
+                    <button
+                      type="button"
+                      className={
+                        speciesFilter === "Other"
+                          ? "species-dropdown-option active"
+                          : "species-dropdown-option"
+                      }
+                      onClick={() => selectSpeciesFilter("Other")}
+                    >
+                      Other species
+                    </button>
+                  )}
+
+                  {!hasSpeciesMatches && (
+                    <div className="species-dropdown-empty">
+                      No species found
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <label className="archive-check">
@@ -1192,8 +1341,7 @@ export default function PetManagementModule({
           resize: vertical;
         }
 
-        .form-card select,
-        .species-filter select {
+        .form-card select {
           appearance: none;
           cursor: pointer;
           background-image:
@@ -1326,6 +1474,7 @@ export default function PetManagementModule({
 
         .search,
         .species-filter {
+          position: relative;
           display: flex;
           align-items: center;
           gap: 7px;
@@ -1369,14 +1518,85 @@ export default function PetManagementModule({
           padding-left: 11px;
         }
 
-        .species-filter select {
+        .species-filter input {
           width: 100%;
+          min-width: 0;
           border: 0;
-          padding: 10px 38px 10px 4px;
+          padding: 10px 4px;
           background-color: transparent;
           color: #20313b;
           font: inherit;
           outline: none;
+          cursor: pointer;
+        }
+
+        .species-filter.open input {
+          cursor: text;
+        }
+
+        .species-filter-chevron {
+          flex-shrink: 0;
+          margin-right: 10px;
+          color: #4da8da;
+          pointer-events: none;
+          transition: transform 0.15s ease;
+        }
+
+        .species-filter.open .species-filter-chevron {
+          transform: rotate(180deg);
+        }
+
+        .species-dropdown {
+          position: absolute;
+          top: calc(100% + 6px);
+          left: 0;
+          right: 0;
+          z-index: 20;
+          max-height: 300px;
+          overflow-y: auto;
+          padding: 6px;
+          border: 1px solid #cfe4ed;
+          border-radius: 11px;
+          background: #ffffff;
+          box-shadow: 0 14px 30px rgba(32, 49, 59, 0.16);
+        }
+
+        .species-dropdown-group-label {
+          padding: 9px 10px 4px;
+          color: #7d919b;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .species-dropdown-option {
+          display: block;
+          width: 100%;
+          border: 0;
+          border-radius: 8px;
+          padding: 8px 10px;
+          background: none;
+          color: #20313b;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .species-dropdown-option:hover {
+          background: #eaf8fd;
+        }
+
+        .species-dropdown-option.active {
+          background: #4da8da;
+          color: #ffffff;
+        }
+
+        .species-dropdown-empty {
+          padding: 14px 10px;
+          color: #7d919b;
+          font-size: 13px;
+          text-align: center;
         }
 
         .archive-check {

@@ -175,7 +175,8 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
     const visible = focusToday ? rows : rows.filter(row => !isHandedOffToQueue(row));
     const base = !query ? visible : visible.filter(row => [
       row.pet?.pet_name, row.owner?.full_name, row.owner?.username, row.owner?.email,
-      row.veterinarian?.full_name, row.notes, row.appointment_source
+      ...(veterinarianOnly ? [] : [row.veterinarian?.full_name]),
+      row.notes, row.appointment_source
     ].some(value => String(value || "").toLowerCase().includes(query)));
     return [...base].sort((a, b) => {
       if (focusToday) {
@@ -193,7 +194,7 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       const startA = String(a.start_time || ""), startB = String(b.start_time || "");
       return startA < startB ? 1 : startA > startB ? -1 : 0;
     });
-  }, [rows, search, focusToday]);
+  }, [rows, search, focusToday, veterinarianOnly]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -201,18 +202,18 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
 
   return <div className="manage-wrap">
     <div className="filters">
-      <div className="search-box"><Search size={16}/><input type="text" placeholder="Search pet, owner, veterinarian, or notes" value={search} onChange={e=>setSearch(e.target.value)}/></div>
+      <div className="search-box"><Search size={16}/><input type="text" placeholder={veterinarianOnly ? "Search pet, owner, or notes" : "Search pet, owner, veterinarian, or notes"} value={search} onChange={e=>setSearch(e.target.value)}/></div>
       <select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{STATUS_FILTER_OPTIONS.map(s=><option key={s}>{s}</option>)}</select>
       <input type="date" value={date} onChange={e=>setDate(e.target.value)}/>
       <button onClick={clearFilters}><X size={16}/>Clear</button>
     </div>
     {message&&<div className="manage-message">{message}</div>}
-    <div className="table-wrap"><table><thead><tr><th>Date/Time</th><th>Pet / Owner</th><th>Veterinarian</th><th>Source</th><th>Notes</th><th>Action</th></tr></thead><tbody>{loading?<tr><td colSpan="6">Loading…</td></tr>:pageRows.length===0?<tr><td colSpan="6">No appointments found.</td></tr>:pageRows.map(row=>{
+    <div className="table-wrap"><table><thead><tr><th>Date/Time</th><th>Pet / Owner</th>{!veterinarianOnly && <th>Veterinarian</th>}<th>Source</th><th>Notes</th><th>Action</th></tr></thead><tbody>{loading?<tr><td colSpan={veterinarianOnly?5:6}>Loading…</td></tr>:pageRows.length===0?<tr><td colSpan={veterinarianOnly?5:6}>No appointments found.</td></tr>:pageRows.map(row=>{
       const action=rowAction(row);
       return <tr key={row.id}>
         <td>{formatDateLong(row.appointment_date)}<br/><small>{formatTime(row.start_time)}</small></td>
         <td><div className="appt-pet-cell">{row.pet?.photo_url?<img className="appt-pet-photo" src={row.pet.photo_url} alt={row.pet?.pet_name||"Pet"}/>:<div className="appt-pet-photo appt-pet-photo-fallback"><PawPrint size={15}/></div>}<div><b>{row.pet?.pet_name}</b>{row.visit_group_id&&<small className="visit-badge">Part of a multi-pet visit</small>}<br/><small>{row.owner?.full_name}</small></div></div></td>
-        <td>{row.veterinarian?.full_name}</td>
+        {!veterinarianOnly && <td>{row.veterinarian?.full_name}</td>}
         <td>{row.appointment_source}</td>
         <td>{row.notes?<button type="button" className="view-notes" onClick={()=>setNotesModal(row)}>View Notes</button>:"N/A"}</td>
         <td>

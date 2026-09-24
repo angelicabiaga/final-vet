@@ -12,6 +12,7 @@ import { getQueue, getTodayCheckinAppointments, subscribeToQueue } from "../serv
 import { getPendingBillingQueue, subscribeToPendingBilling } from "../services/billingService";
 import { getConversations, subscribeToMessagingOverview } from "../services/messageService";
 import NotificationBell from "./NotificationBell";
+import PetOwnerTutorial, { hasSeenPetOwnerTutorial } from "./PetOwnerTutorial";
 
 import pawLogo from "../assets/reference/paw.png";
 import chatbotIcon from "../assets/reference/chatbot.png";
@@ -97,6 +98,15 @@ export default function AppShell({ profile, title, children }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [logoutConfirmationOpen, setLogoutConfirmationOpen] =
     useState(false);
+  // Onboarding walkthrough for Pet Owner accounts only -- shown once per
+  // account (tracked in localStorage, see PetOwnerTutorial) the first time
+  // they land on any page in the shell, never again after they close it.
+  const [showTutorial, setShowTutorial] = useState(false);
+  useEffect(() => {
+    if (profile?.role === "pet_owner" && profile?.id && !hasSeenPetOwnerTutorial(profile.id)) {
+      setShowTutorial(true);
+    }
+  }, [profile?.role, profile?.id]);
   const location = useLocation();
   const navigate = useNavigate();
   const rolePath = profile?.role === "pet_owner" ? "pet-owner" : profile?.role;
@@ -555,6 +565,10 @@ export default function AppShell({ profile, title, children }) {
         >
           <img src={chatbotIcon} alt="" aria-hidden="true" />
         </Link>
+      )}
+
+      {showTutorial && (
+        <PetOwnerTutorial profileId={profile?.id} onClose={() => setShowTutorial(false)} />
       )}
 
       <style>{`

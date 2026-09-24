@@ -23,17 +23,27 @@ async function enrich(rows){
 }
 
 export async function getQueue(filters={}){
+  // ownerId/status/source narrow which rows the caller gets back, but must
+  // NOT narrow what the DB query fetches -- clientsAhead/estimatedWaitMinutes
+  // below needs the clinic's whole live queue for the day to count
+  // correctly. Filtering the query itself by ownerId (as the pet owner's
+  // Queue page does) would leave `rows` holding only that owner's own row,
+  // so clientsAhead would always compute to 0 no matter how many other
+  // clients are actually waiting. Those filters are applied as a final step
+  // instead, after the real queue-wide stats are computed.
   let q=supabase.from("queue_entries").select("*").eq("queue_date",filters.date||todayLocal())
     .order("manual_order",{ascending:true,nullsFirst:false}).order("arrived_at",{ascending:true});
   if(filters.veterinarianId)q=q.eq("veterinarian_id",filters.veterinarianId);
-  if(filters.ownerId)q=q.eq("owner_id",filters.ownerId);
-  if(filters.status)q=q.eq("status",filters.status);
-  if(filters.source)q=q.eq("source",filters.source);
   const {data,error}=await q;
   if(error)throw new Error(`Unable to load queue: ${error.message}`);
   const rows=await enrich(data||[]);
   const avg=10;
-  return rows.map((r,i)=>({...r,clientsAhead:rows.slice(0,i).filter(x=>x.veterinarian_id===r.veterinarian_id&&active.includes(x.status)).length,estimatedWaitMinutes:rows.slice(0,i).filter(x=>x.veterinarian_id===r.veterinarian_id&&active.includes(x.status)).length*avg}));
+  const withQueueStats=rows.map((r,i)=>({...r,clientsAhead:rows.slice(0,i).filter(x=>x.veterinarian_id===r.veterinarian_id&&active.includes(x.status)).length,estimatedWaitMinutes:rows.slice(0,i).filter(x=>x.veterinarian_id===r.veterinarian_id&&active.includes(x.status)).length*avg}));
+  return withQueueStats.filter(r=>
+    (!filters.ownerId||r.owner_id===filters.ownerId)&&
+    (!filters.status||r.status===filters.status)&&
+    (!filters.source||r.source===filters.source)
+  );
 }
 
 export async function getTodayCheckinAppointments(){
