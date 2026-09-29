@@ -162,6 +162,11 @@ export default function PetManagementModule({
   const petFieldRefs = useRef({}).current;
   const registerPetFieldRef = (name) => (el) => { petFieldRefs[name] = el; };
 
+  // The pet record handleEdit() opened the form with, kept around so
+  // handleSubmit() can skip the write entirely when nothing actually
+  // changed instead of re-saving an identical record.
+  const [editingOriginalPet, setEditingOriginalPet] = useState(null);
+
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [photoError, setPhotoError] = useState("");
@@ -647,6 +652,7 @@ export default function PetManagementModule({
     setOwnerDropdownOpen(false);
     setSpeciesQuery("");
     setSpeciesDropdownOpen(false);
+    setEditingOriginalPet(null);
   }
 
   function openRegisterModal() {
@@ -761,6 +767,7 @@ export default function PetManagementModule({
     setSpeciesQuery(resolvedSpecies);
     setSpeciesDropdownOpen(false);
     setMessage("");
+    setEditingOriginalPet(pet);
     setFormOpen(true);
   }
 
@@ -824,6 +831,33 @@ export default function PetManagementModule({
       setMessage("Please fix the highlighted field(s) before continuing.");
       focusFirstInvalidField(allFieldRefs, errors);
       return;
+    }
+
+    // Nothing to write if editing and every field still matches what this
+    // form was opened with (and no new photo was picked) -- skip the save
+    // entirely instead of re-writing an identical record.
+    if (form.id && editingOriginalPet && !file) {
+      const original = editingOriginalPet;
+      const unchanged =
+        form.petName.trim() === (original.pet_name || "") &&
+        finalSpecies === (original.species || "") &&
+        finalBreed === (original.breed || "") &&
+        form.sex === (original.sex || "Unknown") &&
+        form.dateOfBirth === (original.date_of_birth || "") &&
+        String(form.weight ?? "").trim() === String(original.weight ?? "").trim() &&
+        finalColor === (original.color || "") &&
+        form.microchipNumber.trim() === (original.microchip_number || "") &&
+        form.allergies.trim() === (original.allergies || "") &&
+        form.existingConditions.trim() === (original.existing_conditions || "") &&
+        form.notes.trim() === (original.notes || "") &&
+        ownerId === original.owner_id;
+
+      if (unchanged) {
+        setMessage("No changes to save.");
+        resetForm();
+        setFormOpen(false);
+        return;
+      }
     }
 
     setSaving(true);
@@ -1105,7 +1139,7 @@ export default function PetManagementModule({
       {message && !formOpen && (
         <div
           className={`notice ${
-            message.toLowerCase().includes("successfully")
+            message.toLowerCase().includes("successfully") || message.toLowerCase().includes("no changes")
               ? "success"
               : "error"
           }`}
