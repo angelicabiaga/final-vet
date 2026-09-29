@@ -253,9 +253,14 @@ function validateRegistration(values) {
 
 export async function registerPetOwner(values) {
   const clean = validateRegistration(values);
-  const { data: existing, error: checkError } = await supabase.from("profiles").select("id, username, email").or(`username.eq.${clean.username},email.eq.${clean.email}`).limit(1);
+  const { data: existing, error: checkError } = await supabase.from("profiles").select("id, username, email, phone").or(`username.eq.${clean.username},email.eq.${clean.email},phone.eq.${clean.phone}`).limit(3);
   if (checkError) throw new Error("Unable to check the account details. Apply custom_auth_patch.sql first.");
-  if (existing?.length) throw new Error("That username or email is already registered.");
+  if (existing?.length) {
+    if (existing.some((row) => row.username === clean.username || row.email === clean.email)) {
+      throw new Error("That username or email is already registered.");
+    }
+    throw new Error("That phone number is already registered.");
+  }
   await createAndSendOtp(clean.email, "register", clean);
   return { requiresOtp: true, email: clean.email, purpose: "register" };
 }
