@@ -51,6 +51,8 @@ import { getInventoryItems } from "../services/inventoryService";
 import { printMedicalRecordDocument, downloadPrescriptionPadPdf } from "../utils/invoicePdf";
 import ConfirmDialog from "./ConfirmDialog";
 import ConsultationHealthInsight from "./ConsultationHealthInsight";
+import PrintPreviewModal from "./PrintPreviewModal";
+import usePrintPreview from "../hooks/usePrintPreview";
 
 import { completeQueueEntry, markConsultationReadyForBilling } from "../services/queueService";
 import { getPrescriptionsForConsultation } from "../services/billingService";
@@ -260,6 +262,7 @@ function classifyPickerCategory(category) {
 export default function MedicalRecordsModule({
   profile,
 }) {
+  const printPreview = usePrintPreview();
   const [
     records,
     setRecords,
@@ -1984,12 +1987,13 @@ export default function MedicalRecordsModule({
                         className="mrp-history-pdf-btn"
                         onClick={async () => {
                           try {
-                            await printMedicalRecordDocument(viewingHistoryRecord, selectedPet, {
+                            const url = await printMedicalRecordDocument(viewingHistoryRecord, selectedPet, {
                               veterinarianName: (viewingHistoryRecord.veterinarian?.full_name || "").replace(/^dr\.?\s*/i, ""),
                               veterinarianPhone: viewingHistoryRecord.veterinarian?.phone || "",
                               visitDateTime: viewingHistoryRecord.consultation_date ? formatHistoryDate(viewingHistoryRecord.consultation_date) : "",
                               petAge: formatPetAge(selectedPet?.date_of_birth),
                             });
+                            printPreview.showPdf(url, "Print Medical Record");
                           } catch (pdfError) {
                             setError(pdfError.message || "Unable to generate this record's PDF.");
                           }
@@ -2014,7 +2018,7 @@ export default function MedicalRecordsModule({
                           className="mrp-history-pdf-btn"
                           onClick={() => {
                             try {
-                              downloadPrescriptionPadPdf(historyPrescriptions[viewingHistoryRecord.id].data, {
+                              const { url, download } = downloadPrescriptionPadPdf(historyPrescriptions[viewingHistoryRecord.id].data, {
                                 veterinarianName: formatVetName(viewingHistoryRecord.veterinarian, ""),
                                 veterinarianPhone: viewingHistoryRecord.veterinarian?.phone || "",
                                 veterinarianLicense: viewingHistoryRecord.veterinarian?.license_number || "",
@@ -2026,6 +2030,7 @@ export default function MedicalRecordsModule({
                                 petAge: formatPetAge(selectedPet?.date_of_birth),
                                 date: viewingHistoryRecord.consultation_date ? formatHistoryDate(viewingHistoryRecord.consultation_date) : "",
                               });
+                              printPreview.showPdf(url, "Prescription", { onDownload: download, showPrint: false });
                             } catch (pdfError) {
                               setError(pdfError.message || "Unable to generate the prescription PDF.");
                             }
@@ -3293,6 +3298,16 @@ export default function MedicalRecordsModule({
           </div>
         </div>
       )}
+
+      <PrintPreviewModal
+        open={!!printPreview.preview}
+        title={printPreview.preview?.title}
+        src={printPreview.preview?.src}
+        html={printPreview.preview?.html}
+        onDownload={printPreview.preview?.onDownload}
+        showPrint={printPreview.preview?.showPrint}
+        onClose={printPreview.close}
+      />
 
       <style>{`
         .mr {

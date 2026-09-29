@@ -29,6 +29,8 @@ import {
 
 import AppShell from "../../components/AppShell";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import PrintPreviewModal from "../../components/PrintPreviewModal";
+import usePrintPreview from "../../hooks/usePrintPreview";
 import { getInventoryItems, getInventoryItemsByIds } from "../../services/inventoryService";
 import { getActiveVeterinarians } from "../../services/medicalRecordService";
 import { downloadPrescriptionNoticePdf } from "../../utils/invoicePdf";
@@ -123,9 +125,10 @@ function receiptRows(transaction) {
   return [...serviceRows, ...(transaction.transaction_items || [])];
 }
 
-function printReceipt(transaction) {
-  const receiptWindow = window.open("", "_blank", "width=440,height=720");
-  if (!receiptWindow) return;
+// Pure HTML builder -- no window.open/print here. The caller shows this
+// inside the shared PrintPreviewModal so the user reviews the invoice
+// before printing, instead of a print dialog firing immediately.
+function buildReceiptHtml(transaction) {
   const rows = receiptRows(transaction).map((item) => `
     <tr><td>${escapeHtml(item.item_name)} × ${escapeHtml(item.quantity)}</td><td>${escapeHtml(money(item.line_total))}</td></tr>
   `).join("");
@@ -136,10 +139,7 @@ function printReceipt(transaction) {
   const discountRow = hasDiscount ? `<div class="row"><span>Discount</span><span>-${escapeHtml(money(transaction.discount_amount))}</span></div>` : "";
   const balance = remainingBalance(transaction);
   const balanceRow = balance > 0 ? `<div class="row balance"><span>Remaining Balance</span><span>${escapeHtml(money(balance))}</span></div>` : "";
-  receiptWindow.document.write(`<!doctype html><html><head><title>Invoice ${escapeHtml(transaction.or_number)}</title><style>body{font-family:Arial,sans-serif;color:#1e313a;margin:28px}.center{text-align:center}.muted{color:#617681;font-size:12px}table{width:100%;border-collapse:collapse;margin:18px 0}td{padding:8px 0;border-bottom:1px dashed #bfd0d7}td:last-child{text-align:right;white-space:nowrap}.total{font-size:18px;font-weight:700}.row{display:flex;justify-content:space-between;padding:5px 0}.row.balance{font-weight:700;color:#b0620a}</style></head><body><div class="center"><h2>PawCruz Veterinary Clinic</h2><p class="muted">Official POS Invoice</p><strong>${escapeHtml(transaction.or_number || transaction.id)}</strong><p class="muted">${escapeHtml(formatDateTime(transaction.created_at))}</p></div><div class="row"><span>Pet owner</span><b>${escapeHtml(transaction.owner?.full_name || "—")}</b></div><div class="row"><span>Pet</span><b>${escapeHtml(transaction.pet?.pet_name || "—")}</b></div><div class="row"><span>Cashier</span><b>${escapeHtml(transaction.cashier?.full_name || "—")}</b></div><table>${rows}</table>${discountRow}<div class="row total"><span>Total</span><span>${escapeHtml(money(transaction.total_amount))}</span></div><div class="row"><span>Amount paid</span><span>${escapeHtml(money(transaction.amount_paid))}</span></div><div class="row"><span>Change</span><span>${escapeHtml(money(transaction.change_amount))}</span></div>${balanceRow}<div class="row"><span>Method</span><span>${escapeHtml(transaction.payment_method)}</span></div><p class="center muted">Status: ${escapeHtml(transaction.payment_status)}</p></body></html>`);
-  receiptWindow.document.close();
-  receiptWindow.focus();
-  receiptWindow.print();
+  return `<!doctype html><html><head><title>Invoice ${escapeHtml(transaction.or_number)}</title><style>@page{size:A4;margin:16mm}body{font-family:Arial,sans-serif;color:#1e313a;margin:28px}.center{text-align:center}.muted{color:#617681;font-size:12px}table{width:100%;border-collapse:collapse;margin:18px 0}td{padding:8px 0;border-bottom:1px dashed #bfd0d7}td:last-child{text-align:right;white-space:nowrap}.total{font-size:18px;font-weight:700}.row{display:flex;justify-content:space-between;padding:5px 0}.row.balance{font-weight:700;color:#b0620a}</style></head><body><div class="center"><h2>PawCruz Veterinary Clinic</h2><p class="muted">Official POS Invoice</p><strong>${escapeHtml(transaction.or_number || transaction.id)}</strong><p class="muted">${escapeHtml(formatDateTime(transaction.created_at))}</p></div><div class="row"><span>Pet owner</span><b>${escapeHtml(transaction.owner?.full_name || "—")}</b></div><div class="row"><span>Pet</span><b>${escapeHtml(transaction.pet?.pet_name || "—")}</b></div><div class="row"><span>Cashier</span><b>${escapeHtml(transaction.cashier?.full_name || "—")}</b></div><table>${rows}</table>${discountRow}<div class="row total"><span>Total</span><span>${escapeHtml(money(transaction.total_amount))}</span></div><div class="row"><span>Amount paid</span><span>${escapeHtml(money(transaction.amount_paid))}</span></div><div class="row"><span>Change</span><span>${escapeHtml(money(transaction.change_amount))}</span></div>${balanceRow}<div class="row"><span>Method</span><span>${escapeHtml(transaction.payment_method)}</span></div><p class="center muted">Status: ${escapeHtml(transaction.payment_status)}</p></body></html>`;
 }
 
 const styles = `
@@ -238,6 +238,7 @@ const RX_PAGE_SIZE = 10;
 
 function OutstandingPrescriptions({ profile, embedded }) {
   const navigate = useNavigate();
+  const printPreview = usePrintPreview();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -331,7 +332,10 @@ function OutstandingPrescriptions({ profile, embedded }) {
                   <button type="button" className="continue-purchase-btn" title="Continue purchase" aria-label="Continue purchase" onClick={() => navigate(`/staff/transactions/new?prescription=${row.id}`)}>
                     <ShoppingCart size={14} />
                   </button>
-                  <button type="button" className="table-action action-details" title="Download" aria-label="Download" onClick={() => downloadPrescriptionNoticePdf(row, { petName: row.pet?.pet_name, ownerName: row.owner?.full_name, veterinarianName: vetsById[row.veterinarian_id]?.full_name ? `Dr. ${vetsById[row.veterinarian_id].full_name}` : "", veterinarianPhone: vetsById[row.veterinarian_id]?.phone || "", veterinarianLicense: vetsById[row.veterinarian_id]?.license_number || "" })}>
+                  <button type="button" className="table-action action-details" title="Download" aria-label="Download" onClick={() => {
+                    const { url, download } = downloadPrescriptionNoticePdf(row, { petName: row.pet?.pet_name, ownerName: row.owner?.full_name, veterinarianName: vetsById[row.veterinarian_id]?.full_name ? `Dr. ${vetsById[row.veterinarian_id].full_name}` : "", veterinarianPhone: vetsById[row.veterinarian_id]?.phone || "", veterinarianLicense: vetsById[row.veterinarian_id]?.license_number || "" });
+                    printPreview.showPdf(url, "Prescription Notice", { onDownload: download, showPrint: false });
+                  }}>
                     <Download size={14} />
                   </button>
                 </div>
@@ -363,6 +367,16 @@ function OutstandingPrescriptions({ profile, embedded }) {
           </button>
         </div>
       )}
+
+      <PrintPreviewModal
+        open={!!printPreview.preview}
+        title={printPreview.preview?.title}
+        src={printPreview.preview?.src}
+        html={printPreview.preview?.html}
+        onDownload={printPreview.preview?.onDownload}
+        showPrint={printPreview.preview?.showPrint}
+        onClose={printPreview.close}
+      />
     </section>
   );
 }
@@ -406,6 +420,7 @@ function PendingBillingAndOutstanding({ profile }) {
 
 function PaymentTransactionHistory({ profile }) {
   const navigate = useNavigate();
+  const printPreview = usePrintPreview();
   const [filters, setFilters] = useState({ search: "", from: "", to: "", paymentMethod: "", paymentStatus: "" });
   const [transactions, setTransactions] = useState([]);
   const [elsewhereLog, setElsewhereLog] = useState([]);
@@ -710,7 +725,7 @@ function PaymentTransactionHistory({ profile }) {
               <td><StatusPill status={transaction.payment_status} /></td>
               <td><div className="row-actions history-row-actions">
                 <button type="button" className="table-action action-details" onClick={() => openDetails(transaction)}><Eye size={16} /> Details</button>
-                <button type="button" className="table-action action-reprint" onClick={() => printReceipt(transaction)}><Printer size={16} /> Print Invoice</button>
+                <button type="button" className="table-action action-reprint" onClick={() => printPreview.showHtml(buildReceiptHtml(transaction), `Invoice ${transaction.or_number || ""}`)}><Printer size={16} /> Print Invoice</button>
                 {["Unpaid", "Partially Paid"].includes(transaction.payment_status) && <button type="button" className="table-action collect-balance-btn" onClick={() => openCollectBalance(transaction)}><Wallet size={16} /> Collect Balance</button>}
               </div></td>
               </tr>;
@@ -775,7 +790,10 @@ function PaymentTransactionHistory({ profile }) {
                     <button type="button" className="continue-purchase-btn" onClick={() => navigate(`/staff/transactions/new?prescription=${rx.id}`)}><ShoppingCart size={15} /> Continue Purchase</button>
                     <button type="button" className="elsewhere-btn" disabled={otherRxBusyId === rx.id} onClick={() => handleOtherElsewhere(rx.id)}>Purchasing Elsewhere</button>
                   </>}
-                  <button type="button" className="table-action action-details" onClick={() => downloadPrescriptionNoticePdf(rx, { petName: details.pet?.pet_name, ownerName: details.owner?.full_name, veterinarianName: vetsById[rx.veterinarian_id]?.full_name ? `Dr. ${vetsById[rx.veterinarian_id].full_name}` : "", veterinarianPhone: vetsById[rx.veterinarian_id]?.phone || "", veterinarianLicense: vetsById[rx.veterinarian_id]?.license_number || "" })}><Download size={15} /> Download</button>
+                  <button type="button" className="table-action action-details" onClick={() => {
+                    const { url, download } = downloadPrescriptionNoticePdf(rx, { petName: details.pet?.pet_name, ownerName: details.owner?.full_name, veterinarianName: vetsById[rx.veterinarian_id]?.full_name ? `Dr. ${vetsById[rx.veterinarian_id].full_name}` : "", veterinarianPhone: vetsById[rx.veterinarian_id]?.phone || "", veterinarianLicense: vetsById[rx.veterinarian_id]?.license_number || "" });
+                    printPreview.showPdf(url, "Prescription Notice", { onDownload: download, showPrint: false });
+                  }}><Download size={15} /> Download</button>
                 </div>
               </div>
             </div>)}
@@ -786,7 +804,7 @@ function PaymentTransactionHistory({ profile }) {
           <div className="audit-trail"><h3>Payment history</h3>{payments.length ? <div className="payment-history-list">{payments.map((payment) => <div className="payment-history-row" key={payment.id}><span>{formatDateTime(payment.created_at)} · {payment.payment_method}{payment.cashier?.full_name ? ` · ${payment.cashier.full_name}` : ""}</span><b>{money(payment.amount)}</b></div>)}</div> : <p>No payments recorded yet.</p>}</div>
           <div className="audit-trail"><h3>Audit trail</h3>{auditTrail.length ? auditTrail.map((entry) => <p key={entry.id}><b>{entry.action}</b> · {formatDateTime(entry.created_at)}{entry.performer?.full_name ? ` by ${entry.performer.full_name}` : ""}{entry.reason ? ` — ${entry.reason}` : ""}</p>) : <p>No audit activity recorded yet.</p>}</div>
           <div className="detail-actions">
-            <button type="button" className="receipt-print" onClick={() => printReceipt(details)}><Printer size={17} /> Print Invoice</button>
+            <button type="button" className="receipt-print" onClick={() => printPreview.showHtml(buildReceiptHtml(details), `Invoice ${details.or_number || ""}`)}><Printer size={17} /> Print Invoice</button>
             {["Unpaid", "Partially Paid"].includes(details.payment_status) && <button type="button" className="process-payment-btn" onClick={() => openCollectBalance(details)}><Wallet size={17} /> Collect Balance</button>}
             {canReverse && ["Paid", "Pending", "Unpaid", "Partially Paid"].includes(details.payment_status) && <button type="button" className="void-button" onClick={() => { setActionDialog({ transaction: details, label: "Void transaction" }); setReversalReason(""); setReversalFieldError(""); }}><RotateCcw size={17} /> Void</button>}
           </div>
@@ -812,12 +830,23 @@ function PaymentTransactionHistory({ profile }) {
           </div>
         </div>
       </div>}
+
+      <PrintPreviewModal
+        open={!!printPreview.preview}
+        title={printPreview.preview?.title}
+        src={printPreview.preview?.src}
+        html={printPreview.preview?.html}
+        onDownload={printPreview.preview?.onDownload}
+        showPrint={printPreview.preview?.showPrint}
+        onClose={printPreview.close}
+      />
     </section>
   );
 }
 
 export function NewTransaction({ profile }) {
   const navigate = useNavigate();
+  const printPreview = usePrintPreview();
   const location = useLocation();
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const billingId = searchParams.get("billing");
@@ -1269,7 +1298,7 @@ export function NewTransaction({ profile }) {
       <button type="button" className="checkout-btn" disabled={submitting || loadingBilling || !billing} onClick={handleCheckout}><Banknote size={18} />{submitting ? (isGcash ? "Preparing GCash QR…" : "Completing transaction…") : isGcash ? "Pay with GCash" : "Complete Transaction"}</button>
     </section></div>
 
-    {successReceipt && <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Transaction complete"><div className="receipt-card"><button type="button" className="icon-btn receipt-close" onClick={() => navigate("/staff/transactions")} aria-label="Close invoice"><X size={19} /></button><h2>Transaction Complete</h2><strong className="receipt-or">{successReceipt.or_number || successReceipt.id}</strong><p className="muted">{successReceipt.pet?.pet_name || "—"} · {successReceipt.owner?.full_name || "—"}</p>{receiptRows(successReceipt).map((line) => <div className="receipt-line" key={line.id}><span>{line.item_name} × {line.quantity}</span><span>{money(line.line_total)}</span></div>)}{Number(successReceipt.discount_amount) > 0 && <div className="receipt-line"><span>Discount</span><span>-{money(successReceipt.discount_amount)}</span></div>}<div className="receipt-line receipt-total"><span>Total</span><span>{money(successReceipt.total_amount)}</span></div><div className="receipt-line"><span>Amount paid</span><span>{money(successReceipt.amount_paid)}</span></div>{remainingBalance(successReceipt) > 0 && <div className="receipt-line receipt-balance"><span>Remaining Balance</span><span>{money(remainingBalance(successReceipt))}</span></div>}<button type="button" className="receipt-print" onClick={() => printReceipt(successReceipt)}><Printer size={17} /> Print Invoice</button><p className="receipt-redirect">Redirecting to Payment Transaction History in {redirectSeconds} second{redirectSeconds === 1 ? "" : "s"}…</p></div></div>}
+    {successReceipt && <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Transaction complete"><div className="receipt-card"><button type="button" className="icon-btn receipt-close" onClick={() => navigate("/staff/transactions")} aria-label="Close invoice"><X size={19} /></button><h2>Transaction Complete</h2><strong className="receipt-or">{successReceipt.or_number || successReceipt.id}</strong><p className="muted">{successReceipt.pet?.pet_name || "—"} · {successReceipt.owner?.full_name || "—"}</p>{receiptRows(successReceipt).map((line) => <div className="receipt-line" key={line.id}><span>{line.item_name} × {line.quantity}</span><span>{money(line.line_total)}</span></div>)}{Number(successReceipt.discount_amount) > 0 && <div className="receipt-line"><span>Discount</span><span>-{money(successReceipt.discount_amount)}</span></div>}<div className="receipt-line receipt-total"><span>Total</span><span>{money(successReceipt.total_amount)}</span></div><div className="receipt-line"><span>Amount paid</span><span>{money(successReceipt.amount_paid)}</span></div>{remainingBalance(successReceipt) > 0 && <div className="receipt-line receipt-balance"><span>Remaining Balance</span><span>{money(remainingBalance(successReceipt))}</span></div>}<button type="button" className="receipt-print" onClick={() => printPreview.showHtml(buildReceiptHtml(successReceipt), `Invoice ${successReceipt.or_number || ""}`)}><Printer size={17} /> Print Invoice</button><p className="receipt-redirect">Redirecting to Payment Transaction History in {redirectSeconds} second{redirectSeconds === 1 ? "" : "s"}…</p></div></div>}
 
     {gcashModal && <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="GCash payment"><div className="gcash-modal"><div className="gcash-modal-header"><span>GCash via PayMongo</span>{gcashModal.status === "waiting" && <button type="button" className="icon-btn" onClick={closeGcashModal} aria-label="Cancel GCash payment"><X size={19} /></button>}</div>{gcashModal.status === "waiting" && <><p className="muted">Ask the customer to scan this QR code with the GCash app.</p><img src={gcashModal.qrDataUrl} alt="GCash payment QR code" className="gcash-qr" /><div className="gcash-waiting"><Loader2 size={18} className="spin" /> Waiting for payment · expires in {Math.floor(gcashModal.secondsLeft / 60)}:{String(gcashModal.secondsLeft % 60).padStart(2, "0")}</div><button type="button" className="link-btn gcash-cancel" onClick={closeGcashModal}>Cancel payment</button></>}{gcashModal.status === "expired" && <><p className="gcash-status-text err">This QR code expired before the customer paid.</p><button type="button" className="checkout-btn" onClick={closeGcashModal}>Close</button></>}{gcashModal.status === "cancelled" && <><p className="gcash-status-text err">The GCash payment was not completed.</p><button type="button" className="checkout-btn" onClick={closeGcashModal}>Close</button></>}</div></div>}
 
@@ -1282,6 +1311,16 @@ export function NewTransaction({ profile }) {
       tone="danger"
       onConfirm={() => { setShowLeaveConfirm(false); resetForm(); navigate("/staff/transactions"); }}
       onCancel={() => setShowLeaveConfirm(false)}
+    />
+
+    <PrintPreviewModal
+      open={!!printPreview.preview}
+      title={printPreview.preview?.title}
+      src={printPreview.preview?.src}
+      html={printPreview.preview?.html}
+      onDownload={printPreview.preview?.onDownload}
+      showPrint={printPreview.preview?.showPrint}
+      onClose={printPreview.close}
     />
 
     <style>{styles}</style>

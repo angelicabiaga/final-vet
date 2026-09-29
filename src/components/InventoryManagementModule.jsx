@@ -56,6 +56,8 @@ import { formatDateTime12h, formatDateShort } from "../utils/timeFormat";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 import ConfirmDialog from "./ConfirmDialog";
 import InventoryForecastReport from "./InventoryForecastReport";
+import PrintPreviewModal from "./PrintPreviewModal";
+import usePrintPreview from "../hooks/usePrintPreview";
 
 const EMPTY_ITEM = {
   id: "",
@@ -342,6 +344,7 @@ export default function InventoryManagementModule({
   // so arriving from the badge surfaces the alert items first without
   // filtering anything out of view or touching any stock record.
   const location = useLocation();
+  const printPreview = usePrintPreview();
   const prioritizeAlerts = Boolean(location.state?.prioritizeAlerts);
   const scrolledForAlertsRef = useRef(false);
 
@@ -1656,9 +1659,11 @@ export default function InventoryManagementModule({
           .toISOString()
           .slice(0, 10);
 
-      pdf.save(
-        `PawCruz-AI-Inventory-Analysis-${fileDate}.pdf`
-      );
+      const filename = `PawCruz-AI-Inventory-Analysis-${fileDate}.pdf`;
+      printPreview.showPdf(pdf.output("bloburl"), "AI Inventory Analysis", {
+        onDownload: () => pdf.save(filename),
+        showPrint: false,
+      });
     } catch (error) {
       console.error(
         "PDF generation error:",
@@ -3964,6 +3969,16 @@ export default function InventoryManagementModule({
           </div>
         </Modal>
       )}
+
+      <PrintPreviewModal
+        open={!!printPreview.preview}
+        title={printPreview.preview?.title}
+        src={printPreview.preview?.src}
+        html={printPreview.preview?.html}
+        onDownload={printPreview.preview?.onDownload}
+        showPrint={printPreview.preview?.showPrint}
+        onClose={printPreview.close}
+      />
 
       <style>{`
         .inventory-module {
