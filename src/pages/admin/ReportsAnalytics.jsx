@@ -197,7 +197,6 @@ export default function ReportsAnalytics({ profile }) {
   return <AppShell profile={profile} title="Reports & Analytics"><div className="reports">
     <div className="screen-only">
     <div className="head">
-      <div><h2>Reports & Analytics</h2><p>Automatically generated, read-only summaries from POS, Inventory, Appointments, and Queue records.</p></div>
       <div><button className="soft" onClick={load}><RefreshCw size={16} /> Refresh</button><button className="soft" onClick={() => window.print()}><Printer size={16} /> Print</button></div>
     </div>
 
@@ -508,7 +507,7 @@ export default function ReportsAnalytics({ profile }) {
          not on .reports -- .reports only ever has this one visible child. */
       .screen-only{display:grid;gap:var(--gap-lg)}
 
-      .head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+      .head{display:flex;justify-content:flex-end;align-items:flex-start;gap:20px;flex-wrap:wrap}
       .head h2{margin:0;font-size:21px;color:#24566d}
       .head p{color:#6F7F88;margin:6px 0 0;max-width:600px;line-height:1.5}
       .head>div:last-child{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
