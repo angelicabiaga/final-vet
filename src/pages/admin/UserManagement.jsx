@@ -30,9 +30,10 @@ function validateCreateUserField(name, value, form) {
       try { validatePassword(value); return ""; } catch (e) { return e.message; }
     case "confirmPassword":
       try { validatePasswordsMatch(form.password, value); return ""; } catch (e) { return e.message; }
-    case "phone":
-      if (!String(value||"").trim()) return "";
+    case "phone": {
+      if (!String(value||"").trim()) return "Phone number is required.";
       return isValidPhMobile(value) ? "" : INVALID_PH_MOBILE_MESSAGE;
+    }
     default: return "";
   }
 }
@@ -110,7 +111,7 @@ export default function UserManagement({ profile }) {
       <label><span>Email<span className="required-mark"> *</span></span><input ref={registerFieldRef("email")} className={invalidClass(fieldErrors,"email")} required type="email" value={form.email} onChange={e=>updateField("email",e.target.value)}/>{fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}</label>
       <label><span>Password<span className="required-mark"> *</span></span><PasswordInput ref={registerFieldRef("password")} className={invalidClass(fieldErrors,"password")} value={form.password} onChange={e=>updateField("password",e.target.value)} minLength={8} required />{fieldErrors.password && <span className="field-error-text">{fieldErrors.password}</span>}<PasswordChecklist password={form.password}/></label>
       <label><span>Confirm Password<span className="required-mark"> *</span></span><PasswordInput ref={registerFieldRef("confirmPassword")} className={invalidClass(fieldErrors,"confirmPassword")} value={form.confirmPassword} onChange={e=>updateField("confirmPassword",e.target.value)} minLength={8} required />{fieldErrors.confirmPassword && <span className="field-error-text">{fieldErrors.confirmPassword}</span>}</label>
-      <label><span>Phone<span className="optional-mark"> (Optional)</span></span><input ref={registerFieldRef("phone")} className={invalidClass(fieldErrors,"phone")} type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={e=>updateField("phone",sanitizePhoneInput(e.target.value))}/>{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>
+      <label><span>Phone<span className="required-mark"> *</span></span><input ref={registerFieldRef("phone")} className={invalidClass(fieldErrors,"phone")} type="tel" inputMode="numeric" maxLength={11} required value={form.phone} onChange={e=>updateField("phone",sanitizePhoneInput(e.target.value))}/>{fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}</label>
       <label>Role<select value={form.role} onChange={e=>updateField("role",e.target.value)}><option value="staff">Staff</option><option value="veterinarian">Veterinarian</option><option value="admin">Admin</option></select></label>
       <label className="full"><span>Address<span className="optional-mark"> (Optional)</span></span><textarea value={form.address} onChange={e=>updateField("address",e.target.value)}/></label>
     </div><button disabled={saving}>{saving?"Creating...":"Create Account"}</button></form></div>}
