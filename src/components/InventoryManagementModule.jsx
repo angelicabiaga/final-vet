@@ -435,6 +435,11 @@ export default function InventoryManagementModule({
   const itemFieldRefs = useRef({}).current;
   const registerItemFieldRef = (name) => (el) => { itemFieldRefs[name] = el; };
 
+  // The item record openEdit() opened the form with, kept around so
+  // submitItem() can skip the write entirely when neither editable field
+  // (name, price) actually changed instead of re-saving an identical item.
+  const [editingOriginalItem, setEditingOriginalItem] = useState(null);
+
   const [txForm, setTxForm] =
     useState(EMPTY_TX);
   const [txFieldErrors, setTxFieldErrors] = useState({});
@@ -525,11 +530,6 @@ export default function InventoryManagementModule({
   const load = useCallback(async () => {
     setLoading(true);
 
-    setNotice({
-      type: "",
-      text: "",
-    });
-
     try {
       const [
         itemRows,
@@ -619,6 +619,7 @@ export default function InventoryManagementModule({
   function openNewItem() {
     setItemForm(EMPTY_ITEM);
     setItemFieldErrors({});
+    setEditingOriginalItem(null);
     setModal("item");
   }
 
@@ -850,6 +851,7 @@ export default function InventoryManagementModule({
       expiry_date: item.expiry_date || "",
     });
     setItemFieldErrors({});
+    setEditingOriginalItem(item);
 
     setModal("item");
   }
@@ -1682,7 +1684,7 @@ export default function InventoryManagementModule({
       return;
     }
 
-    const fieldsToCheck = ["item_name", "sku", "category", "unit"];
+    const fieldsToCheck = ["item_name", "sku", "category", "unit", "unit_price"];
     const errors = {};
     const allFieldRefs = {};
 
@@ -1700,6 +1702,22 @@ export default function InventoryManagementModule({
       setNotice({ type: "error", text: "Please fix the highlighted field(s) before continuing." });
       focusFirstInvalidField(allFieldRefs, errors);
       return;
+    }
+
+    // Editing an existing item only ever touches name and price (see the
+    // field-lock note in the form) -- if neither actually changed from what
+    // openEdit() loaded, skip the write entirely instead of re-saving an
+    // identical item.
+    if (itemForm.id && editingOriginalItem) {
+      const unchanged =
+        itemForm.item_name.trim() === (editingOriginalItem.item_name || "") &&
+        Number(itemForm.unit_price) === Number(editingOriginalItem.unit_price || 0);
+
+      if (unchanged) {
+        setNotice({ type: "success", text: "No changes to save." });
+        setModal("");
+        return;
+      }
     }
 
     setSaving(true);
@@ -1838,7 +1856,7 @@ export default function InventoryManagementModule({
     <div className="inventory-module">
       {notice.text && (
         <div
-          className={`notice ${notice.type}`}
+          className={`notice top-notice ${notice.type}`}
         >
           <span>{notice.text}</span>
 
@@ -2370,6 +2388,12 @@ export default function InventoryManagementModule({
             }
             noValidate
           >
+            {notice.text && (
+              <div className={`wide notice ${notice.type}`}>
+                <span>{notice.text}</span>
+              </div>
+            )}
+
             <Field label="Item Name" required error={itemFieldErrors.item_name}>
               <input
                 ref={registerItemFieldRef("item_name")}
@@ -2544,22 +2568,28 @@ export default function InventoryManagementModule({
               </div>
             )}
 
-            <Field label="Price per Unit (₱)" optional>
+            <Field label="Price per Unit (₱)" required error={itemFieldErrors.unit_price}>
               <input
+                ref={registerItemFieldRef("unit_price")}
+                className={invalidClass(itemFieldErrors, "unit_price")}
                 type="number"
                 min="0"
                 step="0.01"
+                required
                 value={
                   itemForm.unit_price
                 }
-                onChange={(e) =>
+                onChange={(e) => {
                   setItemForm({
                     ...itemForm,
                     unit_price:
                       e.target
                         .value,
-                  })
-                }
+                  });
+                  if (itemFieldErrors.unit_price && String(e.target.value).trim()) {
+                    setItemFieldErrors((current) => ({ ...current, unit_price: "" }));
+                  }
+                }}
               />
             </Field>
 
@@ -2985,6 +3015,12 @@ export default function InventoryManagementModule({
             }
             noValidate
           >
+            {notice.text && (
+              <div className={`wide notice ${notice.type}`}>
+                <span>{notice.text}</span>
+              </div>
+            )}
+
             <Field label="Transaction type">
               <select
                 value={
@@ -4185,6 +4221,16 @@ export default function InventoryManagementModule({
           border-radius: 11px;
         }
 
+        .top-notice {
+          position: fixed;
+          top: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 500;
+          width: min(520px, calc(100vw - 40px));
+          box-shadow: 0 12px 30px rgba(22, 56, 72, 0.2);
+        }
+
         .notice.success {
           background: #e9f7ee;
           color: #2b7448;
@@ -4342,6 +4388,10 @@ export default function InventoryManagementModule({
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 14px;
+        }
+
+        .form-grid .wide {
+          grid-column: 1 / -1;
         }
 
         .field {
@@ -5279,6 +5329,11 @@ function validateItemField(name, value, itemForm) {
     }
     case "unit":
       return String(value || "").trim() ? "" : "Unit of measure is required.";
+    case "unit_price": {
+      const trimmed = String(value ?? "").trim();
+      if (!trimmed) return "Price per unit is required.";
+      return Number.isFinite(Number(trimmed)) && Number(trimmed) >= 0 ? "" : "Enter a valid price of 0 or greater.";
+    }
     default:
       return "";
   }
