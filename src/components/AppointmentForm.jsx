@@ -78,6 +78,8 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
   const [vets, setVets] = useState([]);
   const [slotMap, setSlotMap] = useState({});
   const [availableTimes, setAvailableTimes] = useState([]);
+  // No vet has a created schedule on the chosen date (not released yet).
+  const [dateUnscheduled, setDateUnscheduled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -164,6 +166,7 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         setVets(result.vets);
         setSlotMap(result.slotMap);
         setAvailableTimes(result.times);
+        setDateUnscheduled(Boolean(result.unscheduled));
       } catch (error) { setMessage({ type: "error", text: error.message }); }
       finally { setAvailabilityLoading(false); }
     }
@@ -792,9 +795,10 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
         <div className="two-cols">
           <label>Appointment Date<span className="required-mark"> *</span><input ref={appointmentDateFieldRef} className={invalidClass(fieldErrors, "appointmentDate")} type="date" name="appointmentDate" min={todayLocal()} value={form.appointmentDate} onChange={event => updateForm({ appointmentDate: event.target.value })} required disabled={needsPetFirst} />{fieldErrors.appointmentDate && <span className="field-error-text">{fieldErrors.appointmentDate}</span>}</label>
           <label>Available Time<span className="required-mark"> *</span><select ref={startTimeFieldRef} className={invalidClass(fieldErrors, "startTime")} value={form.startTime} onChange={event => updateForm({ startTime: event.target.value })} required disabled={needsPetFirst || availabilityLoading || !availableTimes.length}>
-            <option value="">{needsPetFirst ? "Add a pet first" : availabilityLoading ? "Loading…" : availableTimes.length ? "Select time" : "No available slots"}</option>
+            <option value="">{needsPetFirst ? "Add a pet first" : availabilityLoading ? "Loading…" : availableTimes.length ? "Select time" : dateUnscheduled ? "Schedule not open yet" : "No available slots"}</option>
             {availableTimes.map(slot => <option key={slot} value={slot}>{formatTime(slot)}</option>)}
-          </select>{fieldErrors.startTime && <span className="field-error-text">{fieldErrors.startTime}</span>}</label>
+          </select>{fieldErrors.startTime && <span className="field-error-text">{fieldErrors.startTime}</span>}
+          {!availabilityLoading && form.appointmentDate && !availableTimes.length && dateUnscheduled && <span className="appt-schedule-note">The clinic hasn't released the veterinarians' schedule for this date yet. Please choose an earlier date.</span>}</label>
         </div>
 
         <label>Veterinarian<span className="required-mark"> *</span>
@@ -1068,6 +1072,7 @@ const styles = `
 .appt-modal-form > label,.appt-modal-form > .two-cols{margin-bottom:16px}
 .appt-modal-form label span{font-weight:600;color:#8b9aa3;font-size:11px}
 .appt-modal-form label .field-error-text{color:#a94444;font-weight:700;font-size:12.5px}
+.appt-schedule-note{display:block;color:#9d6817;font-weight:700;font-size:12.5px;line-height:1.4}
 .appt-modal-form input,.appt-modal-form select,.appt-modal-form textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 14px;font-family:inherit;font-size:14px;font-weight:400;color:#1c2e3a;background:#fbfeff}
 .appt-modal-form input::placeholder,.appt-modal-form textarea::placeholder{color:#a7b6bf;font-weight:400;opacity:1}
 .appt-modal-form input:focus,.appt-modal-form select:focus,.appt-modal-form textarea:focus{outline:none;border-color:#4da8da;box-shadow:0 0 0 3px rgba(77,168,218,.13)}

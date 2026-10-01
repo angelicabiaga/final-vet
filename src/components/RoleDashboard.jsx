@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Activity, AlertTriangle, CalendarDays, CheckCircle2, Clock3, FileHeart,
+  Activity, AlertTriangle, CalendarClock, CalendarDays, CheckCircle2, Clock3, FileHeart,
   MessageCircle, PackageSearch, PawPrint, RefreshCw, Stethoscope, Users
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -62,6 +62,7 @@ const DASHBOARD_CARD_ROUTES = {
   veterinarian: {
     "My Appointments Today": { pathname: "/veterinarian/appointments", state: { focusToday: true } },
     "My Active Queue": { pathname: "/veterinarian/queue" },
+    "My Schedule Today": { pathname: "/veterinarian/schedule" },
     // Medical Records has no standalone browsing view of its own -- it lives
     // entirely inside Animal Patients (see MedicalRecordsManagement.jsx),
     // so this intentionally points at the same route as the Animal Patients
@@ -100,6 +101,22 @@ function dateKey(value) {
 }
 
 const formatTime = formatTime12h;
+
+// Today's line on the vet's "My Schedule Today" card, from
+// get_vet_schedule_overview (see VetScheduleModule for the full page).
+function scheduleCard(schedule) {
+  const days = schedule?.days || [];
+  const today = days[0];
+  if (!today) return ["—", "Open My Schedule"];
+  const nextLeave = days.slice(1).find((day) => day.source === "leave" || day.request?.status === "Pending");
+  const upcoming = nextLeave
+    ? `${nextLeave.request?.status === "Pending" ? "Leave pending" : "Leave"} on ${new Date(`${nextLeave.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`
+    : "No upcoming leave";
+  if (today.source === "leave" && !today.working) return ["On leave", upcoming];
+  if (today.source === "leave") return ["Short day", `${formatTime(today.start_time)} – ${formatTime(today.end_time)} · ${upcoming}`];
+  if (!today.working) return ["Off today", upcoming];
+  return ["On duty", `${formatTime(today.start_time)} – ${formatTime(today.end_time)} · ${upcoming}`];
+}
 
 // A queue row's time is either its linked appointment's scheduled slot
 // ("HH:MM") or, for a walk-in with no appointment, the timestamp it
@@ -199,7 +216,8 @@ export default function RoleDashboard({ profile }) {
         [CalendarDays, "My Appointments Today", todayAppointments.length, `${todayAppointments.filter((a) => a.status === "Completed").length} completed`],
         [Clock3, "My Active Queue", activeQueues.length, `${activeQueues.filter((q) => q.status === "Waiting").length} waiting`],
         [FileHeart, "My Medical History", data.medicalRecords.length, "Recent records handled"],
-        [PackageSearch, "Medicine Alerts", lowStock.length, "Low or unavailable stock"]
+        [PackageSearch, "Medicine Alerts", lowStock.length, "Low or unavailable stock"],
+        [CalendarClock, "My Schedule Today", ...scheduleCard(data.schedule)]
       ];
     } else {
       const upcoming = data.appointments.filter((a) => dateKey(a.appointment_date) >= data.currentDate && !["Cancelled", "Completed"].includes(a.status));

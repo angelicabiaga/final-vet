@@ -51,6 +51,7 @@ import { getInventoryItems } from "../services/inventoryService";
 import { printMedicalRecordDocument, downloadPrescriptionPadPdf } from "../utils/invoicePdf";
 import ConfirmDialog from "./ConfirmDialog";
 import ConsultationHealthInsight from "./ConsultationHealthInsight";
+import { withDrTitle } from "../utils/vetName";
 
 import { completeQueueEntry, markConsultationReadyForBilling } from "../services/queueService";
 import { getPrescriptionsForConsultation } from "../services/billingService";
@@ -169,13 +170,10 @@ function formatHistoryDate(dateStr) {
   });
 }
 
-// Some veterinarian profiles already store "Dr." as part of full_name, so
-// prepending it blindly produced "Dr. Dr. Lopez" wherever a vet's name is
-// shown -- this strips any existing leading "Dr." first so it's added
-// exactly once either way.
+// Some veterinarian profiles already store "Dr." as part of full_name;
+// withDrTitle adds it exactly once either way.
 function formatVetName(vet, fallback = "Veterinarian not recorded") {
-  if (!vet?.full_name) return fallback;
-  return `Dr. ${vet.full_name.replace(/^dr\.?\s*/i, "")}`;
+  return withDrTitle(vet?.full_name, fallback);
 }
 
 function formatPetAge(dateOfBirth) {
@@ -1985,7 +1983,7 @@ export default function MedicalRecordsModule({
                         onClick={async () => {
                           try {
                             await printMedicalRecordDocument(viewingHistoryRecord, selectedPet, {
-                              veterinarianName: (viewingHistoryRecord.veterinarian?.full_name || "").replace(/^dr\.?\s*/i, ""),
+                              veterinarianName: viewingHistoryRecord.veterinarian?.full_name || "",
                               veterinarianPhone: viewingHistoryRecord.veterinarian?.phone || "",
                               visitDateTime: viewingHistoryRecord.consultation_date ? formatHistoryDate(viewingHistoryRecord.consultation_date) : "",
                               petAge: formatPetAge(selectedPet?.date_of_birth),

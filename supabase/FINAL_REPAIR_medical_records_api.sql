@@ -83,21 +83,13 @@ begin
     (veterinarian_id, day_of_week, start_time, end_time, is_available)
   select redmond_id, d, time '09:00', time '17:00', true
   from generate_series(0, 6) as d
-  on conflict (veterinarian_id, day_of_week)
-  do update set start_time = excluded.start_time,
-                end_time = excluded.end_time,
-                is_available = true,
-                updated_at = now();
+  on conflict (veterinarian_id, day_of_week) do nothing;
 
   insert into public.veterinarian_schedules
     (veterinarian_id, day_of_week, start_time, end_time, is_available)
   select neil_id, d, time '11:00', time '19:00', true
   from generate_series(0, 6) as d
-  on conflict (veterinarian_id, day_of_week)
-  do update set start_time = excluded.start_time,
-                end_time = excluded.end_time,
-                is_available = true,
-                updated_at = now();
+  on conflict (veterinarian_id, day_of_week) do nothing;
 end $$;
 
 -- Create or complete medical_records.

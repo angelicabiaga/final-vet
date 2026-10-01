@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabaseClient";
 import { getQueue } from "./queueService";
+import { getScheduleOverview } from "./vetLeaveService";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -52,7 +53,7 @@ export async function loadDashboardData(profile) {
   if (role === "pet_owner") medicalQuery = medicalQuery.eq("owner_id", profileId).eq("record_status", "Finalized");
   if (role === "veterinarian") medicalQuery = medicalQuery.eq("veterinarian_id", profileId);
 
-  const [profiles, pets, appointments, queueResult, inventory, medicalRecords, logs, participants] = await Promise.all([
+  const [profiles, pets, appointments, queueResult, inventory, medicalRecords, logs, participants, schedule] = await Promise.all([
     safeQuery(supabase.from("profiles").select("id, full_name, role, account_status, created_at").order("created_at", { ascending: false }).limit(100)),
     safeQuery(petQuery),
     safeQuery(appointmentQuery),
@@ -64,7 +65,10 @@ export async function loadDashboardData(profile) {
         ? supabase.from("activity_logs").select("id, user_id, action, module, description, created_at").eq("user_id", profileId).order("created_at", { ascending: false }).limit(8)
         : supabase.from("activity_logs").select("id, user_id, action, module, description, created_at").order("created_at", { ascending: false }).limit(8)
     ),
-    profileId ? safeQuery(supabase.from("conversation_participants").select("conversation_id, last_read_at").eq("profile_id", profileId)) : Promise.resolve([])
+    profileId ? safeQuery(supabase.from("conversation_participants").select("conversation_id, last_read_at").eq("profile_id", profileId)) : Promise.resolve([]),
+    // The vet's own hours/leave for the "My Schedule Today" card; optional,
+    // so a missing leave setup never blanks the rest of the dashboard.
+    role === "veterinarian" && profileId ? getScheduleOverview(profileId, 14).catch(() => null) : Promise.resolve(null)
   ]);
 
   const conversationIds = participants.map((item) => item.conversation_id).filter(Boolean);
@@ -75,6 +79,6 @@ export async function loadDashboardData(profile) {
   return {
     currentDate, profiles, pets, appointments,
     queues: queueResult.queues, queueError: queueResult.queueError,
-    inventory, medicalRecords, logs, participants, messages
+    inventory, medicalRecords, logs, participants, messages, schedule
   };
 }

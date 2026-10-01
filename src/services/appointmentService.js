@@ -76,15 +76,11 @@ export async function getAvailableSlots(veterinarianId, appointmentDate, exclude
     throw new Error("Unable to load the date-specific schedule.");
   }
 
-  // If the optional override table was deleted, safely fall back to weekly schedules.
+  // Leave / adjusted hours first, then the schedule staff created for that
+  // date (VET_SCHEDULE_CALENDAR.sql). No created schedule means nothing can
+  // be booked yet. Before that SQL is run, the weekly roster still applies.
   let schedule = overrideTableMissing ? null : override;
-  if (!override) {
-    const { data: weekly, error: scheduleError } = await supabase.from("veterinarian_schedules")
-      .select("start_time, end_time, is_available")
-      .eq("veterinarian_id", veterinarianId).eq("day_of_week", dayOfWeek).maybeSingle();
-    if (scheduleError) throw new Error("Unable to load the veterinarian schedule.");
-    schedule = weekly;
-  }
+  if (!override) schedule = await getCreatedScheduleDay(veterinarianId, appointmentDate, dayOfWeek);
   if (!schedule || !schedule.is_available || !schedule.start_time || !schedule.end_time) return [];
 
   let bookedQuery = supabase.from("appointments").select("id, start_time")
@@ -95,6 +91,17 @@ export async function getAvailableSlots(veterinarianId, appointmentDate, exclude
   if (bookedError) throw new Error("Unable to load booked times.");
 
   const bookedTimes = new Set((booked || []).map(item => normalizeTime(item.start_time)));
+  // Slots offered to another owner in a pending doctor change are held for
+  // them until they answer (see QUEUE_DOCTOR_CHANGE_CONFIRMATION.sql).
+  const { data: holds } = await supabase.from("queue_doctor_offers").select("proposed_time, pet_ids")
+    .eq("proposed_veterinarian_id", veterinarianId).eq("offer_date", appointmentDate).eq("status", "Pending");
+  (holds || []).forEach(hold => {
+    let time = normalizeTime(hold.proposed_time);
+    for (let i = 0; i < Math.max(hold.pet_ids?.length || 0, 1); i++) {
+      bookedTimes.add(time);
+      time = addTenMinutes(time);
+    }
+  });
   const slots = [];
   let current = normalizeTime(schedule.start_time);
   if (current < CLINIC_OPEN_TIME) current = CLINIC_OPEN_TIME;
@@ -114,6 +121,35 @@ export async function getAvailableSlots(veterinarianId, appointmentDate, exclude
   return slots;
 }
 
+const isMissingRelation = (error, name) =>
+  ["42P01", "PGRST205"].includes(error?.code) || String(error?.message || "").toLowerCase().includes(name);
+
+// The created schedule for one vet and date, or null when none was created.
+async function getCreatedScheduleDay(veterinarianId, appointmentDate, dayOfWeek) {
+  const { data, error } = await supabase.from("veterinarian_schedule_days")
+    .select("start_time, end_time, is_available")
+    .eq("veterinarian_id", veterinarianId).eq("schedule_date", appointmentDate).maybeSingle();
+  if (!error) return data;
+  if (!isMissingRelation(error, "veterinarian_schedule_days")) throw new Error("Unable to load the veterinarian schedule.");
+  const { data: weekly, error: weeklyError } = await supabase.from("veterinarian_schedules")
+    .select("start_time, end_time, is_available")
+    .eq("veterinarian_id", veterinarianId).eq("day_of_week", dayOfWeek).maybeSingle();
+  if (weeklyError) throw new Error("Unable to load the veterinarian schedule.");
+  return weekly;
+}
+
+// True when no vet has a created schedule (or adjusted hours) on the date,
+// i.e. the clinic hasn't opened that date for booking yet.
+export async function isDateUnscheduled(appointmentDate) {
+  if (!appointmentDate) return false;
+  const [{ data: days, error }, { data: adjusted }] = await Promise.all([
+    supabase.from("veterinarian_schedule_days").select("id").eq("schedule_date", appointmentDate).limit(1),
+    supabase.from("veterinarian_schedule_overrides").select("id").eq("schedule_date", appointmentDate).is("leave_request_id", null).limit(1)
+  ]);
+  if (error) return false;
+  return !(days || []).length && !(adjusted || []).length;
+}
+
 export async function getVeterinarianAvailability(appointmentDate, excludeAppointmentId = null) {
   const vets = await getVeterinarians();
   const perVet = await Promise.all(vets.map(vet => getAvailableSlots(vet.id, appointmentDate, excludeAppointmentId)));
@@ -123,7 +159,8 @@ export async function getVeterinarianAvailability(appointmentDate, excludeAppoin
     slotMap[vet.id] = perVet[index];
     perVet[index].forEach(time => timeSet.add(time));
   });
-  return { vets, slotMap, times: Array.from(timeSet).sort() };
+  const unscheduled = timeSet.size === 0 ? await isDateUnscheduled(appointmentDate).catch(() => false) : false;
+  return { vets, slotMap, times: Array.from(timeSet).sort(), unscheduled };
 }
 
 function validatePayload(payload) {
@@ -226,8 +263,18 @@ export async function cancelAppointment(id, ownerId) {
   if (error) throw new Error("Unable to cancel the appointment.");
 }
 
+// Rebooking keeps the same pet and owner, so only what changes is checked.
+function validateReschedule(id, values) {
+  if (!id) throw new Error("This appointment can't be found. Refresh the list and try again.");
+  if (!values.veterinarianId) throw new Error("Select a veterinarian.");
+  if (!values.appointmentDate || values.appointmentDate < todayLocal()) throw new Error("Select today or a future date.");
+  if (!values.startTime) throw new Error("Select an available time.");
+}
+
+// ownerId: pass it when a pet owner rebooks (they can only move their own
+// appointments); staff, admins and vets may leave it empty.
 export async function rescheduleAppointment(id, values, ownerId, changedBy) {
-  validatePayload({ ...values, ownerId });
+  validateReschedule(id, values);
 
   const latestSlots = await getAvailableSlots(
     values.veterinarianId,
@@ -238,18 +285,24 @@ export async function rescheduleAppointment(id, values, ownerId, changedBy) {
     throw new Error("That appointment time is no longer available. Please choose another time.");
   }
 
-  const { error } = await supabase.from("appointments").update({
+  let query = supabase.from("appointments").update({
     veterinarian_id: values.veterinarianId,
     appointment_date: values.appointmentDate,
     start_time: values.startTime,
     end_time: addTenMinutes(values.startTime),
     status: "Confirmed",
     created_by: changedBy
-  }).eq("id", id).eq("owner_id", ownerId).eq("status", "Confirmed");
+  }).eq("id", id).eq("status", "Confirmed");
+  if (ownerId) query = query.eq("owner_id", ownerId);
+  const { data, error } = await query.select("id");
   if (error) {
     if (error.code === "23505") throw new Error("That time is already booked.");
+    // The booking check explains schedule problems (e.g. no schedule yet).
+    const reason = String(error.message || "");
+    if (/schedule|unavailable|outside|past/i.test(reason)) throw new Error(reason);
     throw new Error("Unable to reschedule the appointment.");
   }
+  if (!data?.length) throw new Error("This appointment is no longer active. Refresh the list and try again.");
 }
 
 // Guaranteed to satisfy the app-wide password policy (8+ chars, upper,

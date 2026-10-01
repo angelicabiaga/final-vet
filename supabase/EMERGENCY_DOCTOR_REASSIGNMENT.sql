@@ -59,8 +59,9 @@ begin
     ) values (
       new.owner_id,
       'Doctor Reassigned',
-      'Due to an emergency, your pet''s doctor for visit #' || new.queue_number || ' has been changed to Dr. ' ||
-      coalesce(v_vet_name, 'another veterinarian') || '.' ||
+      'Due to an emergency, your pet''s doctor for visit #' || new.queue_number || ' has been changed to ' ||
+      -- full_name may already include "Dr."; never print "Dr. Dr.".
+      coalesce('Dr. ' || nullif(regexp_replace(btrim(v_vet_name), '^((dr\.\s*)|(dr\s+))+', '', 'i'), ''), 'another veterinarian') || '.' ||
       case when nullif(trim(new.reassignment_notes), '') is not null then ' ' || new.reassignment_notes || '.' else '' end,
       'Queue Update',
       'Queue Management',

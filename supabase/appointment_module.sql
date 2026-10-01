@@ -176,10 +176,10 @@ insert into public.veterinarian_schedules(veterinarian_id,day_of_week,start_time
 select p.id, d.day_no, time '09:00', time '17:00'
 from public.profiles p cross join generate_series(0,6) as d(day_no)
 where p.role='veterinarian' and lower(p.full_name) like '%redmond%'
-on conflict(veterinarian_id,day_of_week) do update set start_time=excluded.start_time,end_time=excluded.end_time,is_available=true;
+on conflict(veterinarian_id,day_of_week) do nothing;
 
 insert into public.veterinarian_schedules(veterinarian_id,day_of_week,start_time,end_time)
 select p.id, d.day_no, time '11:00', time '19:00'
 from public.profiles p cross join generate_series(0,6) as d(day_no)
 where p.role='veterinarian' and (lower(p.full_name) like '%neil%' or lower(p.full_name) like '%cruz%')
-on conflict(veterinarian_id,day_of_week) do update set start_time=excluded.start_time,end_time=excluded.end_time,is_available=true;
+on conflict(veterinarian_id,day_of_week) do nothing;

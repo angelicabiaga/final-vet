@@ -103,11 +103,7 @@ from public.profiles p
 cross join generate_series(0, 6) as d(day_number)
 where lower(p.full_name) like '%redmond%'
   and p.role = 'veterinarian'
-on conflict (veterinarian_id, day_of_week)
-do update set start_time = excluded.start_time,
-              end_time = excluded.end_time,
-              is_available = true,
-              updated_at = now();
+on conflict (veterinarian_id, day_of_week) do nothing;
 
 insert into public.veterinarian_schedules
   (veterinarian_id, day_of_week, start_time, end_time, is_available)
@@ -116,11 +112,7 @@ from public.profiles p
 cross join generate_series(0, 6) as d(day_number)
 where lower(p.full_name) like '%neil%cruz%'
   and p.role = 'veterinarian'
-on conflict (veterinarian_id, day_of_week)
-do update set start_time = excluded.start_time,
-              end_time = excluded.end_time,
-              is_available = true,
-              updated_at = now();
+on conflict (veterinarian_id, day_of_week) do nothing;
 
 -- Recreate/complete the medical_records table.
 create table if not exists public.medical_records (

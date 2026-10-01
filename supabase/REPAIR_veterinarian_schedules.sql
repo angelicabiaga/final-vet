@@ -88,7 +88,10 @@ for all to anon, authenticated
 using (true)
 with check (true);
 
--- Apply the clinic's default schedule to a veterinarian profile by name.
+-- Apply the clinic's default schedule to a veterinarian profile by name:
+-- Dr. Redmond 9:00 AM-5:00 PM, Dr. Neil 11:00 AM-7:00 PM.
+-- Only fills days with no row yet, so hours set by staff are never reset
+-- (this also runs from the profile trigger below on every profile save).
 create or replace function public.apply_pawcruz_default_vet_schedule(profile_id uuid, profile_name text)
 returns void
 language plpgsql
@@ -114,12 +117,7 @@ begin
   )
   select profile_id, day_number, default_start, default_end, true
   from generate_series(0, 6) as days(day_number)
-  on conflict (veterinarian_id, day_of_week)
-  do update set
-    start_time = excluded.start_time,
-    end_time = excluded.end_time,
-    is_available = true,
-    updated_at = now();
+  on conflict (veterinarian_id, day_of_week) do nothing;
 end;
 $$;
 
