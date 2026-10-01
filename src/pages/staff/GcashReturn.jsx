@@ -52,7 +52,7 @@ export default function GcashReturn({ profile }) {
 
         setTransaction(result);
 
-        if (result.payment_status === "Paid") {
+        if (["Paid", "Partially Paid"].includes(result.payment_status)) {
           setStatus("paid");
         } else if (result.payment_status === "Cancelled" || redirectResult === "failed") {
           setStatus("failed");

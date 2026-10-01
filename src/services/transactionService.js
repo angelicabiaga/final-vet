@@ -1,7 +1,7 @@
 import { supabase } from "../config/supabaseClient";
 
 const TRANSACTION_FIELDS =
-  "id,or_number,pet_id,owner_id,medical_record_id,appointment_id,queue_entry_id,staff_id,checkup_fee,items_subtotal,subtotal,discount_amount,total_amount,amount_paid,change_amount,payment_method,payment_status,notes,paymongo_source_id,paymongo_payment_id,paymongo_checkout_url,created_by,created_at,updated_at";
+  "id,or_number,pet_id,owner_id,medical_record_id,appointment_id,queue_entry_id,staff_id,checkup_fee,items_subtotal,subtotal,discount_amount,total_amount,amount_paid,change_amount,payment_method,payment_status,split_payment_details,notes,paymongo_source_id,paymongo_payment_id,paymongo_checkout_url,created_by,created_at,updated_at";
 
 const TRANSACTION_ITEM_FIELDS =
   "id,transaction_id,inventory_item_id,item_type,item_name,quantity,unit_price,line_total,inventory_transaction_id,prescription_id,created_at";
@@ -247,7 +247,21 @@ export async function getTransactions({
   if (from) query = query.gte("created_at", `${from}T00:00:00`);
   if (to) query = query.lte("created_at", `${to}T23:59:59.999`);
   if (paymentMethod) query = query.eq("payment_method", paymentMethod);
-  if (paymentStatus) query = query.eq("payment_status", paymentStatus);
+  if (paymentStatus) {
+    query = query.eq("payment_status", paymentStatus);
+  } else {
+    // Default view: only a transaction that's currently "Paid", or that had
+    // real money collected against it at some point (amount_paid > 0 --
+    // covers Partially Paid, and a Voided transaction that really was paid
+    // before being voided), is a completed payment event worth showing
+    // here. Everything else -- Unpaid ($0 collected), Pending (a GCash
+    // checkout still awaiting payment), or a GCash attempt voided before it
+    // was ever paid -- was never a real transaction from the customer's
+    // point of view, so it's left out of the default view. Still fully
+    // findable via an explicit Payment Status filter (e.g. "Unpaid" for
+    // Collect Balance follow-up).
+    query = query.or("amount_paid.gt.0,payment_status.eq.Paid");
+  }
   if (ownerId) query = query.eq("owner_id", ownerId);
 
   const { data, error } = await query;
@@ -270,11 +284,38 @@ export async function reverseTransaction({ transactionId, reason }, profile) {
   return data;
 }
 
+// A GCash/Split-GCash checkout that's abandoned without going through the
+// QR modal's own Cancel button (tab closed, browser back, page refreshed)
+// leaves its transaction row stuck on "Pending" forever -- nothing else
+// ever cleans it up. getConsultationForBilling() treats ANY active
+// (non-Voided/Cancelled) transaction for a visit as "already billed" and
+// zeroes the checkup fee / excludes its items from the cart -- by design,
+// so a genuinely in-flight payment can't be double-processed. A truly
+// abandoned attempt is indistinguishable from that at a glance, so this
+// only cleans up ones older than the GCash QR's own expiry window, never a
+// payment that could still be legitimately in progress right now.
+const STALE_PENDING_MINUTES = 5;
+
+export async function voidStalePendingTransactions(queueEntryId, profile) {
+  if (!queueEntryId) return;
+  const cutoff = new Date(Date.now() - STALE_PENDING_MINUTES * 60 * 1000).toISOString();
+  const { data: stale } = await supabase
+    .from("transactions")
+    .select("id")
+    .eq("queue_entry_id", queueEntryId)
+    .eq("payment_status", "Pending")
+    .lt("created_at", cutoff);
+  if (!stale?.length) return;
+  await Promise.all(stale.map((row) =>
+    reverseTransaction({ transactionId: row.id, reason: "Abandoned GCash/Split payment attempt." }, profile).catch(() => {})
+  ));
+}
+
 export async function pollTransactionStatus(transactionId, { intervalMs = 2000, timeoutMs = 60000 } = {}) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const transaction = await getTransactionById(transactionId);
-    if (["Paid", "Cancelled", "Voided"].includes(transaction.payment_status)) return transaction;
+    if (["Paid", "Partially Paid", "Cancelled", "Voided"].includes(transaction.payment_status)) return transaction;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   return getTransactionById(transactionId);
