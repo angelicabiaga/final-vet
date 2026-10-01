@@ -41,6 +41,14 @@ const INITIAL_BROADCAST_FORM = {
   related_module: "",
 };
 
+// Human-readable labels for the broadcast form's fields, used to name
+// exactly which one(s) failed instead of a generic "highlighted field(s)"
+// message.
+const BROADCAST_FIELD_LABELS = {
+  title: "Title",
+  message: "Message",
+};
+
 function iconForNotificationType(notificationType) {
   const type = (notificationType || "").toLowerCase();
 
@@ -315,6 +323,11 @@ export default function NotificationsPage({ profile }) {
     if (!message) errors.message = "Please enter a notification message.";
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
+      const fieldNames = Object.keys(errors)
+        .map((key) => BROADCAST_FIELD_LABELS[key] || key)
+        .join(", ");
+      setSuccess("");
+      setError(`Please fix the following field(s): ${fieldNames}.`);
       focusFirstInvalidField(fieldRefs, errors);
       return;
     }

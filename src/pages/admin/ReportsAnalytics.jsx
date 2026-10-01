@@ -21,8 +21,99 @@ import { supabase } from "../../config/supabaseClient";
 import { exportCsv, loadReports } from "../../services/reportService";
 import { formatDateTime12h } from "../../utils/timeFormat";
 import pawLogo from "../../assets/reference/paw.png";
+import PrintPreviewModal from "../../components/PrintPreviewModal";
+import usePrintPreview from "../../hooks/usePrintPreview";
 
 const PALETTE = ["#4DA8DA", "#4CAF78", "#F4B942", "#e16e64", "#8E7CC3", "#34B3A4"];
+
+// Shared with the on-screen "Print" flow below: applied unconditionally
+// inside the PrintPreviewModal's iframe (an isolated document -- none of
+// the chrome-hiding selectors below match anything there, so they're
+// harmless no-ops, and the background/print-report rules are exactly what
+// that preview needs), and reused as-is inside @media print further down as
+// a fallback for a manual browser Ctrl+P on the live page (where it must
+// stay print-only, since these rules hide the sidebar/header and force
+// layout changes that would break the normal on-screen view).
+const PRINT_REPORT_CSS = `
+  @page{size:A4;margin:10mm 12mm}
+  html,body{background:#fff}
+  .sidebar,.sidebarOverlay,header,.nb,.screen-only{display:none!important}
+  main{margin:0!important}
+  .content{padding:0!important}
+  .reports{display:block!important;gap:0}
+  .print-report{display:block!important;color:#243342;font-size:10.5px;line-height:1.45;font-family:'Segoe UI',Arial,sans-serif}
+
+  .print-body{
+    padding-top:22mm;padding-bottom:13mm;
+    -webkit-box-decoration-break:clone;box-decoration-break:clone;
+  }
+
+  .print-header{
+    position:fixed;top:0;left:12mm;right:12mm;height:19mm;
+    display:flex;align-items:center;gap:12px;
+    border-bottom:2px solid #4DA8DA;padding-bottom:7px;background:#fff;
+  }
+  .print-logo{width:34px;height:34px;object-fit:contain}
+  .print-header-main{display:flex;flex-direction:column;line-height:1.3}
+  .print-header-main strong{font-size:15px;color:#153447;font-weight:800}
+  .print-header-main span{font-size:11px;color:#2c86b3;font-weight:700;letter-spacing:.02em}
+  .print-header-meta{margin-left:auto;text-align:right;font-size:9px;color:#66808d;line-height:1.6}
+  .print-header-meta b{color:#2c5a72}
+
+  .print-footer{
+    position:fixed;bottom:0;left:12mm;right:12mm;height:10mm;
+    border-top:1px solid #d9e9ef;padding-top:6px;
+    display:flex;justify-content:space-between;align-items:center;
+    font-size:8.5px;color:#7c92a0;background:#fff;
+  }
+  .print-footer .brand{font-weight:700;color:#3a7793}
+
+  .print-section{break-inside:avoid-page;page-break-inside:avoid;margin-bottom:14px}
+  .print-section-title{
+    break-after:avoid;page-break-after:avoid;
+    font-size:11.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+    color:#fff;background:#1f4b63;padding:6px 10px;border-radius:4px;margin:0 0 8px;
+  }
+  .print-subtitle{break-after:avoid;page-break-after:avoid;font-size:10.5px;font-weight:800;color:#1f4b63;margin:9px 0 5px;padding-bottom:3px;border-bottom:1px solid #dcecf2}
+
+  .print-kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:4px}
+  .print-kpi-grid.four{grid-template-columns:repeat(4,1fr)}
+  .print-kpi{border:1px solid #d9eaf1;border-radius:5px;padding:7px 8px;background:#f7fcfe;break-inside:avoid}
+  .print-kpi b{display:block;font-size:12.5px;color:#1f6d94;font-weight:800}
+  .print-kpi span{display:block;font-size:7.7px;color:#5c7482;font-weight:700;text-transform:uppercase;letter-spacing:.02em;margin-top:2px}
+
+  table.ptable{width:100%;border-collapse:collapse;font-size:9.5px;margin-bottom:3px}
+  table.ptable th,table.ptable td{text-align:left;padding:4px 7px;border-bottom:1px solid #e7eff2}
+  table.ptable thead th{background:#eaf5fa;color:#2c5a72;font-weight:800;font-size:8.5px;text-transform:uppercase;letter-spacing:.02em}
+  table.ptable tbody tr:nth-child(even){background:#f8fbfd}
+  table.ptable tbody tr{break-inside:avoid;page-break-inside:avoid}
+  table.ptable.kv th{width:26%;background:#f2f8fb;color:#4c6774;font-weight:700}
+
+  .print-subgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:4px}
+
+  .pbar-row{display:flex;align-items:center;gap:7px;margin:3px 0;break-inside:avoid}
+  .pbar-label{width:34%;font-size:9px;color:#3d5561;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pbar-track{flex:1;height:7px;background:#eef4f7;border-radius:4px;overflow:hidden}
+  .pbar-fill{height:100%;background:linear-gradient(90deg,#4DA8DA,#2c86b3);border-radius:4px}
+  .pbar-value{width:22%;text-align:right;font-size:9px;color:#1f4b63;font-weight:800}
+
+  .print-note,.print-empty{font-size:8.5px;color:#8398a4;margin:4px 0;font-style:italic}
+`;
+
+// On-screen-only override for the iframe preview: the fixed header/footer
+// above are designed for per-printed-page positioning, which looks broken
+// while simply scrolling the live preview (they'd stay pinned mid-content
+// instead of appearing once per page). Restored to position:fixed inside
+// @media print below, so the actual printout still paginates correctly --
+// only the live scroll view flows them normally.
+const PRINT_PREVIEW_SCREEN_OVERRIDE_CSS = `
+  .print-header{position:static;margin-bottom:10px}
+  .print-footer{position:static;margin-top:10px}
+  @media print{
+    .print-header{position:fixed;margin-bottom:0}
+    .print-footer{position:fixed;margin-top:0}
+  }
+`;
 
 function money(value) {
   return Number(value || 0).toLocaleString("en-PH", { style: "currency", currency: "PHP" });
@@ -58,6 +149,7 @@ function PrintBar({ label, value, max, format }) {
 }
 
 export default function ReportsAnalytics({ profile }) {
+  const printPreview = usePrintPreview();
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
   const [filters, setFilters] = useState({ from: firstDay, to: today, status: "", veterinarianId: "" });
@@ -194,11 +286,20 @@ export default function ReportsAnalytics({ profile }) {
   const topServices = (sales.serviceSalesList || []).slice(0, 10);
   const productsSold = (sales.productSalesList || []).slice(0, 10);
 
+  // The already-rendered .print-report node (real, current data) is cloned
+  // as-is into the shared PrintPreviewModal instead of calling window.print()
+  // directly -- same markup, so the preview matches the eventual printout.
+  function openReportPreview() {
+    const node = document.querySelector(".print-report");
+    if (!node) return;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>PawCruz Report</title><style>body{margin:0;background:#fff}${PRINT_REPORT_CSS}${PRINT_PREVIEW_SCREEN_OVERRIDE_CSS}</style></head><body>${node.outerHTML}</body></html>`;
+    printPreview.showHtml(html, "Reports & Analytics");
+  }
+
   return <AppShell profile={profile} title="Reports & Analytics"><div className="reports">
     <div className="screen-only">
     <div className="head">
-      <div><h2>Reports & Analytics</h2><p>Automatically generated, read-only summaries from POS, Inventory, Appointments, and Queue records.</p></div>
-      <div><button className="soft" onClick={load}><RefreshCw size={16} /> Refresh</button><button className="soft" onClick={() => window.print()}><Printer size={16} /> Print</button></div>
+      <div><button className="soft" onClick={load}><RefreshCw size={16} /> Refresh</button><button className="soft" onClick={openReportPreview} disabled={loading}><Printer size={16} /> Print</button></div>
     </div>
 
     {error && <div className="error">{error}</div>}
@@ -508,7 +609,7 @@ export default function ReportsAnalytics({ profile }) {
          not on .reports -- .reports only ever has this one visible child. */
       .screen-only{display:grid;gap:var(--gap-lg)}
 
-      .head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+      .head{display:flex;justify-content:flex-end;align-items:flex-start;gap:20px;flex-wrap:wrap}
       .head h2{margin:0;font-size:21px;color:#24566d}
       .head p{color:#6F7F88;margin:6px 0 0;max-width:600px;line-height:1.5}
       .head>div:last-child{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -573,71 +674,17 @@ export default function ReportsAnalytics({ profile }) {
 
       .print-report{display:none}
 
-      @media print{
-        @page{size:A4;margin:10mm 12mm}
-        html,body{background:#fff}
-        .sidebar,.sidebarOverlay,header,.nb,.screen-only{display:none!important}
-        main{margin:0!important}
-        .content{padding:0!important}
-        .reports{display:block!important;gap:0}
-        .print-report{display:block!important;color:#243342;font-size:10.5px;line-height:1.45;font-family:'Segoe UI',Arial,sans-serif}
-
-        .print-body{
-          padding-top:22mm;padding-bottom:13mm;
-          -webkit-box-decoration-break:clone;box-decoration-break:clone;
-        }
-
-        .print-header{
-          position:fixed;top:0;left:12mm;right:12mm;height:19mm;
-          display:flex;align-items:center;gap:12px;
-          border-bottom:2px solid #4DA8DA;padding-bottom:7px;background:#fff;
-        }
-        .print-logo{width:34px;height:34px;object-fit:contain}
-        .print-header-main{display:flex;flex-direction:column;line-height:1.3}
-        .print-header-main strong{font-size:15px;color:#153447;font-weight:800}
-        .print-header-main span{font-size:11px;color:#2c86b3;font-weight:700;letter-spacing:.02em}
-        .print-header-meta{margin-left:auto;text-align:right;font-size:9px;color:#66808d;line-height:1.6}
-        .print-header-meta b{color:#2c5a72}
-
-        .print-footer{
-          position:fixed;bottom:0;left:12mm;right:12mm;height:10mm;
-          border-top:1px solid #d9e9ef;padding-top:6px;
-          display:flex;justify-content:space-between;align-items:center;
-          font-size:8.5px;color:#7c92a0;background:#fff;
-        }
-        .print-footer .brand{font-weight:700;color:#3a7793}
-
-        .print-section{break-inside:avoid-page;page-break-inside:avoid;margin-bottom:14px}
-        .print-section-title{
-          break-after:avoid;page-break-after:avoid;
-          font-size:11.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
-          color:#fff;background:#1f4b63;padding:6px 10px;border-radius:4px;margin:0 0 8px;
-        }
-        .print-subtitle{break-after:avoid;page-break-after:avoid;font-size:10.5px;font-weight:800;color:#1f4b63;margin:9px 0 5px;padding-bottom:3px;border-bottom:1px solid #dcecf2}
-
-        .print-kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:4px}
-        .print-kpi-grid.four{grid-template-columns:repeat(4,1fr)}
-        .print-kpi{border:1px solid #d9eaf1;border-radius:5px;padding:7px 8px;background:#f7fcfe;break-inside:avoid}
-        .print-kpi b{display:block;font-size:12.5px;color:#1f6d94;font-weight:800}
-        .print-kpi span{display:block;font-size:7.7px;color:#5c7482;font-weight:700;text-transform:uppercase;letter-spacing:.02em;margin-top:2px}
-
-        table.ptable{width:100%;border-collapse:collapse;font-size:9.5px;margin-bottom:3px}
-        table.ptable th,table.ptable td{text-align:left;padding:4px 7px;border-bottom:1px solid #e7eff2}
-        table.ptable thead th{background:#eaf5fa;color:#2c5a72;font-weight:800;font-size:8.5px;text-transform:uppercase;letter-spacing:.02em}
-        table.ptable tbody tr:nth-child(even){background:#f8fbfd}
-        table.ptable tbody tr{break-inside:avoid;page-break-inside:avoid}
-        table.ptable.kv th{width:26%;background:#f2f8fb;color:#4c6774;font-weight:700}
-
-        .print-subgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:4px}
-
-        .pbar-row{display:flex;align-items:center;gap:7px;margin:3px 0;break-inside:avoid}
-        .pbar-label{width:34%;font-size:9px;color:#3d5561;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .pbar-track{flex:1;height:7px;background:#eef4f7;border-radius:4px;overflow:hidden}
-        .pbar-fill{height:100%;background:linear-gradient(90deg,#4DA8DA,#2c86b3);border-radius:4px}
-        .pbar-value{width:22%;text-align:right;font-size:9px;color:#1f4b63;font-weight:800}
-
-        .print-note,.print-empty{font-size:8.5px;color:#8398a4;margin:4px 0;font-style:italic}
-      }
+      @media print{${PRINT_REPORT_CSS}}
     `}</style>
+
+    <PrintPreviewModal
+      open={!!printPreview.preview}
+      title={printPreview.preview?.title}
+      src={printPreview.preview?.src}
+      html={printPreview.preview?.html}
+      onDownload={printPreview.preview?.onDownload}
+      showPrint={printPreview.preview?.showPrint}
+      onClose={printPreview.close}
+    />
   </div></AppShell>;
 }

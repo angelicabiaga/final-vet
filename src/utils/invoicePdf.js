@@ -15,6 +15,19 @@ function remainingInvoiceBalance(transaction) {
   return Math.max(0, Number(transaction?.total_amount || 0) - Number(transaction?.amount_paid || 0));
 }
 
+// Mirrors VACCINE_KEYS in MedicalRecordsModule.jsx -- only used here to turn
+// a saved vaccination_records row's checkbox flags back into labels for print.
+const VACCINE_LABELS = [
+  ["distemper", "Distemper"],
+  ["parainfluenza", "Parainfluenza"],
+  ["adenovirus", "Adenovirus"],
+  ["parvovirus", "Parvovirus"],
+  ["leptospirosis", "Leptospirosis"],
+  ["coronavirus", "Coronavirus"],
+  ["bordetella", "Bordetella"],
+  ["rabies", "Rabies"],
+];
+
 function invoiceLineItems(transaction) {
   const serviceRows = Number(transaction.checkup_fee || 0) > 0
     ? [{ id: "checkup", item_name: "Checkup / consultation service", quantity: 1, unit_price: transaction.checkup_fee, line_total: transaction.checkup_fee }]
@@ -109,7 +122,11 @@ export function downloadInvoicePdf(transaction) {
   infoRow("Method", transaction.payment_method);
   infoRow("Status", transaction.payment_status);
 
-  pdf.save(`Invoice-${transaction.or_number || transaction.id}.pdf`);
+  // Returned rather than saved directly -- the caller shows it inside the
+  // shared PrintPreviewModal first; `download()` re-serializes the same
+  // already-built pdf, so the downloaded file always matches the preview.
+  const filename = `Invoice-${transaction.or_number || transaction.id}.pdf`;
+  return { url: pdf.output("bloburl"), download: () => pdf.save(filename) };
 }
 
 /**
@@ -216,7 +233,8 @@ export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
   const wrapped = pdf.splitTextToSize(note, 170);
   pdf.text(wrapped, 20, y);
 
-  pdf.save(`Veterinarian-Prescription-Notice-${(prescription.item_name || "medicine").replace(/[^a-z0-9]+/gi, "-")}-${String(prescription.id || "").slice(0, 8)}.pdf`);
+  const filename = `Veterinarian-Prescription-Notice-${(prescription.item_name || "medicine").replace(/[^a-z0-9]+/gi, "-")}-${String(prescription.id || "").slice(0, 8)}.pdf`;
+  return { url: pdf.output("bloburl"), download: () => pdf.save(filename) };
 }
 
 /**
@@ -363,15 +381,21 @@ function prescriptionPadFileName(meta) {
   return `Veterinarian-Prescription-${(meta.petName || "patient").replace(/[^a-z0-9]+/gi, "-")}-${String(meta.date || Date.now()).replace(/[^a-z0-9]+/gi, "-")}.pdf`;
 }
 
-/** Saves the prescription slip to disk -- for staff and veterinarian use. */
+/**
+ * Builds the prescription slip for staff/veterinarian use -- returns a blob
+ * URL for the shared PrintPreviewModal plus a download() that re-saves the
+ * same already-built pdf, so the downloaded file always matches the preview.
+ */
 export function downloadPrescriptionPadPdf(prescriptions, meta = {}) {
-  buildPrescriptionPadPdf(prescriptions, meta).save(prescriptionPadFileName(meta));
+  const pdf = buildPrescriptionPadPdf(prescriptions, meta);
+  const filename = prescriptionPadFileName(meta);
+  return { url: pdf.output("bloburl"), download: () => pdf.save(filename) };
 }
 
-/** Opens the prescription slip in a new tab for on-screen viewing, without forcing a download -- for pet owners. */
+/** Builds the prescription slip and returns its blob URL for the shared PrintPreviewModal -- for pet owners. */
 export function viewPrescriptionPadPdf(prescriptions, meta = {}) {
   const pdf = buildPrescriptionPadPdf(prescriptions, meta);
-  window.open(pdf.output("bloburl"), "_blank");
+  return pdf.output("bloburl");
 }
 
 async function loadImageDataUrl(url) {
@@ -412,8 +436,9 @@ function imageFormatFromDataUrl(dataUrl) {
  * -- the "Print Medical Record" action inside Animal Patients. Never
  * includes any other consultation from the pet's history, and never writes
  * anything back to Supabase; it only reads the record/pet data already
- * loaded on screen and lays it out as a PDF opened in a new tab, where the
- * browser's own viewer offers Print / Save as PDF / page navigation.
+ * loaded on screen and lays it out as a PDF. Returns the generated PDF's
+ * blob URL rather than opening it -- the caller shows it in the shared
+ * PrintPreviewModal so the user reviews it before printing.
  *
  * Layout: an ID-card-style masthead puts the pet's own photo beside the
  * clinic name (the first visual element on the page, ahead of the record
@@ -676,41 +701,165 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
     2
   );
 
-  sectionTitle("Chief Complaint & Symptoms");
-  paragraph("Chief Complaint", record.chief_complaint);
-  paragraph("Symptoms", record.symptoms);
+  // Only print the sections the chosen template actually captured -- a
+  // Vaccination Record consultation, for example, has no Symptoms/Diagnosis/
+  // Treatment to show, so those health-record-only sections stay out here.
+  if (!record.record_template || record.record_template === "health-record") {
+    sectionTitle("Chief Complaint & Symptoms");
+    paragraph("Chief Complaint", record.chief_complaint);
+    paragraph("Symptoms", record.symptoms);
 
-  sectionTitle("Vital Signs");
-  fieldGrid(
-    [
-      ["Vital Signs", record.vital_signs],
-      ["Weight (kg)", record.weight],
-      ["Temperature (°C)", record.temperature],
-    ],
-    3
-  );
+    sectionTitle("Vital Signs");
+    fieldGrid(
+      [
+        ["Vital Signs", record.vital_signs],
+        ["Weight (kg)", record.weight],
+        ["Temperature (°C)", record.temperature],
+      ],
+      3
+    );
 
-  sectionTitle("Diagnosis");
-  paragraph("Diagnosis", record.diagnosis);
+    sectionTitle("Diagnosis");
+    paragraph("Diagnosis", record.diagnosis);
 
-  sectionTitle("Treatment");
-  paragraph("Treatment", record.treatment);
-  paragraph("Treatment Plan", record.treatment_plan);
+    sectionTitle("Treatment");
+    paragraph("Treatment", record.treatment);
+    paragraph("Treatment Plan", record.treatment_plan);
 
-  sectionTitle("Medications");
-  fieldGrid(
-    [
-      ["Medication", record.medication],
-      ["Dosage", record.dosage],
-      ["Frequency", record.frequency],
-      ["Duration", record.duration],
-    ],
-    2
-  );
+    sectionTitle("Medications");
+    fieldGrid(
+      [
+        ["Medication", record.medication],
+        ["Dosage", record.dosage],
+        ["Frequency", record.frequency],
+        ["Duration", record.duration],
+      ],
+      2
+    );
 
-  sectionTitle("Laboratory");
-  paragraph("Laboratory Request", record.laboratory_request);
-  paragraph("Laboratory Result", record.laboratory_result);
+    sectionTitle("Laboratory");
+    paragraph("Laboratory Request", record.laboratory_request);
+    paragraph("Laboratory Result", record.laboratory_result);
+  }
+
+  if (record.record_template === "parasite-prevention") {
+    sectionTitle("Parasite Prevention");
+    const rows = record.parasite_treatments || [];
+    if (!rows.length) {
+      paragraph("Parasite Treatments", "");
+    } else {
+      ensureSpace(7);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(...BRAND_LIGHT);
+      pdf.text("DATE", left, y);
+      pdf.text("TREATMENT", left + 40, y);
+      y += 2;
+      pdf.setDrawColor(...SECTION_DIVIDER);
+      pdf.setLineWidth(0.2);
+      pdf.line(left, y, right, y);
+      y += 5;
+      rows.forEach((row) => {
+        ensureSpace(6.5);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9.5);
+        pdf.setTextColor(...TEXT_DARK);
+        pdf.text(row.date ? formatDateLong(row.date) : "N/A", left, y);
+        pdf.text(row.treatment || "N/A", left + 40, y);
+        y += 6;
+      });
+      y += 3;
+    }
+  }
+
+  if (record.record_template === "heartworm") {
+    sectionTitle("Heartworm Tests and Prevention");
+    const rows = record.heartworm_tests || [];
+    if (!rows.length) {
+      paragraph("Heartworm Tests", "");
+    } else {
+      ensureSpace(7);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(...BRAND_LIGHT);
+      pdf.text("DATE", left, y);
+      pdf.text("RESULT", left + 40, y);
+      y += 2;
+      pdf.setDrawColor(...SECTION_DIVIDER);
+      pdf.setLineWidth(0.2);
+      pdf.line(left, y, right, y);
+      y += 5;
+      rows.forEach((row) => {
+        ensureSpace(6.5);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9.5);
+        pdf.setTextColor(...TEXT_DARK);
+        pdf.text(row.date ? formatDateLong(row.date) : "N/A", left, y);
+        pdf.text(row.result || "N/A", left + 40, y);
+        y += 6;
+      });
+      y += 3;
+    }
+  }
+
+  if (record.record_template === "vaccination") {
+    sectionTitle("Vaccination Record");
+    const rows = record.vaccination_records || [];
+    if (!rows.length) {
+      paragraph("Vaccinations", "");
+    } else {
+      rows.forEach((row, index) => {
+        const given = VACCINE_LABELS.filter(([key]) => row[key]).map(([, label]) => label);
+        fieldGrid(
+          [
+            ["Date", row.date ? formatDateLong(row.date) : ""],
+            ["Age", row.age],
+            ["Weight", row.weight],
+          ],
+          3
+        );
+        paragraph("Vaccines Given", given.join(", "));
+        if (row.others) paragraph("Others", row.others);
+        if (row.administeredBy) paragraph("Administered By / Signature", row.administeredBy);
+        if (index < rows.length - 1) {
+          ensureSpace(4);
+          pdf.setDrawColor(...SECTION_DIVIDER);
+          pdf.setLineWidth(0.2);
+          pdf.line(left, y, right, y);
+          y += 6;
+        }
+      });
+    }
+  }
+
+  if (record.record_template === "dental") {
+    sectionTitle("Dental Examination");
+    fieldGrid(
+      [
+        ["Gingiva", record.template_data?.gingiva],
+        ["Occlusion", record.template_data?.occlusion],
+        ["Salivation", record.template_data?.salivation],
+        ["Halitosis", record.template_data?.halitosis],
+      ],
+      2
+    );
+    paragraph("Dental Chart and Findings", record.template_data?.dentalChart);
+    paragraph("Periodontal Disease / Other Comment", record.template_data?.periodontalNotes);
+
+    sectionTitle("Dental Treatment");
+    paragraph("Treatment", record.treatment);
+  }
+
+  if (record.record_template === "pet-profile") {
+    sectionTitle("Profile Numbers");
+    fieldGrid(
+      [
+        ["Patient No.", record.template_data?.patientNumber],
+        ["Profile / Record No.", record.template_data?.recordNumber],
+      ],
+      2
+    );
+  }
 
   if (record.vaccination) {
     sectionTitle("Vaccination Details");
@@ -792,5 +941,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
     pdf.text(`Page ${page} of ${totalPages}`, right, pageHeight - 9, { align: "right" });
   }
 
-  window.open(pdf.output("bloburl"), "_blank");
+  // Returned rather than opened directly -- the caller shows it inside the
+  // shared PrintPreviewModal so the user reviews it before printing.
+  return pdf.output("bloburl");
 }

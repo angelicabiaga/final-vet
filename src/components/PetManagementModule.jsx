@@ -57,6 +57,9 @@ import {
 import AnimalPatientAIHealth from "./AnimalPatientAIHealth";
 import ConsultationHealthInsight from "./ConsultationHealthInsight";
 import { withDrTitle } from "../utils/vetName";
+import { getMedicalRecordTemplate } from "../constants/medicalRecordTemplates";
+import PrintPreviewModal from "./PrintPreviewModal";
+import usePrintPreview from "../hooks/usePrintPreview";
 
 function money(value) {
   return Number(value || 0).toLocaleString("en-PH", { style: "currency", currency: "PHP" });
@@ -67,6 +70,19 @@ function invoiceBalance(transaction) {
 }
 
 const MANILA_TIME_ZONE = "Asia/Manila";
+
+// Mirrors VACCINE_KEYS in MedicalRecordsModule.jsx -- only used here to turn
+// a saved vaccination_records row's checkbox flags back into labels for display.
+const VACCINE_LABELS = [
+  ["distemper", "Distemper"],
+  ["parainfluenza", "Parainfluenza"],
+  ["adenovirus", "Adenovirus"],
+  ["parvovirus", "Parvovirus"],
+  ["leptospirosis", "Leptospirosis"],
+  ["coronavirus", "Coronavirus"],
+  ["bordetella", "Bordetella"],
+  ["rabies", "Rabies"],
+];
 
 function formatPurchaseDateTime(value) {
   if (!value) return "—";
@@ -152,6 +168,7 @@ export default function PetManagementModule({
 }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const printPreview = usePrintPreview();
   const [pets, setPets] = useState([]);
   const [owners, setOwners] = useState([]);
 
@@ -162,6 +179,11 @@ export default function PetManagementModule({
   const [fieldErrors, setFieldErrors] = useState({});
   const petFieldRefs = useRef({}).current;
   const registerPetFieldRef = (name) => (el) => { petFieldRefs[name] = el; };
+
+  // The pet record handleEdit() opened the form with, kept around so
+  // handleSubmit() can skip the write entirely when nothing actually
+  // changed instead of re-saving an identical record.
+  const [editingOriginalPet, setEditingOriginalPet] = useState(null);
 
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -652,6 +674,7 @@ export default function PetManagementModule({
     setOwnerDropdownOpen(false);
     setSpeciesQuery("");
     setSpeciesDropdownOpen(false);
+    setEditingOriginalPet(null);
   }
 
   function openRegisterModal() {
@@ -766,6 +789,7 @@ export default function PetManagementModule({
     setSpeciesQuery(resolvedSpecies);
     setSpeciesDropdownOpen(false);
     setMessage("");
+    setEditingOriginalPet(pet);
     setFormOpen(true);
   }
 
@@ -829,6 +853,33 @@ export default function PetManagementModule({
       setMessage("Please fix the highlighted field(s) before continuing.");
       focusFirstInvalidField(allFieldRefs, errors);
       return;
+    }
+
+    // Nothing to write if editing and every field still matches what this
+    // form was opened with (and no new photo was picked) -- skip the save
+    // entirely instead of re-writing an identical record.
+    if (form.id && editingOriginalPet && !file) {
+      const original = editingOriginalPet;
+      const unchanged =
+        form.petName.trim() === (original.pet_name || "") &&
+        finalSpecies === (original.species || "") &&
+        finalBreed === (original.breed || "") &&
+        form.sex === (original.sex || "Unknown") &&
+        form.dateOfBirth === (original.date_of_birth || "") &&
+        String(form.weight ?? "").trim() === String(original.weight ?? "").trim() &&
+        finalColor === (original.color || "") &&
+        form.microchipNumber.trim() === (original.microchip_number || "") &&
+        form.allergies.trim() === (original.allergies || "") &&
+        form.existingConditions.trim() === (original.existing_conditions || "") &&
+        form.notes.trim() === (original.notes || "") &&
+        ownerId === original.owner_id;
+
+      if (unchanged) {
+        setMessage("No changes to save.");
+        resetForm();
+        setFormOpen(false);
+        return;
+      }
     }
 
     setSaving(true);
@@ -1110,7 +1161,7 @@ export default function PetManagementModule({
       {message && !formOpen && (
         <div
           className={`notice ${
-            message.toLowerCase().includes("successfully")
+            message.toLowerCase().includes("successfully") || message.toLowerCase().includes("no changes")
               ? "success"
               : "error"
           }`}
@@ -2335,7 +2386,14 @@ export default function PetManagementModule({
                             </span>
 
                             <span className="consultation-title">
-                              {record.diagnosis || record.chief_complaint || "General consultation"}
+                              <span className={`consultation-template-badge tpl-${record.record_template || "health-record"}`}>
+                                {getMedicalRecordTemplate(record.record_template).label}
+                              </span>
+                              {(!record.record_template || record.record_template === "health-record") && (
+                                <span className="consultation-title-text">
+                                  {record.diagnosis || record.chief_complaint || "General consultation"}
+                                </span>
+                              )}
                             </span>
 
                             <span className="consultation-meta">
@@ -2366,34 +2424,152 @@ export default function PetManagementModule({
                                 </p>
                               )}
 
-                              <div className="consultation-field">
-                                <span>Symptoms</span>
-                                <p>{record.symptoms || "Not recorded"}</p>
-                              </div>
+                              {/* Only the fields captured by the template the vet actually
+                                  picked when writing this record are shown -- a Vaccination
+                                  Record consultation has no Symptoms/Diagnosis/Treatment to
+                                  show, so those health-record-only fields stay hidden here. */}
+                              {(!record.record_template || record.record_template === "health-record") && (
+                                <>
+                                  <div className="consultation-field">
+                                    <span>Symptoms</span>
+                                    <p>{record.symptoms || "Not recorded"}</p>
+                                  </div>
 
-                              <div className="consultation-field">
-                                <span>Vital Signs</span>
-                                <p>{record.vital_signs || "Not recorded"}</p>
-                              </div>
+                                  <div className="consultation-field">
+                                    <span>Vital Signs</span>
+                                    <p>{record.vital_signs || "Not recorded"}</p>
+                                  </div>
 
-                              <div className="consultation-field">
-                                <span>Diagnosis</span>
-                                <p>{record.diagnosis || "Not recorded"}</p>
-                              </div>
+                                  <div className="consultation-field">
+                                    <span>Diagnosis</span>
+                                    <p>{record.diagnosis || "Not recorded"}</p>
+                                  </div>
 
-                              <div className="consultation-field">
-                                <span>Treatment</span>
-                                <p>{record.treatment || record.treatment_plan || "Not recorded"}</p>
-                              </div>
+                                  <div className="consultation-field">
+                                    <span>Treatment</span>
+                                    <p>{record.treatment || record.treatment_plan || "Not recorded"}</p>
+                                  </div>
 
-                              <div className="consultation-field">
-                                <span>Medications</span>
-                                <p>
-                                  {record.medication
-                                    ? `${record.medication}${record.dosage ? ` · ${record.dosage}` : ""}${record.frequency ? ` · ${record.frequency}` : ""}${record.duration ? ` · ${record.duration}` : ""}`
-                                    : "Not recorded"}
-                                </p>
-                              </div>
+                                  <div className="consultation-field">
+                                    <span>Medications</span>
+                                    <p>
+                                      {record.medication
+                                        ? `${record.medication}${record.dosage ? ` · ${record.dosage}` : ""}${record.frequency ? ` · ${record.frequency}` : ""}${record.duration ? ` · ${record.duration}` : ""}`
+                                        : "Not recorded"}
+                                    </p>
+                                  </div>
+
+                                  <div className="consultation-field">
+                                    <span>Laboratory Results</span>
+                                    <p>{record.laboratory_result || "Not recorded"}</p>
+                                  </div>
+                                </>
+                              )}
+
+                              {record.record_template === "parasite-prevention" && (
+                                <div className="consultation-field consultation-field-wide">
+                                  <span>Parasite Treatments</span>
+                                  {(record.parasite_treatments || []).length === 0 ? (
+                                    <p>Not recorded</p>
+                                  ) : (
+                                    <ul className="consultation-items-list">
+                                      {record.parasite_treatments.map((row, index) => (
+                                        <li key={index}>
+                                          <span>{row.treatment || "Treatment not specified"}</span>
+                                          <b>{row.date ? formatDateLong(row.date) : "No date"}</b>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              )}
+
+                              {record.record_template === "heartworm" && (
+                                <div className="consultation-field consultation-field-wide">
+                                  <span>Heartworm Tests</span>
+                                  {(record.heartworm_tests || []).length === 0 ? (
+                                    <p>Not recorded</p>
+                                  ) : (
+                                    <ul className="consultation-items-list">
+                                      {record.heartworm_tests.map((row, index) => (
+                                        <li key={index}>
+                                          <span>{row.date ? formatDateLong(row.date) : "No date"}</span>
+                                          <b>{row.result || "Not recorded"}</b>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              )}
+
+                              {record.record_template === "vaccination" && (
+                                <div className="consultation-field consultation-field-wide">
+                                  <span>Vaccinations</span>
+                                  {(record.vaccination_records || []).length === 0 ? (
+                                    <p>Not recorded</p>
+                                  ) : (
+                                    record.vaccination_records.map((row, index) => {
+                                      const given = VACCINE_LABELS.filter(([key]) => row[key]).map(([, label]) => label);
+                                      return (
+                                        <p key={index}>
+                                          {row.date ? formatDateLong(row.date) : "No date"}
+                                          {row.age ? ` · Age ${row.age}` : ""}
+                                          {row.weight ? ` · ${row.weight}` : ""}
+                                          {" — "}
+                                          {given.length ? given.join(", ") : "No vaccines checked"}
+                                          {row.others ? ` · ${row.others}` : ""}
+                                        </p>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              )}
+
+                              {record.record_template === "dental" && (
+                                <>
+                                  <div className="consultation-field">
+                                    <span>Gingiva</span>
+                                    <p>{record.template_data?.gingiva || "Not recorded"}</p>
+                                  </div>
+
+                                  <div className="consultation-field">
+                                    <span>Occlusion</span>
+                                    <p>{record.template_data?.occlusion || "Not recorded"}</p>
+                                  </div>
+
+                                  <div className="consultation-field">
+                                    <span>Salivation</span>
+                                    <p>{record.template_data?.salivation || "Not recorded"}</p>
+                                  </div>
+
+                                  <div className="consultation-field">
+                                    <span>Halitosis</span>
+                                    <p>{record.template_data?.halitosis || "Not recorded"}</p>
+                                  </div>
+
+                                  <div className="consultation-field consultation-field-wide">
+                                    <span>Dental Chart &amp; Findings</span>
+                                    <p>{record.template_data?.dentalChart || "Not recorded"}</p>
+                                  </div>
+
+                                  <div className="consultation-field consultation-field-wide">
+                                    <span>Periodontal Disease / Other Comment</span>
+                                    <p>{record.template_data?.periodontalNotes || "Not recorded"}</p>
+                                  </div>
+
+                                  <div className="consultation-field">
+                                    <span>Dental Treatment</span>
+                                    <p>{record.treatment || "Not recorded"}</p>
+                                  </div>
+                                </>
+                              )}
+
+                              {record.record_template === "pet-profile" && (
+                                <div className="consultation-field">
+                                  <span>Profile Numbers</span>
+                                  <p>Patient No. {record.template_data?.patientNumber || "N/A"} · Record No. {record.template_data?.recordNumber || "N/A"}</p>
+                                </div>
+                              )}
 
                               {(record.template_data?.inventoryItems || []).filter((item) => !item.isNA).length > 0 && (
                                 <div className="consultation-field consultation-field-wide">
@@ -2408,11 +2584,6 @@ export default function PetManagementModule({
                                   </ul>
                                 </div>
                               )}
-
-                              <div className="consultation-field">
-                                <span>Laboratory Results</span>
-                                <p>{record.laboratory_result || "Not recorded"}</p>
-                              </div>
 
                               {record.vaccination && (
                                 <div className="consultation-field">
@@ -2453,7 +2624,10 @@ export default function PetManagementModule({
                                             <span>Total {money(invoice.total_amount)} · Paid {money(invoice.amount_paid)}{invoiceBalance(invoice) > 0 ? ` · ${money(invoiceBalance(invoice))} due` : ""}</span>
                                             <span className={`pet-billing-status pet-billing-status-${invoice.payment_status.replaceAll(" ", "-").toLowerCase()}`}>{invoice.payment_status}</span>
                                           </div>
-                                          <button type="button" className="pet-download-btn" onClick={() => downloadInvoicePdf(invoice)}>
+                                          <button type="button" className="pet-download-btn" onClick={() => {
+                                            const { url, download } = downloadInvoicePdf(invoice);
+                                            printPreview.showPdf(url, `Invoice ${invoice.or_number || ""}`, { onDownload: download, showPrint: false });
+                                          }}>
                                             <Download size={14} /> Download
                                           </button>
                                         </div>
@@ -2472,18 +2646,26 @@ export default function PetManagementModule({
                                         <button
                                           type="button"
                                           className="pet-download-btn"
-                                          onClick={() => (viewOnlyPrescriptions ? viewPrescriptionPadPdf : downloadPrescriptionPadPdf)(billingByRecordId[record.id].prescriptions, {
-                                            veterinarianName: withDrTitle(vetsById[record.veterinarian_id]?.full_name, ""),
-                                            veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
-                                            veterinarianLicense: vetsById[record.veterinarian_id]?.license_number || "",
-                                            ownerName: selectedPet.owner?.full_name,
-                                            ownerAddress: selectedPet.owner?.address,
-                                            petName: selectedPet.pet_name,
-                                            petSpecies: selectedPet.species,
-                                            petBreed: selectedPet.breed,
-                                            petAge: formatPetAge(selectedPet.date_of_birth),
-                                            date: formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime }),
-                                          })}
+                                          onClick={() => {
+                                            const meta = {
+                                              veterinarianName: withDrTitle(vetsById[record.veterinarian_id]?.full_name, ""),
+                                              veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
+                                              veterinarianLicense: vetsById[record.veterinarian_id]?.license_number || "",
+                                              ownerName: selectedPet.owner?.full_name,
+                                              ownerAddress: selectedPet.owner?.address,
+                                              petName: selectedPet.pet_name,
+                                              petSpecies: selectedPet.species,
+                                              petBreed: selectedPet.breed,
+                                              petAge: formatPetAge(selectedPet.date_of_birth),
+                                              date: formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime }),
+                                            };
+                                            if (viewOnlyPrescriptions) {
+                                              printPreview.showPdf(viewPrescriptionPadPdf(billingByRecordId[record.id].prescriptions, meta), "Prescription");
+                                            } else {
+                                              const { url, download } = downloadPrescriptionPadPdf(billingByRecordId[record.id].prescriptions, meta);
+                                              printPreview.showPdf(url, "Prescription", { onDownload: download, showPrint: false });
+                                            }
+                                          }}
                                         >
                                           {viewOnlyPrescriptions ? <><Eye size={13} /> View</> : <><Download size={13} /> Download</>}
                                         </button>
@@ -2549,7 +2731,7 @@ export default function PetManagementModule({
                                   disabled={record.record_status !== "Finalized"}
                                   onClick={async () => {
                                     try {
-                                      await printMedicalRecordDocument(record, selectedPet, {
+                                      const url = await printMedicalRecordDocument(record, selectedPet, {
                                         veterinarianName: vetsById[record.veterinarian_id]?.full_name || "",
                                         veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
                                         // Only pass a formatted string when there's a real date -- formatVisitDateTime's
@@ -2558,6 +2740,7 @@ export default function PetManagementModule({
                                         visitDateTime: entry.visitDate ? formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime }) : "",
                                         petAge: formatPetAge(selectedPet.date_of_birth),
                                       });
+                                      printPreview.showPdf(url, "Print Medical Record");
                                     } catch (printError) {
                                       setMessage(printError.message || "Unable to print this medical record.");
                                     }
@@ -2627,6 +2810,16 @@ export default function PetManagementModule({
           </div>
         </div>
       )}
+
+      <PrintPreviewModal
+        open={!!printPreview.preview}
+        title={printPreview.preview?.title}
+        src={printPreview.preview?.src}
+        html={printPreview.preview?.html}
+        onDownload={printPreview.preview?.onDownload}
+        showPrint={printPreview.preview?.showPrint}
+        onClose={printPreview.close}
+      />
 
       <style>{`
         .pet-module {
@@ -3728,9 +3921,50 @@ export default function PetManagementModule({
         }
 
         .consultation-title {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
           color: #20313b;
           font-weight: 700;
           font-size: 14px;
+        }
+
+        .consultation-template-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 3px 9px;
+          border-radius: 999px;
+          font-size: 10.5px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .02em;
+          white-space: nowrap;
+        }
+
+        .consultation-template-badge.tpl-health-record {
+          background: #eaf4fb;
+          color: #2b6ca3;
+        }
+
+        .consultation-template-badge.tpl-parasite-prevention {
+          background: #eef6ea;
+          color: #4c8b3c;
+        }
+
+        .consultation-template-badge.tpl-heartworm {
+          background: #fbe9f5;
+          color: #a13d82;
+        }
+
+        .consultation-template-badge.tpl-dental {
+          background: #e9f6f8;
+          color: #1f7a8c;
+        }
+
+        .consultation-template-badge.tpl-vaccination {
+          background: #fff3e0;
+          color: #b06d0f;
         }
 
         .consultation-meta {

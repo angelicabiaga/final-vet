@@ -25,6 +25,22 @@ const EMPTY_PET_FORM = {
   color: "", customColor: "", microchipNumber: "", allergies: "", existingConditions: "", notes: "",
 };
 
+// Human-readable labels for the booking form's own top-level fields, used to
+// name exactly which one(s) failed instead of a generic "highlighted
+// field(s)" message.
+const BOOKING_FIELD_LABELS = {
+  firstName: "First Name",
+  lastName: "Last Name",
+  phone: "Phone Number",
+  email: "Email",
+  address: "Address",
+  ownerId: "Pet Owner",
+  petIds: "Pet Selection",
+  appointmentDate: "Appointment Date",
+  startTime: "Available Time",
+  veterinarianId: "Veterinarian",
+};
+
 function validateGuestField(name, value) {
   switch (name) {
     case "firstName":
@@ -449,7 +465,8 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
     setFieldErrors(errors);
 
     if (Object.keys(errors).length > 0) {
-      setMessage({ type: "error", text: "Please fix the highlighted field(s) before continuing." });
+      const fieldNames = Object.keys(errors).map((key) => BOOKING_FIELD_LABELS[key] || key).join(", ");
+      setMessage({ type: "error", text: `Please fix the following field(s): ${fieldNames}.` });
       focusFirstInvalidField(allFieldRefs, errors);
       return;
     }
@@ -1018,7 +1035,7 @@ function formatAppointmentDate(value) {
 }
 
 const styles = `
-.appointment-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:22px;align-items:start}.appointment-card{background:#fff;border-radius:20px;padding:24px;box-shadow:0 10px 30px rgba(55,126,158,.1)}.form-title{display:flex;gap:12px;align-items:center;margin-bottom:20px;color:#318fbe}.form-title h2{margin:0;color:#20313B}.form-title p{margin:3px 0;color:#6F7F88}.appointment-card label{display:grid;gap:7px;font-weight:700;margin-bottom:16px}.appointment-card label span{font-weight:400;color:#7c8c94}.appointment-card label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}.appointment-card input,.appointment-card select,.appointment-card textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;font:inherit;color:#20313B;background:#fbfeff}.appointment-card input:focus,.appointment-card select:focus,.appointment-card textarea:focus{outline:2px solid #a9dff0;border-color:#4DA8DA}.two-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}.appt-checkbox-field{display:flex!important;flex-direction:row;align-items:center;gap:10px;padding:12px 14px;border:1px solid #cfe4ed;border-radius:12px;background:#f2fafd;color:#21697f;cursor:pointer}.appt-checkbox-field input[type="checkbox"]{width:17px;height:17px;flex-shrink:0;accent-color:#4DA8DA;cursor:pointer}.appt-checkbox-field input[type="checkbox"]:disabled{cursor:not-allowed}.book-button{width:100%;border:0;border-radius:13px;padding:14px;background:#4DA8DA;color:white;font-weight:800;font-size:15px;cursor:pointer}.book-button:disabled{opacity:.65;cursor:not-allowed}.notice{padding:12px 14px;border-radius:12px;margin-bottom:16px}.notice.success{background:#eaf8ef;color:#28774b}.notice.error{background:#fff0f0;color:#b34848}.summary{position:sticky;top:105px}.summary h3{margin-top:0}.summary-row{display:flex;gap:11px;padding:13px 0;border-bottom:1px solid #edf4f7}.summary-icon{width:36px;height:36px;background:#eaf8fd;color:#3998c5;border-radius:10px;display:grid;place-items:center;flex-shrink:0}.summary-icon svg{width:18px}.summary-row small,.summary-row strong{display:block}.summary-row small{color:#758891;margin-bottom:3px}.summary-row strong{word-break:break-word}.summary-type{margin-top:18px;padding:14px;background:#f2fafd;border-radius:12px;display:grid;gap:5px}.summary-type span{color:#318fbe}.help{font-size:12px;line-height:1.55;color:#6F7F88}
+.appointment-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:22px;align-items:start}.appointment-card{background:#fff;border-radius:20px;padding:24px;box-shadow:0 10px 30px rgba(55,126,158,.1)}.form-title{display:flex;gap:12px;align-items:center;margin-bottom:20px;color:#318fbe}.form-title h2{margin:0;color:#20313B}.form-title p{margin:3px 0;color:#6F7F88}.appointment-card label{display:grid;gap:7px;font-weight:700;margin-bottom:16px}.appointment-card label span{font-weight:400;color:#7c8c94}.appointment-card label .required-mark{display:inline;font-weight:700;color:#d14b4b;margin-left:2px}.appointment-card input,.appointment-card select,.appointment-card textarea{width:100%;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;font:inherit;color:#20313B;background:#fbfeff}.appointment-card input:focus,.appointment-card select:focus,.appointment-card textarea:focus{outline:2px solid #a9dff0;border-color:#4DA8DA}.appointment-card input.field-invalid:focus,.appointment-card select.field-invalid:focus,.appointment-card textarea.field-invalid:focus{outline-color:#d9534f}.two-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}.appt-checkbox-field{display:flex!important;flex-direction:row;align-items:center;gap:10px;padding:12px 14px;border:1px solid #cfe4ed;border-radius:12px;background:#f2fafd;color:#21697f;cursor:pointer}.appt-checkbox-field input[type="checkbox"]{width:17px;height:17px;flex-shrink:0;accent-color:#4DA8DA;cursor:pointer}.appt-checkbox-field input[type="checkbox"]:disabled{cursor:not-allowed}.book-button{width:100%;border:0;border-radius:13px;padding:14px;background:#4DA8DA;color:white;font-weight:800;font-size:15px;cursor:pointer}.book-button:disabled{opacity:.65;cursor:not-allowed}.notice{padding:12px 14px;border-radius:12px;margin-bottom:16px}.notice.success{background:#eaf8ef;color:#28774b}.notice.error{background:#fff0f0;color:#b34848}.summary{position:sticky;top:105px}.summary h3{margin-top:0}.summary-row{display:flex;gap:11px;padding:13px 0;border-bottom:1px solid #edf4f7}.summary-icon{width:36px;height:36px;background:#eaf8fd;color:#3998c5;border-radius:10px;display:grid;place-items:center;flex-shrink:0}.summary-icon svg{width:18px}.summary-row small,.summary-row strong{display:block}.summary-row small{color:#758891;margin-bottom:3px}.summary-row strong{word-break:break-word}.summary-type{margin-top:18px;padding:14px;background:#f2fafd;border-radius:12px;display:grid;gap:5px}.summary-type span{color:#318fbe}.help{font-size:12px;line-height:1.55;color:#6F7F88}
 .appt-owner-selected{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #cfe4ed;border-radius:12px;padding:12px 13px;background:#fbfeff}.appt-owner-selected .appt-owner-cell{cursor:default}.appt-owner-selected strong{color:#20313B;font-size:14px}.appt-owner-selected span{color:#7c8c94;font-size:12px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .appt-clear{flex-shrink:0;display:inline-flex;align-items:center;gap:5px;border:1px solid #cfe4ed;background:#edf5f8;color:#5d7782;border-radius:8px;padding:7px 11px;font-weight:700;font-size:12.5px;cursor:pointer}
 .appt-owner-table-wrap{display:grid;gap:0}

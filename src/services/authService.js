@@ -253,9 +253,14 @@ function validateRegistration(values) {
 
 export async function registerPetOwner(values) {
   const clean = validateRegistration(values);
-  const { data: existing, error: checkError } = await supabase.from("profiles").select("id, username, email").or(`username.eq.${clean.username},email.eq.${clean.email}`).limit(1);
+  const { data: existing, error: checkError } = await supabase.from("profiles").select("id, username, email, phone").or(`username.eq.${clean.username},email.eq.${clean.email},phone.eq.${clean.phone}`).limit(3);
   if (checkError) throw new Error("Unable to check the account details. Apply custom_auth_patch.sql first.");
-  if (existing?.length) throw new Error("That username or email is already registered.");
+  if (existing?.length) {
+    if (existing.some((row) => row.username === clean.username || row.email === clean.email)) {
+      throw new Error("That username or email is already registered.");
+    }
+    throw new Error("That phone number is already registered.");
+  }
   await createAndSendOtp(clean.email, "register", clean);
   return { requiresOtp: true, email: clean.email, purpose: "register" };
 }
@@ -300,9 +305,14 @@ export async function loginUser(identifier, password) {
 
   const { data: profile, error } = await supabase.from("profiles").select("*").eq(normalized.includes("@") ? "email" : "username", normalized).limit(1).maybeSingle();
   if (error) throw new Error("Unable to validate your account. Apply custom_auth_patch.sql in Supabase.");
-  if (!profile || String(profile.password) !== enteredPassword) {
+  if (!profile) {
+    await writeActivity(null, "Failed login", `Failed login attempt for unknown identifier ${normalized}.`);
+    const { data: passwordMatch } = await supabase.from("profiles").select("id").eq("password", enteredPassword).limit(1).maybeSingle();
+    throw new Error(passwordMatch ? "Incorrect email and correct password." : "Incorrect email and incorrect password.");
+  }
+  if (String(profile.password) !== enteredPassword) {
     await writeActivity(profile, "Failed login", `Failed login attempt for ${normalized}.`);
-    throw new Error("Invalid username/email or password.");
+    throw new Error("Correct email and incorrect password.");
   }
   if (profile.account_status !== "active") throw new Error("Your account is inactive. Contact the administrator.");
 
