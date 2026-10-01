@@ -436,29 +436,6 @@ export async function requeueToNextAvailable(id,profile){
   return run[0];
 }
 
-// Hands a Waiting ticket to a different, available doctor for that visit
-// (emergency substitution). Only the first reassignment for a visit records
-// original_veterinarian_id -- a second reassignment during the same visit
-// swaps veterinarian_id again but leaves the true original doctor in place.
-export async function reassignQueueVeterinarian(id,newVeterinarianId,reason,notes,profile){
-  if(!newVeterinarianId)throw new Error("Select a doctor to reassign this visit to.");
-  if(!reason)throw new Error("Select a reason for this reassignment.");
-  const {data:entry,error:loadError}=await supabase.from("queue_entries").select("id,status,veterinarian_id,original_veterinarian_id").eq("id",id).single();
-  if(loadError)throw new Error(`Unable to load the queue entry: ${loadError.message}`);
-  if(entry.status!=="Waiting")throw new Error("Only a Waiting ticket can be reassigned to another doctor.");
-  if(entry.veterinarian_id===newVeterinarianId)throw new Error("This visit is already assigned to that doctor.");
-
-  const {error}=await supabase.from("queue_entries").update({
-    veterinarian_id:newVeterinarianId,
-    original_veterinarian_id:entry.original_veterinarian_id||entry.veterinarian_id,
-    reassignment_reason:reason,
-    reassignment_notes:notes?.trim()||null,
-    reassigned_at:new Date().toISOString(),
-    reassigned_by:profile.id
-  }).eq("id",id);
-  if(error)throw new Error(`Unable to reassign the doctor: ${error.message}`);
-}
-
 // Maps queue_entry_id -> billing_status for a batch of ids -- used by the
 // veterinarian's My Queue > History tab to show whether Staff POS has
 // already billed a finalized consultation, without pulling in the rest of
@@ -502,6 +479,7 @@ export function subscribeToQueue(callback){
     .on("postgres_changes",{event:"*",schema:"public",table:"queue_entries"},callback)
     .on("postgres_changes",{event:"*",schema:"public",table:"queue_entry_pets"},callback)
     .on("postgres_changes",{event:"*",schema:"public",table:"appointments"},callback)
+    .on("postgres_changes",{event:"*",schema:"public",table:"queue_doctor_offers"},callback)
     .subscribe();
   return ()=>{supabase.removeChannel(channel);};
 }

@@ -5,19 +5,10 @@
 -- Final slot: 6:50 PM to 7:00 PM.
 -- One Confirmed appointment per veterinarian/date/start-time.
 
--- Extend currently active veterinarian weekly schedules through clinic closing.
-update public.veterinarian_schedules
-set end_time = time '19:00'
-where is_available = true
-  and end_time is not null
-  and end_time < time '19:00';
-
--- Extend active date-specific overrides through clinic closing.
-update public.veterinarian_schedule_overrides
-set end_time = time '19:00'
-where is_available = true
-  and end_time is not null
-  and end_time < time '19:00';
+-- Schedules are no longer stretched to 7:00 PM here: each vet keeps their
+-- own hours (Dr. Redmond 9:00 AM-5:00 PM, Dr. Neil 11:00 AM-7:00 PM), and
+-- extending every schedule/override to closing time would change them and
+-- undo any approved "leave early" day. Clinic hours still cap bookings at 7:00 PM.
 
 -- Create the partial unique index only if existing data has no duplicate Confirmed slots.
 do $$

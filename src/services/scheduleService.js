@@ -45,6 +45,41 @@ export async function getScheduleOverrides() {
   return data || [];
 }
 
+// Publishes a vet's schedule (VET_SCHEDULE_CALENDAR.sql): the chosen
+// weekdays (0 = Sunday) from startDate to endDate at the given hours, every
+// other day in the range a day off. Pet owners can only book dates that
+// have a created schedule.
+export async function createVetSchedule({ staffId, veterinarianId, startDate, endDate, weekdays, startTime, endTime }) {
+  const { data, error } = await supabase.rpc("create_vet_schedule", {
+    p_staff_id: staffId,
+    p_veterinarian_id: veterinarianId,
+    p_start_date: startDate,
+    p_end_date: endDate,
+    p_weekdays: weekdays,
+    p_start_time: String(startTime).slice(0, 5),
+    p_end_time: String(endTime).slice(0, 5)
+  });
+  if (error) {
+    if (["PGRST202", "42883"].includes(error.code)) {
+      throw new Error("Create Schedule is not set up yet. Run supabase/VET_SCHEDULE_CALENDAR.sql in the Supabase SQL Editor.");
+    }
+    throw new Error(error.message || "Unable to create the schedule.");
+  }
+  return data;
+}
+
+// The last date each vet has a created schedule for: { vetId: "YYYY-MM-DD" }.
+export async function getScheduledUntil() {
+  const { data, error } = await supabase.from("veterinarian_schedule_days")
+    .select("veterinarian_id, schedule_date")
+    .order("schedule_date", { ascending: false })
+    .limit(1000);
+  if (error) return {};
+  const result = {};
+  (data || []).forEach(row => { if (!result[row.veterinarian_id]) result[row.veterinarian_id] = row.schedule_date; });
+  return result;
+}
+
 export async function saveScheduleOverride(row) {
   const payload = {
     veterinarian_id: row.veterinarianId,

@@ -1,10 +1,14 @@
 import React,{useCallback,useEffect,useMemo,useState}from"react";
 import {useNavigate}from"react-router-dom";
-import {BrainCircuit,FileText,MapPin,PawPrint,Pill,Play,Printer,RotateCcw,Search,UserCog,X}from"lucide-react";
+import {BrainCircuit,FileText,MapPin,PawPrint,Pill,Play,Printer,RotateCcw,Search,TriangleAlert,UserCog,X}from"lucide-react";
 import AppShell from"./AppShell";
 import ConsultationHealthInsight from"./ConsultationHealthInsight";
-import {getQueue,getTodayCheckinAppointments,checkInAppointment,updateQueueStatus,requeueToNextAvailable,reassignQueueVeterinarian,subscribeToQueue,getBillingStatusesByEntryIds,QUEUE_STATUSES}from"../services/queueService";
-import {getVeterinarians,getVeterinarianAvailability,formatTime,todayLocal}from"../services/appointmentService";
+import {getQueue,getTodayCheckinAppointments,checkInAppointment,updateQueueStatus,requeueToNextAvailable,subscribeToQueue,getBillingStatusesByEntryIds,QUEUE_STATUSES}from"../services/queueService";
+import {getVeterinarians,formatTime,todayLocal}from"../services/appointmentService";
+import {getPendingDoctorOffers,getQueueDoctorAlerts,respondDoctorOffer,withdrawDoctorOffer}from"../services/doctorChangeService";
+import DoctorChangeModal from"./DoctorChangeModal";
+import {drName}from"./VetLeaveImpact";
+import {withDrTitle}from"../utils/vetName";
 import {formatClockTime,formatDateLong}from"../utils/timeFormat";
 import {generateConsultationHealthInsight,getMedicalRecords}from"../services/medicalRecordService";
 import {parseConsultationInsight}from"../utils/predictiveHealthParsing";
@@ -55,19 +59,6 @@ function bookingTime(r){
  return "—";
 }
 
-// Fixed set so every reassignment is reportable/consistent -- the free-typed
-// detail staff actually want the owner to read goes in the separate Notes
-// field instead (reassignment_notes), which is what the owner notification
-// shows.
-const REASSIGN_OTHER_REASON="Other (add notes)";
-const REASSIGN_REASONS=[
- "Doctor Unavailable (Emergency)",
- "Doctor On Leave / Sick",
- "Doctor Overbooked / At Capacity",
- "Doctor Called Away",
- REASSIGN_OTHER_REASON
-];
-
 // Reflects what Staff has actually done in POS for this consultation's
 // visit -- billing_status lives on queue_entries, not medical_records, so
 // the History tab looks it up separately (see getBillingStatusesByEntryIds).
@@ -78,6 +69,31 @@ function billingStatusInfo(status){
  if(status==="Processing")return {label:"Processing Payment",className:"processing"};
  if(status==="Pending Billing")return {label:"Awaiting Payment",className:"pendingbilling"};
  return {label:"—",className:"none"};
+}
+
+function nowHHMM(){
+ const now=new Date();
+ return `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+}
+
+// A pending doctor change whose offered time has already passed.
+function offerExpired(offer){
+ const today=todayLocal();
+ return offer.offer_date<today||(offer.offer_date===today&&String(offer.proposed_time).slice(0,5)<=nowHHMM());
+}
+
+const petNamesOf=item=>item.pets?.length?item.pets.map(p=>p.pet_name).join(", "):(item.pet?.pet_name||"Pet");
+
+// The red note on a card or ticket whose doctor can't see the visit, e.g.
+// "Dr. Neil ... is not available today (on leave)." `problem` comes from the
+// database (get_queue_doctor_alerts).
+function unavailableNote(name,problem,date,time){
+ const dr=drName(name),today=date===todayLocal(),day=today?"today":`on ${formatApptDate(date)}`;
+ if(/^on leave/i.test(problem))return `${dr} is not available ${day} (on leave).`;
+ if(/^not on duty/i.test(problem))return `${dr} is not available ${day}.`;
+ const late=!time||(today&&String(time).slice(0,5)<nowHHMM());
+ const hours=problem.replace(/^only on duty\s*/i,"").replace(/\s*\(leave\)\s*$/i,"");
+ return `${dr} is not available ${late?"right now":`at ${formatTime(time)} ${day}`}${/\(leave\)/i.test(problem)?" (on leave)":""}. On duty ${hours} only.`;
 }
 
 // Built from the y/m/d components (not parsed from the string) so this
@@ -105,16 +121,12 @@ export default function QueueManagementModule({profile,mode="staff"}){
  const [queueTab,setQueueTab]=useState("Live Queue");
  const [openInsightId,setOpenInsightId]=useState(null);
  const [insights,setInsights]=useState({});
- // Emergency doctor reassignment -- staff-only, only ever offered on a
- // Waiting ticket (see the "Reassign Doctor" button below).
- const [reassignTarget,setReassignTarget]=useState(null);
- const [reassignVetId,setReassignVetId]=useState("");
- const [reassignReason,setReassignReason]=useState("");
- const [reassignNotes,setReassignNotes]=useState("");
- const [reassignSaving,setReassignSaving]=useState(false);
- const [reassignError,setReassignError]=useState("");
- const [availability,setAvailability]=useState({vets:[],slotMap:{}});
- const [availabilityLoading,setAvailabilityLoading]=useState(false);
+ // Doctor changes wait for the owner's confirmation (DoctorChangeModal,
+ // QUEUE_DOCTOR_CHANGE_CONFIRMATION.sql): the pending offers, and which
+ // check-in cards / tickets have a doctor who can't see them as booked.
+ const [changeTarget,setChangeTarget]=useState(null);
+ const [offers,setOffers]=useState([]);
+ const [doctorAlerts,setDoctorAlerts]=useState({appointments:[],queue:[]});
  const canManage=["admin","staff"].includes(profile?.role);
  const isVet=profile?.role==="veterinarian";
  const navigate=useNavigate();
@@ -124,29 +136,6 @@ export default function QueueManagementModule({profile,mode="staff"}){
   const params=new URLSearchParams({queueEntryId:r.id,ownerId:r.owner_id||"",veterinarianId:r.veterinarian_id||"",originalVeterinarianId:r.original_veterinarian_id||"",petIds,appointmentIds});
   if(resumeRecordId)params.set("resumeRecordId",resumeRecordId);
   navigate(`/veterinarian/medical-records?${params.toString()}`);
- }
- async function openReassign(r){
-  setReassignTarget(r);setReassignVetId("");setReassignReason("");setReassignNotes("");setReassignError("");
-  try{
-   setAvailabilityLoading(true);
-   setAvailability(await getVeterinarianAvailability(todayLocal()));
-  }catch{setAvailability({vets:[],slotMap:{}})}
-  finally{setAvailabilityLoading(false)}
- }
- function closeReassign(){
-  if(reassignSaving)return;
-  setReassignTarget(null);setReassignVetId("");setReassignReason("");setReassignNotes("");setReassignError("");
- }
- async function submitReassign(){
-  if(!reassignTarget||!reassignVetId||!reassignReason||reassignSaving)return;
-  try{
-   setReassignSaving(true);setReassignError("");
-   await reassignQueueVeterinarian(reassignTarget.id,reassignVetId,reassignReason,reassignNotes,profile);
-   setMessage("Doctor reassigned for this visit.");
-   setReassignTarget(null);setReassignVetId("");setReassignReason("");setReassignNotes("");
-   await load();
-  }catch(e){setReassignError(e.message)}
-  finally{setReassignSaving(false)}
  }
  // Built straight from the draft record's own columns (queue_entry_id,
  // pet_id, owner_id, veterinarian_id, appointment_id) instead of looking the
@@ -193,7 +182,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
   if(!rx.length)return;
   try{
    const {url,download}=downloadPrescriptionPadPdf(rx,{
-    veterinarianName:record.veterinarian?.full_name?`Dr. ${record.veterinarian.full_name}`:"",
+    veterinarianName:withDrTitle(record.veterinarian?.full_name),
     veterinarianPhone:record.veterinarian?.phone||"",
     ownerName:record.owner?.full_name,
     ownerAddress:record.owner?.address,
@@ -206,7 +195,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
    printPreview.showPdf(url,"Prescription",{onDownload:download,showPrint:false});
   }catch(e){setError(e.message||"Unable to generate the prescription PDF.")}
  }
- const load=useCallback(async()=>{try{setLoading(true);setError("");const vid=profile?.role==="veterinarian"?profile.id:vet;const isVetRole=profile?.role==="veterinarian";const [q,v,a,d,h]=await Promise.all([getQueue({veterinarianId:vid,status}),getVeterinarians(),isVetRole?Promise.resolve([]):getTodayCheckinAppointments(),isVetRole?getMedicalRecords(profile,{status:"Draft"}).catch(()=>[]):Promise.resolve([]),isVetRole?getMedicalRecords(profile,{status:"Finalized"}).catch(()=>[]):Promise.resolve([])]);setRows(q);setVets(v);setAppointments(a);setDrafts(d);setHistory(h);if(isVetRole&&h.length){getBillingStatusesByEntryIds(h.map(r=>r.queue_entry_id)).then(setHistoryBillingStatuses).catch(()=>{});getPrescriptionsByQueueEntryIds(h.map(r=>r.queue_entry_id)).then(setHistoryPrescriptions).catch(()=>{});}else{setHistoryBillingStatuses({});setHistoryPrescriptions({});}}catch(e){setError(e.message)}finally{setLoading(false)}},[profile,vet,status]);
+ const load=useCallback(async()=>{try{setLoading(true);setError("");const vid=profile?.role==="veterinarian"?profile.id:vet;const isVetRole=profile?.role==="veterinarian";const [q,v,a,d,h]=await Promise.all([getQueue({veterinarianId:vid,status}),getVeterinarians(),isVetRole?Promise.resolve([]):getTodayCheckinAppointments(),isVetRole?getMedicalRecords(profile,{status:"Draft"}).catch(()=>[]):Promise.resolve([]),isVetRole?getMedicalRecords(profile,{status:"Finalized"}).catch(()=>[]):Promise.resolve([])]);setRows(q);setVets(v);setAppointments(a);setDrafts(d);setHistory(h);if(!isVetRole){const [o,al]=await Promise.all([getPendingDoctorOffers().catch(()=>[]),getQueueDoctorAlerts(checkinDate).catch(()=>({appointments:[],queue:[]}))]);setOffers(o);setDoctorAlerts(al);}if(isVetRole&&h.length){getBillingStatusesByEntryIds(h.map(r=>r.queue_entry_id)).then(setHistoryBillingStatuses).catch(()=>{});getPrescriptionsByQueueEntryIds(h.map(r=>r.queue_entry_id)).then(setHistoryPrescriptions).catch(()=>{});}else{setHistoryBillingStatuses({});setHistoryPrescriptions({});}}catch(e){setError(e.message)}finally{setLoading(false)}},[profile,vet,status,checkinDate]);
  useEffect(()=>{load();const off=subscribeToQueue(load);return()=>off();},[load]);
  const filteredHistory=useMemo(()=>{
   const keyword=historySearch.trim().toLowerCase();
@@ -226,7 +215,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
   const timer=setInterval(load,60000);
   return ()=>clearInterval(timer);
  },[load,profile?.role]);
- const stats=useMemo(()=>({waiting:rows.filter(r=>r.status==="Waiting").length,serving:rows.filter(r=>r.status==="Serving").length,completed:rows.filter(r=>r.status==="Completed").length,late:rows.filter(r=>r.late_arrival).length,...(isVet?{drafts:drafts.length}:{})}),[rows,isVet,drafts]);
+ const stats=useMemo(()=>({waiting:rows.filter(r=>r.status==="Waiting"&&!r.doctor_offer_id).length,serving:rows.filter(r=>r.status==="Serving").length,completed:rows.filter(r=>r.status==="Completed").length,late:rows.filter(r=>r.late_arrival).length,...(isVet?{drafts:drafts.length}:{"awaiting owner":offers.length})}),[rows,isVet,drafts,offers]);
  // Every Confirmed appointment not yet queued is fetched; staff pick which
  // date's batch they actually want to see and check in from.
  const checkinAppointments=useMemo(()=>appointments.filter(a=>a.appointment_date===checkinDate),[appointments,checkinDate]);
@@ -236,7 +225,9 @@ export default function QueueManagementModule({profile,mode="staff"}){
  const tableRows=useMemo(()=>{
   const base=status==="Completed"?rows:rows.filter(r=>r.status!=="Completed");
   // A ticket only reaches the veterinarian's queue once staff clicks Serving.
-  return isVet?base.filter(r=>r.status==="Serving"):base;
+  // A ticket waiting for the owner to confirm a new doctor is on hold and
+  // only returns once they confirm.
+  return isVet?base.filter(r=>r.status==="Serving"):base.filter(r=>!r.doctor_offer_id);
  },[rows,status,isVet]);
  // Only the earliest "Serving" ticket gets the ongoing highlight -- if more
  // than one row happens to carry that status at once, the rest still show
@@ -246,13 +237,6 @@ export default function QueueManagementModule({profile,mode="staff"}){
  // Serving, every other Waiting ticket for that same vet stays Waiting
  // (its own "Serving" button is disabled) until that one is Completed.
  const vetsCurrentlyServing=useMemo(()=>new Set(rows.filter(r=>r.status==="Serving").map(r=>r.veterinarian_id)),[rows]);
- // "Available doctor" for reassignment = scheduled today (has open slots
- // per getVeterinarianAvailability) and not already serving someone else
- // right now, excluding whoever the visit is currently assigned to.
- const availableDoctors=useMemo(()=>{
-  if(!reassignTarget)return [];
-  return availability.vets.filter(v=>v.id!==reassignTarget.veterinarian_id&&!vetsCurrentlyServing.has(v.id)&&(availability.slotMap[v.id]||[]).length>0);
- },[availability,vetsCurrentlyServing,reassignTarget]);
  // Best-effort only -- a draft's visit may have already dropped out of
  // `rows` (Completed, or simply not today's date range), in which case this
  // just comes back empty and the Drafts table shows "—" for that row.
@@ -266,6 +250,46 @@ export default function QueueManagementModule({profile,mode="staff"}){
    await load();
   }catch(e){setError(e.message)}
   finally{setUpdatingId(null)}
+ }
+ function cardOffer(card){
+  const ids=card.appointmentIds||[card.id];
+  return offers.find(o=>!o.queue_entry_id&&(o.appointment_ids||[]).some(id=>ids.includes(id)));
+ }
+ function cardProblem(card){
+  const ids=card.appointmentIds||[card.id];
+  return (doctorAlerts.appointments||[]).find(item=>ids.includes(item.appointment_id))?.problem||"";
+ }
+ function confirmForOwner(offer){
+  const checksIn=offer.queue_entry_id||offer.offer_date===todayLocal();
+  act(offer.id,()=>respondDoctorOffer(offer.id,profile.id,"confirm"),checksIn?"Confirmed for the owner. The visit is in the Live Queue with the new doctor.":"Confirmed for the owner.");
+ }
+ function withdrawOffer(offer){
+  act(offer.id,()=>withdrawDoctorOffer(offer.id,profile.id),"Doctor change withdrawn. The owner was notified.");
+ }
+ function queueProblem(r){
+  return (doctorAlerts.queue||[]).find(item=>item.queue_entry_id===r.id)?.problem||"";
+ }
+ // Waiting tickets in the Live Queue can always be reassigned; a check-in
+ // card is checked in as usual. Only when its doctor can't see the visit
+ // (leave, emergency, outside their hours) does it show the red note and
+ // Change doctor instead; while the owner decides, it waits for them.
+ function renderCheckinActions(a){
+  const offer=cardOffer(a),problem=cardProblem(a);
+  if(offer)return <div className="checkin-actions">
+   <p className="doc-pending">Waiting for the owner to confirm {drName(offer.proposed_veterinarian?.full_name)} at {formatTime(offer.proposed_time)}{offerExpired(offer)?" (time passed)":""}.</p>
+   <div className="checkin-buttons">
+    <button type="button" className="doc-btn" disabled={updatingId===offer.id||offerExpired(offer)} onClick={()=>confirmForOwner(offer)}>Confirm for owner</button>
+    <button type="button" className="doc-btn doc-btn-ghost" disabled={updatingId===offer.id} onClick={()=>withdrawOffer(offer)}>Withdraw</button>
+   </div>
+  </div>;
+  return <div className="checkin-actions">
+   {problem&&<p className="doc-unavailable"><TriangleAlert size={14}/> {unavailableNote(a.veterinarian?.full_name,problem,a.appointment_date,a.start_time)}</p>}
+   <div className="checkin-buttons">
+    {problem
+     ?<button type="button" className="doc-btn doc-btn-change" onClick={()=>setChangeTarget({appointmentIds:a.appointmentIds||[a.id],label:petNamesOf(a),petNames:petNamesOf(a)})}><UserCog size={14}/> Change doctor</button>
+     :<button type="button" className="doc-btn" disabled={checkingIn===a.id} onClick={()=>handleCheckIn(a)}>{checkingIn===a.id?"Checking In...":"Check In"}</button>}
+   </div>
+  </div>;
  }
  async function handleCheckIn(card){
   if(checkingIn)return;
@@ -285,7 +309,8 @@ export default function QueueManagementModule({profile,mode="staff"}){
   {message&&<div className="ok">{message}</div>}{error&&<div className="err">{error}</div>}
   <div className="stats">{Object.entries(stats).map(([k,v])=><div className="stat" key={k}><strong>{v}</strong><span>{k}</span></div>)}</div>
   {profile?.role!=="veterinarian"&&<div className="card filters"><select value={vet} onChange={e=>setVet(e.target.value)}><option value="">All veterinarians</option>{vets.map(v=><option key={v.id} value={v.id}>{v.full_name}</option>)}</select><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{QUEUE_STATUSES.map(s=><option key={s}>{s}</option>)}</select><button onClick={load}>Refresh</button></div>}
-  {profile?.role!=="veterinarian"&&<div className="card"><div className="apptHead"><h3>Appointments ready for check-in</h3><label className="apptDatePick">Date<input type="date" value={checkinDate} onChange={e=>setCheckinDate(e.target.value)}/></label></div>{checkinAppointments.length===0?<p className="apptEmpty">No appointments to check in for {formatApptDate(checkinDate)}.</p>:<div className="apptgrid">{checkinAppointments.map(a=><div className="appt" key={a.id}><div className="apptTop"><PetThumb pet={a.pet}/><div className="apptInfo"><b>{a.pets?.length?a.pets.map(p=>p.pet_name).join(", "):(a.pet?.pet_name||"Pet")}</b><span>{formatApptDate(a.appointment_date)}, {formatTime(a.start_time)} · {a.veterinarian?.full_name||"Veterinarian"}{a.pets?.length>1&&` · ${a.pets.length} pets · ${a.visitDurationMinutes} min`}</span></div></div><button disabled={checkingIn===a.id} onClick={()=>handleCheckIn(a)}>{checkingIn===a.id?"Checking In...":"Check In"}</button></div>)}</div>}</div>}
+  {profile?.role!=="veterinarian"&&<div className="card"><div className="apptHead"><h3>Appointments ready for check-in</h3><label className="apptDatePick">Date<input type="date" value={checkinDate} onChange={e=>setCheckinDate(e.target.value)}/></label></div>{checkinAppointments.length===0?<p className="apptEmpty">No appointments to check in for {formatApptDate(checkinDate)}.</p>:<div className="apptgrid">{checkinAppointments.map(a=>{const onHold=Boolean(cardOffer(a)),flagged=!onHold&&Boolean(cardProblem(a));return <div className={`appt${flagged?" appt-flagged":""}${onHold?" appt-onhold":""}`} key={a.id}><div className="apptTop"><PetThumb pet={a.pet}/><div className="apptInfo"><b>{petNamesOf(a)}</b><span>{formatApptDate(a.appointment_date)} · {a.veterinarian?.full_name?drName(a.veterinarian.full_name):"Veterinarian"}</span>{a.pets?.length>1&&<small>{a.pets.length} pets · {a.visitDurationMinutes} min</small>}</div><span className="apptTime">{formatTime(a.start_time)}</span></div>{renderCheckinActions(a)}</div>})}</div>}</div>}
+  {canManage&&offers.length>0&&<div className="card offers-card"><h3>Waiting for owner confirmation</h3><p className="offers-sub">These visits stay out of the Live Queue until the owner confirms the new doctor in My Queue (web or app). If the owner is here, confirm for them.</p>{offers.map(o=><div className="offer-row" key={o.id}><div className="offer-info"><b>{petNamesOf(o)}</b><small>{o.owner?.full_name||""}{o.queue_entry_id?" · checked in, on hold":" · not checked in yet"}</small><span>{drName(o.original_veterinarian?.full_name)} → <b>{drName(o.proposed_veterinarian?.full_name)}</b> · {formatTime(o.proposed_time)}{o.offer_date!==todayLocal()?` · ${formatApptDate(o.offer_date)}`:""} · {o.reason}</span>{offerExpired(o)&&<em>The offered time has passed. Withdraw it and offer a new time.</em>}</div><div className="checkin-buttons"><button type="button" className="doc-btn" disabled={updatingId===o.id||offerExpired(o)} onClick={()=>confirmForOwner(o)}>Confirm for owner</button><button type="button" className="doc-btn doc-btn-ghost" disabled={updatingId===o.id} onClick={()=>withdrawOffer(o)}>Withdraw</button></div></div>)}</div>}
   <div className="card">
    {isVet?<div className="queue-tabs queue-tabs-3" role="tablist" aria-label="Queue view">
      <div className="queue-tabs-slider" style={{left:queueTab==="Live Queue"?"0%":queueTab==="Drafts"?"33.3333%":"66.6667%"}}/>
@@ -294,11 +319,11 @@ export default function QueueManagementModule({profile,mode="staff"}){
      <button type="button" role="tab" aria-selected={queueTab==="History"} className={`queue-tab${queueTab==="History"?" active":""}`} onClick={()=>setQueueTab("History")}>History</button>
     </div>:<h3>Live queue</h3>}
 
-   {(!isVet||queueTab==="Live Queue")&&(loading?<p>Loading queue…</p>:tableRows.length===0?<p>No queue entries today.</p>:<div className="table"><table><thead><tr><th>No.</th><th>Pet</th><th>Veterinarian</th><th>Time</th><th>Status</th><th>Location / Station</th><th>Actions</th></tr></thead><tbody>{tableRows.map(r=>{const isActiveServing=r.status==="Serving"&&r.id===firstServingId;return <tr key={r.id} className={isActiveServing?"serving-row":""}><td><b>{r.queue_number}</b>{r.late_arrival&&<small className="late">Late Arrival</small>}</td><td><div className="queuePetCell"><PetThumb pet={r.pet}/><div>{r.pets?.length?r.pets.map(p=>p.pet_name).join(", "):(r.pet?.pet_name||"—")}{r.pets?.length>1&&<small className="petcount">{r.pets.length} pets · {r.visitDurationMinutes} min</small>}<small>{r.owner?.full_name||""}</small></div></div></td><td>{r.veterinarian?.full_name||"—"}</td><td>{bookingTime(r)}</td><td><span className={`pill ${isActiveServing?"serving":r.status==="Serving"?"servingplain":r.status.replaceAll(" ","").toLowerCase()}`}>{isActiveServing&&<span className="live-dot"/>}{r.status}</span></td><td><span className="station-cell"><MapPin size={13}/> {stationLabel(r.status)}</span></td><td>
+   {(!isVet||queueTab==="Live Queue")&&(loading?<p>Loading queue…</p>:tableRows.length===0?<p>No queue entries today.</p>:<div className="table"><table><thead><tr><th>No.</th><th>Pet</th>{!isVet&&<th>Veterinarian</th>}<th>Time</th><th>Status</th><th>Location / Station</th><th>Actions</th></tr></thead><tbody>{tableRows.map(r=>{const isActiveServing=r.status==="Serving"&&r.id===firstServingId;return <tr key={r.id} className={isActiveServing?"serving-row":""}><td>{/leave/i.test(queueProblem(r))?<><b title={`On hold: the doctor went on sudden leave (was ${r.queue_number})`}>—</b><small className="onhold">On hold</small></>:<b>{r.queue_number}</b>}{r.late_arrival&&<small className="late">Late Arrival</small>}</td><td><div className="queuePetCell"><PetThumb pet={r.pet}/><div>{r.pets?.length?r.pets.map(p=>p.pet_name).join(", "):(r.pet?.pet_name||"—")}{r.pets?.length>1&&<small className="petcount">{r.pets.length} pets · {r.visitDurationMinutes} min</small>}<small>{r.owner?.full_name||""}</small></div></div></td>{!isVet&&<td>{r.veterinarian?.full_name||"—"}{queueProblem(r)&&<small className="doc-alert"><TriangleAlert size={12}/> {unavailableNote(r.veterinarian?.full_name,queueProblem(r),r.queue_date,r.original_appointment_time)}</small>}</td>}<td>{bookingTime(r)}</td><td><span className={`pill ${isActiveServing?"serving":r.status==="Serving"?"servingplain":r.status.replaceAll(" ","").toLowerCase()}`}>{isActiveServing&&<span className="live-dot"/>}{r.status}</span></td><td><span className="station-cell"><MapPin size={13}/> {stationLabel(r.status)}</span></td><td>
     {canManage&&<div className="actions">
      <button className="icon-btn serve-btn" disabled={r.status!=="Waiting"||updatingId===r.id||vetsCurrentlyServing.has(r.veterinarian_id)} title={r.status==="Waiting"&&vetsCurrentlyServing.has(r.veterinarian_id)?`${r.veterinarian?.full_name||"This veterinarian"} is already serving another patient`:"Mark as Serving"} aria-label="Mark as Serving" onClick={()=>act(r.id,()=>updateQueueStatus(r.id,"Serving",profile),"Marked as serving.")}><Play size={15}/></button>
      <button className="icon-btn link-btn" disabled={r.status!=="Waiting"||updatingId===r.id} title="Re-queue to next available slot" aria-label="Re-queue" onClick={()=>act(r.id,()=>requeueToNextAvailable(r.id,profile),time=>`Re-queued to ${formatTime(time)}.`)}><RotateCcw size={15}/></button>
-     {r.status==="Waiting"&&<button type="button" className="icon-btn reassign-btn" disabled={updatingId===r.id} title="Reassign this visit to a different available doctor" aria-label="Reassign Doctor" onClick={()=>openReassign(r)}><UserCog size={15}/></button>}
+     {r.status==="Waiting"&&<button type="button" className="icon-btn reassign-btn" disabled={updatingId===r.id} title={queueProblem(r)?"Change doctor: this doctor can't see the patient (the owner confirms first)":"Reassign to another doctor (the owner confirms first)"} aria-label="Change doctor" onClick={()=>setChangeTarget({queueEntryId:r.id,label:`#${r.queue_number} · ${petNamesOf(r)}`,petNames:petNamesOf(r)})}><UserCog size={15}/></button>}
     </div>}
     {isVet&&<div className="actions">
      {r.billing_status&&r.billing_status!=="Not Applicable"?
@@ -308,11 +333,10 @@ export default function QueueManagementModule({profile,mode="staff"}){
    </td></tr>})}</tbody></table></div>)}
 
    {isVet&&queueTab==="Drafts"&&(drafts.length===0?<p className="drafts-empty">No drafts saved yet. A template you switch away from before finishing gets saved here automatically.</p>:
-    <div className="table"><table><thead><tr><th>No.</th><th>Pet</th><th>Veterinarian</th><th>Template</th><th>Last Saved</th><th>Actions</th></tr></thead><tbody>
+    <div className="table"><table><thead><tr><th>No.</th><th>Pet</th><th>Template</th><th>Last Saved</th><th>Actions</th></tr></thead><tbody>
      {drafts.map(draft=><tr key={draft.id}>
       <td><b>{queueNumberByEntryId[draft.queue_entry_id]||"—"}</b></td>
       <td><div className="queuePetCell"><PetThumb pet={draft.pet}/><div>{draft.pet?.pet_name||"Pet"}<small>{draft.owner?.full_name||""}</small></div></div></td>
-      <td>{draft.veterinarian?.full_name?`Dr. ${draft.veterinarian.full_name}`:"—"}</td>
       <td>{getMedicalRecordTemplate(draft.record_template).label}</td>
       <td>{formatClockTime(draft.updated_at||draft.created_at)}</td>
       <td><div className="actions"><button type="button" className="create-record-btn" onClick={()=>resumeDraft(draft)}><FileText size={15}/>Continue</button></div></td>
@@ -371,43 +395,11 @@ export default function QueueManagementModule({profile,mode="staff"}){
    </div>;
   })()}
 
-  {reassignTarget&&<div className="insight-modal-backdrop" onClick={closeReassign}>
-   <div className="insight-modal reassign-modal" onClick={e=>e.stopPropagation()}>
-    <button type="button" className="insight-modal-close" aria-label="Close" onClick={closeReassign}><X size={18}/></button>
-    <div className="insight-modal-head">
-     <UserCog size={28}/>
-     <div>
-      <p className="insight-modal-eyebrow">Emergency Doctor Reassignment</p>
-      <h3>{reassignTarget.pets?.length?reassignTarget.pets.map(p=>p.pet_name).join(", "):(reassignTarget.pet?.pet_name||"Pet")}</h3>
-     </div>
-    </div>
-    <p className="reassign-current">Currently assigned to <b>{reassignTarget.veterinarian?.full_name?`Dr. ${reassignTarget.veterinarian.full_name}`:"—"}</b>. Choose an available doctor to cover this visit.</p>
-    {reassignError&&<div className="err">{reassignError}</div>}
-    <label className="reassign-field">Available doctor
-     <select value={reassignVetId} onChange={e=>setReassignVetId(e.target.value)} disabled={availabilityLoading}>
-      <option value="">{availabilityLoading?"Loading available doctors…":"Select a doctor"}</option>
-      {availableDoctors.map(v=><option key={v.id} value={v.id}>{v.full_name}</option>)}
-     </select>
-    </label>
-    {!availabilityLoading&&availableDoctors.length===0&&<p className="reassign-empty">No other doctor is both scheduled today and free right now.</p>}
-    <label className="reassign-field">Reason
-     <select value={reassignReason} onChange={e=>{setReassignReason(e.target.value);if(e.target.value!==REASSIGN_OTHER_REASON)setReassignNotes("");}}>
-      <option value="">Select a reason</option>
-      {REASSIGN_REASONS.map(r=><option key={r} value={r}>{r}</option>)}
-     </select>
-    </label>
-    {reassignReason===REASSIGN_OTHER_REASON&&<label className="reassign-field">Notes <span className="optional-mark"> (Shown to the pet owner)</span>
-     <textarea rows={3} value={reassignNotes} onChange={e=>setReassignNotes(e.target.value)} placeholder="e.g. Dr. Redmond is out for a family emergency and will be back next week." autoFocus/>
-    </label>}
-    <div className="reassign-actions">
-     <button type="button" className="link" onClick={closeReassign} disabled={reassignSaving}>Cancel</button>
-     <button type="button" className="serve-btn" disabled={!reassignVetId||!reassignReason||reassignSaving} onClick={submitReassign}>{reassignSaving?"Reassigning…":"Reassign Doctor"}</button>
-    </div>
-   </div>
-  </div>}
+  {changeTarget&&<DoctorChangeModal profile={profile} target={changeTarget} onClose={()=>setChangeTarget(null)} onSent={(offer,picked)=>{setChangeTarget(null);setMessage(`Sent to the owner: ${drName(picked?.vetName)} at ${formatTime(picked?.time)}. The visit joins the Live Queue once they confirm.`);load();}}/>}
 
   <PrintPreviewModal open={!!printPreview.preview} title={printPreview.preview?.title} src={printPreview.preview?.src} html={printPreview.preview?.html} onDownload={printPreview.preview?.onDownload} showPrint={printPreview.preview?.showPrint} onClose={printPreview.close}/>
 
-  <style>{`.ok,.err{padding:12px 15px;border-radius:12px;margin-bottom:14px}.ok{background:#e9f8ef;color:#26754a}.err{background:#fff0f0;color:#b34b4b}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:16px}.stat{background:#fff;border-radius:16px;padding:18px;box-shadow:0 7px 20px #d9edf5}.stat strong{display:block;font-size:27px;color:#318fbe;text-transform:capitalize}.stat span{text-transform:capitalize;color:#6f7f88}.filters{display:flex;gap:10px;margin-bottom:16px}.filters select,.filters button{padding:10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.actions select{padding:7px 9px;border:1px solid #d4e9f1;border-radius:8px;background:#fff;font-size:12.5px}.icon-btn{width:30px;height:30px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;border:1px solid #d4e9f1;border-radius:8px;background:#fff;flex-shrink:0}.link-btn{background:#fff!important;color:#318fbe!important;border:1px solid #d4e9f1!important}.link-btn:disabled{opacity:.5;cursor:not-allowed;color:#8fa3ab!important}.filters button,.appt button{background:#4DA8DA;color:#fff;border:0}.appt button:disabled,.create-record-btn:disabled{opacity:.65;cursor:not-allowed}.apptHead{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px}.apptHead h3{margin:0}.apptDatePick{display:flex;align-items:center;gap:8px;font-size:13px;color:#6f7f88;font-weight:700}.apptDatePick input{padding:8px 10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.apptEmpty{color:#72838c;margin:0}.apptgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.appt{border:1px solid #e2f0f5;border-radius:12px;padding:12px;display:grid;gap:8px}.apptTop{display:flex;align-items:center;gap:10px;min-width:0}.apptInfo{display:grid;gap:2px;min-width:0}.petThumb{flex-shrink:0;width:32px;height:32px;border-radius:9px;object-fit:cover;background:#eaf8fd;color:#4da8da}.petThumbFallback{display:grid;place-items:center}.table{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #e6f1f5;text-align:left;white-space:nowrap}td small{display:block;color:#72838c}.queuePetCell{display:flex;align-items:center;gap:10px}.late{color:#d88416!important}.station-cell{display:inline-flex;align-items:center;gap:5px;color:#48717f;font-weight:600}.petcount{color:#318fbe!important;font-weight:700}.pill{padding:5px 9px;border-radius:999px;background:#eaf7fb;font-size:12px}.billingstatus-billed{background:#e7f7ed;color:#26754a;font-weight:700}.billingstatus-processing{background:#e7f0ff;color:#2c5ab5;font-weight:700}.billingstatus-pendingbilling{background:#fff6e0;color:#9a7000;font-weight:700}.billingstatus-none{background:#eef1f4;color:#5b6b76;font-weight:700}.serving{background:#fdecea;color:#c0392b;display:inline-flex;align-items:center;gap:5px}.servingplain{background:#eaf7fb;color:#267da3}.serving-row{background:#fef7f6}.serving-row:hover{background:#fdeeec}.live-dot{width:6px;height:6px;border-radius:50%;background:#e2413a;animation:livePulse 1.4s ease-in-out infinite}@keyframes livePulse{0%,100%{opacity:1}50%{opacity:.35}}.waiting{background:#fff5d9;color:#9a7015}.actions{display:flex;gap:5px;flex-wrap:wrap}.serve-btn{background:#4DA8DA!important;color:#fff!important;border:0!important;font-weight:700;cursor:pointer}.serve-btn:disabled{opacity:.55;cursor:not-allowed}.create-record-btn{display:inline-flex;align-items:center;gap:6px;background:#4DA8DA!important;color:#fff!important;border:0!important;padding:10px 14px!important;font-weight:700;cursor:pointer;white-space:nowrap}.reassign-btn{background:#fff!important;color:#c0392b!important;border:1px solid #f0c4bd!important;cursor:pointer}.reassign-btn:hover:not(:disabled){background:#fdf1ef!important}.reassign-btn:disabled{opacity:.5;cursor:not-allowed}.link{color:#318fbe;cursor:pointer}.link:disabled{opacity:.5;cursor:not-allowed;color:#8fa3ab}.queue-tabs{position:relative;display:flex;margin-bottom:16px;padding:4px;border-radius:12px;background:#eaf3f7}.queue-tabs-slider{position:absolute;top:4px;bottom:4px;width:calc(50% - 4px);border-radius:9px;background:#fff;box-shadow:0 2px 6px rgba(33,105,127,.18);transition:left .22s ease}.queue-tabs-3 .queue-tabs-slider{width:calc(33.3333% - 4px)}.queue-tab{position:relative;z-index:1;flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;background:none;padding:11px 10px;font-weight:700;font-size:13.5px;color:#6f8792;cursor:pointer}.queue-tab.active{color:#17445a}.drafts-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#9a7000;color:#fff;font-size:10px}.drafts-empty{color:#72838c;margin:0}.history-pdf-btn,.history-insight-btn{display:inline-flex;align-items:center;gap:5px;border:1px solid #cfe2ea;background:#fff;border-radius:9px;padding:8px 10px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap}.history-pdf-btn{color:#257fa9}.history-insight-btn{color:#17445a}.history-pdf-btn:hover,.history-insight-btn:hover{background:#f2f9fc}.history-no-rx{display:inline-flex;align-items:center;gap:5px;border:1px solid #f2dfa0;background:#fff6e0;color:#8a6d00;border-radius:9px;padding:8px 10px;font-weight:800;font-size:12px;white-space:nowrap}.pagination{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;padding-top:14px;border-top:1px solid #e6f1f5}.pagination button{padding:8px 16px;border:1px solid #d4e9f1;border-radius:9px;background:#fff;color:#267da3;font-weight:700;font-size:13px;cursor:pointer}.pagination button:disabled{opacity:.5;cursor:not-allowed}.pagination span{color:#6f7f88;font-size:13px;font-weight:600}.history-search{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:0 13px;border:1px solid #d4e9f1;border-radius:10px;background:#f8fcfe;color:#7c8c94}.history-search input{flex:1;height:42px;border:0;background:transparent;outline:none;font:inherit;color:#20313b}.insight-risk-badge{margin-left:6px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:800;white-space:nowrap}.insight-risk-badge.risk-low{background:#e5f4ea;color:#2f8f5b}.insight-risk-badge.risk-moderate{background:#fdf1dc;color:#a5680b}.insight-risk-badge.risk-high{background:#fbe6e4;color:#c0392b}.insight-modal-backdrop{position:fixed;inset:0;background:rgba(24,47,59,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px}.insight-modal{position:relative;width:min(780px,100%);max-height:85vh;overflow-y:auto;background:#fff;border-radius:16px;padding:26px;box-shadow:0 20px 48px rgba(17,48,63,.28)}.insight-modal-close{position:absolute;top:14px;right:14px;border:0;background:#eef7fa;color:#183642;border-radius:50%;width:32px;height:32px;display:grid;place-items:center;cursor:pointer}.insight-modal-head{display:flex;align-items:center;gap:14px;margin-bottom:18px;padding-right:30px;color:#4da8da}.insight-modal-eyebrow{margin:0 0 2px;color:#6f8792;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}.insight-modal-head h3{margin:0;color:#17445a;font-size:19px}.reassign-modal{width:min(480px,100%)}.reassign-current{margin:0 0 16px;color:#48717f;font-size:13.5px;line-height:1.5}.reassign-current b{color:#17445a}.reassign-field{display:grid;gap:6px;margin-bottom:14px;font-weight:700;font-size:13px;color:#17445a}.reassign-field select,.reassign-field textarea{padding:10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff;font:inherit;color:#20313b;resize:vertical}.reassign-empty{margin:-8px 0 14px;color:#9a7000;font-size:12.5px;font-weight:600}.reassign-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.filters{display:grid}}`}</style>
+  <style>{`.checkin-actions{display:grid;gap:10px}.checkin-buttons{display:flex;gap:6px;flex-wrap:wrap}.doc-btn{border:0!important;background:#4DA8DA!important;color:#fff!important;border-radius:10px;padding:8px 12px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-size:13px}.doc-btn-ghost{background:#fff!important;color:#2f6f8f!important;border:1px solid #cfe4ed!important}.doc-btn-change{background:#c0392b!important}
+.checkin-buttons .doc-btn{flex:1;justify-content:center;min-height:38px}.doc-btn:disabled{opacity:.55;cursor:not-allowed}.doc-alert{display:flex;gap:5px;align-items:flex-start;margin-top:4px;max-width:280px;color:#c0392b;font-weight:700;font-size:12px;line-height:1.35}.doc-alert svg,.doc-unavailable svg{flex-shrink:0;margin-top:1px}.doc-unavailable{margin:0;display:flex;gap:7px;align-items:flex-start;color:#c0392b;background:#fdecea;border:1px solid #f5c6c0;border-radius:10px;padding:9px 11px;font-size:12.5px;font-weight:700;line-height:1.4}.doc-pending{margin:0;color:#9d6817;background:#fff7e8;border:1px solid #f1dfb0;border-radius:10px;padding:9px 11px;font-weight:700;font-size:12.5px;line-height:1.4}.offers-card{margin-bottom:14px;border-left:5px solid #e0982f}.offers-card h3{margin:0}.offers-sub{margin:4px 0 12px;color:#6f7f88;font-size:13px}.offer-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid #f1e3c0;background:#fffcf5;border-radius:12px;padding:10px 12px;margin-top:8px}.offer-info{display:grid;gap:2px;font-size:13px}.offer-info small{color:#6f8591}.offer-info span{color:#3e5968}.offer-info em{color:#b34848;font-style:normal;font-weight:700;font-size:12px}.ok,.err{padding:12px 15px;border-radius:12px;margin-bottom:14px}.ok{background:#e9f8ef;color:#26754a}.err{background:#fff0f0;color:#b34b4b}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:16px}.stat{background:#fff;border-radius:16px;padding:18px;box-shadow:0 7px 20px #d9edf5}.stat strong{display:block;font-size:27px;color:#318fbe;text-transform:capitalize}.stat span{text-transform:capitalize;color:#6f7f88}.filters{display:flex;gap:10px;margin-bottom:16px}.filters select,.filters button{padding:10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.actions select{padding:7px 9px;border:1px solid #d4e9f1;border-radius:8px;background:#fff;font-size:12.5px}.icon-btn{width:30px;height:30px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;border:1px solid #d4e9f1;border-radius:8px;background:#fff;flex-shrink:0}.link-btn{background:#fff!important;color:#318fbe!important;border:1px solid #d4e9f1!important}.link-btn:disabled{opacity:.5;cursor:not-allowed;color:#8fa3ab!important}.filters button,.appt button{background:#4DA8DA;color:#fff;border:0}.appt button:disabled,.create-record-btn:disabled{opacity:.65;cursor:not-allowed}.apptHead{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px}.apptHead h3{margin:0}.apptDatePick{display:flex;align-items:center;gap:8px;font-size:13px;color:#6f7f88;font-weight:700}.apptDatePick input{padding:8px 10px;border:1px solid #d4e9f1;border-radius:10px;background:#fff}.apptEmpty{color:#72838c;margin:0}.apptgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));gap:12px}.appt{border:1px solid #e2f0f5;border-radius:14px;padding:14px;display:grid;gap:12px;align-content:space-between;background:#fbfeff;box-shadow:0 4px 14px rgba(33,92,125,.06)}.appt-flagged{border-color:#f5c6c0;border-left:4px solid #c0392b;background:#fffafa}.appt-onhold{border-color:#f1dfb0;border-left:4px solid #e0982f;background:#fffdf7}.apptTop{display:flex;align-items:center;gap:10px;min-width:0}.apptInfo{display:grid;gap:2px;min-width:0;flex:1}.apptInfo b{color:#1d3a4a;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.apptInfo span{color:#5f7884;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.apptInfo small{color:#7b909b;font-size:12px;font-weight:600}.apptTime{align-self:flex-start;flex-shrink:0;background:#e6f4fb;color:#2c6ba3;font-weight:800;font-size:12.5px;border-radius:999px;padding:4px 10px;white-space:nowrap}.petThumb{flex-shrink:0;width:32px;height:32px;border-radius:9px;object-fit:cover;background:#eaf8fd;color:#4da8da}.petThumbFallback{display:grid;place-items:center}.table{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #e6f1f5;text-align:left;white-space:nowrap}td small{display:block;color:#72838c}.queuePetCell{display:flex;align-items:center;gap:10px}.late{color:#d88416!important}.onhold{display:block;color:#b34848!important;font-weight:800}.station-cell{display:inline-flex;align-items:center;gap:5px;color:#48717f;font-weight:600}.petcount{color:#318fbe!important;font-weight:700}.pill{padding:5px 9px;border-radius:999px;background:#eaf7fb;font-size:12px}.billingstatus-billed{background:#e7f7ed;color:#26754a;font-weight:700}.billingstatus-processing{background:#e7f0ff;color:#2c5ab5;font-weight:700}.billingstatus-pendingbilling{background:#fff6e0;color:#9a7000;font-weight:700}.billingstatus-none{background:#eef1f4;color:#5b6b76;font-weight:700}.serving{background:#fdecea;color:#c0392b;display:inline-flex;align-items:center;gap:5px}.servingplain{background:#eaf7fb;color:#267da3}.serving-row{background:#fef7f6}.serving-row:hover{background:#fdeeec}.live-dot{width:6px;height:6px;border-radius:50%;background:#e2413a;animation:livePulse 1.4s ease-in-out infinite}@keyframes livePulse{0%,100%{opacity:1}50%{opacity:.35}}.waiting{background:#fff5d9;color:#9a7015}.actions{display:flex;gap:5px;flex-wrap:wrap}.serve-btn{background:#4DA8DA!important;color:#fff!important;border:0!important;font-weight:700;cursor:pointer}.serve-btn:disabled{opacity:.55;cursor:not-allowed}.create-record-btn{display:inline-flex;align-items:center;gap:6px;background:#4DA8DA!important;color:#fff!important;border:0!important;padding:10px 14px!important;font-weight:700;cursor:pointer;white-space:nowrap}.reassign-btn{background:#fff!important;color:#c0392b!important;border:1px solid #f0c4bd!important;cursor:pointer}.reassign-btn:hover:not(:disabled){background:#fdf1ef!important}.reassign-btn:disabled{opacity:.5;cursor:not-allowed}.link{color:#318fbe;cursor:pointer}.link:disabled{opacity:.5;cursor:not-allowed;color:#8fa3ab}.queue-tabs{position:relative;display:flex;margin-bottom:16px;padding:4px;border-radius:12px;background:#eaf3f7}.queue-tabs-slider{position:absolute;top:4px;bottom:4px;width:calc(50% - 4px);border-radius:9px;background:#fff;box-shadow:0 2px 6px rgba(33,105,127,.18);transition:left .22s ease}.queue-tabs-3 .queue-tabs-slider{width:calc(33.3333% - 4px)}.queue-tab{position:relative;z-index:1;flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;background:none;padding:11px 10px;font-weight:700;font-size:13.5px;color:#6f8792;cursor:pointer}.queue-tab.active{color:#17445a}.drafts-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#9a7000;color:#fff;font-size:10px}.drafts-empty{color:#72838c;margin:0}.history-pdf-btn,.history-insight-btn{display:inline-flex;align-items:center;gap:5px;border:1px solid #cfe2ea;background:#fff;border-radius:9px;padding:8px 10px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap}.history-pdf-btn{color:#257fa9}.history-insight-btn{color:#17445a}.history-pdf-btn:hover,.history-insight-btn:hover{background:#f2f9fc}.history-no-rx{display:inline-flex;align-items:center;gap:5px;border:1px solid #f2dfa0;background:#fff6e0;color:#8a6d00;border-radius:9px;padding:8px 10px;font-weight:800;font-size:12px;white-space:nowrap}.pagination{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;padding-top:14px;border-top:1px solid #e6f1f5}.pagination button{padding:8px 16px;border:1px solid #d4e9f1;border-radius:9px;background:#fff;color:#267da3;font-weight:700;font-size:13px;cursor:pointer}.pagination button:disabled{opacity:.5;cursor:not-allowed}.pagination span{color:#6f7f88;font-size:13px;font-weight:600}.history-search{display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:0 13px;border:1px solid #d4e9f1;border-radius:10px;background:#f8fcfe;color:#7c8c94}.history-search input{flex:1;height:42px;border:0;background:transparent;outline:none;font:inherit;color:#20313b}.insight-risk-badge{margin-left:6px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:800;white-space:nowrap}.insight-risk-badge.risk-low{background:#e5f4ea;color:#2f8f5b}.insight-risk-badge.risk-moderate{background:#fdf1dc;color:#a5680b}.insight-risk-badge.risk-high{background:#fbe6e4;color:#c0392b}.insight-modal-backdrop{position:fixed;inset:0;background:rgba(24,47,59,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px}.insight-modal{position:relative;width:min(780px,100%);max-height:85vh;overflow-y:auto;background:#fff;border-radius:16px;padding:26px;box-shadow:0 20px 48px rgba(17,48,63,.28)}.insight-modal-close{position:absolute;top:14px;right:14px;border:0;background:#eef7fa;color:#183642;border-radius:50%;width:32px;height:32px;display:grid;place-items:center;cursor:pointer}.insight-modal-head{display:flex;align-items:center;gap:14px;margin-bottom:18px;padding-right:30px;color:#4da8da}.insight-modal-eyebrow{margin:0 0 2px;color:#6f8792;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}.insight-modal-head h3{margin:0;color:#17445a;font-size:19px}@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.filters{display:grid}}`}</style>
  </AppShell>
 }

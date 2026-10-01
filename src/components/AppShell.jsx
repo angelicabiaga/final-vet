@@ -11,6 +11,7 @@ import { getAppointments, todayLocal } from "../services/appointmentService";
 import { getQueue, getTodayCheckinAppointments, subscribeToQueue } from "../services/queueService";
 import { getPendingBillingQueue, subscribeToPendingBilling } from "../services/billingService";
 import { getConversations, subscribeToMessagingOverview } from "../services/messageService";
+import { getLeaveAttentionCount, subscribeToLeaveChanges } from "../services/vetLeaveService";
 import NotificationBell from "./NotificationBell";
 import PetOwnerTutorial, { hasSeenPetOwnerTutorial } from "./PetOwnerTutorial";
 
@@ -21,6 +22,7 @@ import paymentIcon from "../assets/reference/payment_icon.png";
 import inventoryIcon from "../assets/reference/Inventory_Icon.png";
 import petsIcon from "../assets/reference/Pets_Icon.png";
 import messageIcon from "../assets/reference/Message_Icon.png";
+import { stripDrTitle } from "../utils/vetName";
 
 // Most nav types keep their original PNG icons; types with no strong
 // original identity, or that used to all share one identical PNG
@@ -52,7 +54,7 @@ const iconByType = {
 // which made this pick "Dr." itself as the "first name" -- strip it first
 // so the greeting always lands on an actual name.
 function firstNameOf(fullName) {
-  return String(fullName || "").trim().replace(/^dr\.?\s*/i, "").split(/\s+/)[0] || "";
+  return stripDrTitle(fullName).split(/\s+/)[0] || "";
 }
 
 const ROLE_LABELS = {
@@ -77,8 +79,8 @@ function roleLabelOf(role) {
 // Transactions (POS) is staff-only -- admin's nav has no Transactions link
 // at all, so it can never get that badge.
 const BADGE_ROUTES = {
-  admin: { "/staff/appointments": "appointments", "/admin/queue": "queue", "/admin/inventory": "inventory", "/admin/messages": "messages" },
-  staff: { "/staff/appointments": "appointments", "/staff/queue": "queue", "/staff/inventory": "inventory", "/staff/transactions": "transactions", "/staff/messages": "messages" },
+  admin: { "/staff/appointments": "appointments", "/admin/queue": "queue", "/staff/veterinarian-schedules": "leave", "/admin/inventory": "inventory", "/admin/messages": "messages" },
+  staff: { "/staff/appointments": "appointments", "/staff/queue": "queue", "/staff/veterinarian-schedules": "leave", "/staff/inventory": "inventory", "/staff/transactions": "transactions", "/staff/messages": "messages" },
   veterinarian: { "/veterinarian/appointments": "appointments", "/veterinarian/queue": "queue", "/veterinarian/messages": "messages" },
   pet_owner: { "/pet-owner/appointments": "appointments", "/pet-owner/queue": "queue", "/pet-owner/messages": "messages" },
 };
@@ -192,6 +194,9 @@ export default function AppShell({ profile, title, children }) {
         });
       jobs.inventory = getInventoryItems({})
         .then((rows) => rows.filter((item) => INVENTORY_ALERT_STATUSES.includes(item.status)).length);
+      // Leave requests waiting for review plus same-day emergencies nobody
+      // has acknowledged yet (see VetLeaveRequestsPanel).
+      jobs.leave = getLeaveAttentionCount();
       if (role === "staff") {
         // Only consultations a veterinarian just finalized that staff has not
         // yet opened ("Pending Billing") count -- once staff clicks Process
@@ -240,11 +245,13 @@ export default function AppShell({ profile, title, children }) {
     const unsubMessages = subscribeToMessagingOverview(profile.id, loadBadgeCounts);
     const unsubInventory = ["admin", "staff"].includes(profile.role) ? subscribeToInventoryChanges(loadBadgeCounts) : null;
     const unsubBilling = profile.role === "staff" ? subscribeToPendingBilling(loadBadgeCounts) : null;
+    const unsubLeave = ["admin", "staff"].includes(profile.role) ? subscribeToLeaveChanges(loadBadgeCounts) : null;
     return () => {
       unsubQueue?.();
       unsubInventory?.();
       unsubMessages?.();
       unsubBilling?.();
+      unsubLeave?.();
     };
   }, [profile?.role, profile?.id, loadBadgeCounts]);
 
@@ -278,6 +285,7 @@ export default function AppShell({ profile, title, children }) {
       { label: "Dashboard", to: "/veterinarian/dashboard", type: "dashboard" },
       { label: "Appointments", to: "/veterinarian/appointments", type: "appointment" },
       { label: "Queue", to: "/veterinarian/queue", type: "queue" },
+      { label: "My Schedule", to: "/veterinarian/schedule", type: "schedule" },
       { label: "Animal Patients", to: "/veterinarian/patients", type: "pet" },
 
       { label: "Messages", to: "/veterinarian/messages", type: "message" },
@@ -556,14 +564,20 @@ export default function AppShell({ profile, title, children }) {
         </div>
       )}
 
-      {profile?.role === "pet_owner" && location.pathname !== "/pet-owner/chatbot" && (
+      {/* Messages has its own Pet Care Assistant entry in the conversation list. */}
+      {profile?.role === "pet_owner" && !["/pet-owner/chatbot", "/pet-owner/messages"].includes(location.pathname) && (
         <Link
           className="chatbotLauncher"
           to="/pet-owner/chatbot"
-          aria-label="Open PawCruz chatbot"
-          title="Chat with PawCruz"
+          aria-label="Open the PawCruz Pet Care Assistant"
         >
-          <img src={chatbotIcon} alt="" aria-hidden="true" />
+          <span className="aiFabLabel" aria-hidden="true">Ask PawCruz AI</span>
+          <span className="aiFabOrb" aria-hidden="true">
+            <span className="aiFabRing" />
+            <span className="aiFabRing aiFabRing2" />
+            <span className="aiFabFace"><img src={chatbotIcon} alt="" /></span>
+            <span className="aiFabDot" />
+          </span>
         </Link>
       )}
 
@@ -579,7 +593,24 @@ export default function AppShell({ profile, title, children }) {
         .navBadge{position:absolute;top:-6px;right:-8px;min-width:16px;height:16px;padding:0 4px;display:flex;align-items:center;justify-content:center;background:#e53935;color:#fff;font-size:10px;line-height:1;font-weight:700;border-radius:999px;box-shadow:0 0 0 2px rgba(37,80,101,.55),0 1px 3px rgba(0,0,0,.25)}
         .logout{flex-shrink:0;margin:12px 15px 20px;border:1px solid rgba(255,255,255,.26);background:rgba(255,255,255,.12);color:#fff;padding:12px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;font-weight:600}.logout:hover{background:rgba(255,255,255,.22)}
         .shell main{margin-left:280px;flex:1;min-width:0}.topBar{height:96px;background:linear-gradient(110deg,#4aa3c7 0%,#66bcc8 48%,#78c4ca 100%);display:flex;align-items:center;padding:0 38px;justify-content:space-between;color:#fff;position:fixed;left:280px;right:0;top:0;z-index:80;border-bottom:1px solid rgba(255,255,255,.32);box-shadow:0 8px 26px rgba(35,91,116,.16);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.pageHeading{display:flex;flex-direction:column;justify-content:center;min-width:0}.topBar h1{margin:0;font-size:26px;line-height:1.12;color:#fff;font-weight:800;letter-spacing:-.02em;text-shadow:0 1px 2px rgba(20,73,94,.08)}.topBar p{margin:7px 0 0;color:rgba(255,255,255,.92);font-size:13px;font-weight:600;letter-spacing:.01em}.menu{display:none;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.16);color:#fff;padding:10px;border-radius:14px;box-shadow:0 4px 12px rgba(28,84,106,.08)}.headerActions{display:flex;align-items:center;gap:14px}.headerActions>.nb .bell{width:52px;height:52px;border-radius:17px!important;border:1px solid rgba(255,255,255,.6)!important;background:rgba(255,255,255,.92)!important;box-shadow:0 8px 18px rgba(31,91,115,.14)!important}.user{display:flex;align-items:center;gap:10px;color:#fff}.userText{display:flex;flex-direction:column;gap:1px;min-width:0}.userGreeting{font-size:14px;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.userRole{font-size:11px;font-weight:600;line-height:1.2;color:rgba(255,255,255,.82);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.profileLink{text-decoration:none;padding:9px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.10);transition:background .18s ease,transform .18s ease}.profileLink svg{width:25px;height:25px;flex-shrink:0}.profileLink:hover{background:rgba(255,255,255,.2);color:#fff;transform:translateY(-1px)}.content{padding:126px 30px 30px}.card{background:#fff;border-radius:15px;padding:22px;box-shadow:0 4px 10px rgba(0,0,0,.04)}.sidebarOverlay{display:none}
-        .chatbotLauncher{position:fixed;right:28px;bottom:28px;z-index:80;width:72px;height:72px;display:grid;place-items:center;overflow:hidden;border:3px solid #fff;border-radius:50%;background:#fff;box-shadow:0 8px 24px rgba(37,80,101,.3);transition:transform .2s ease,box-shadow .2s ease}.chatbotLauncher img{display:block;width:100%;height:100%;object-fit:contain;border-radius:50%}.chatbotLauncher:hover{transform:translateY(-3px) scale(1.04);box-shadow:0 12px 28px rgba(37,80,101,.38)}.chatbotLauncher:focus-visible{outline:4px solid #173e52;outline-offset:4px}
+        .chatbotLauncher{position:fixed;right:28px;bottom:28px;z-index:80;display:flex;align-items:center;gap:0;text-decoration:none;animation:aiFabFloat 3.6s ease-in-out infinite}
+        .chatbotLauncher:focus-visible{outline:none}.chatbotLauncher:focus-visible .aiFabOrb{box-shadow:0 0 0 4px #fff,0 0 0 7px #173e52}
+        .aiFabOrb{position:relative;width:68px;height:68px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(from 210deg,#2c6ba3,#4DA8DA,#78c4ca,#2c6ba3);box-shadow:0 12px 28px rgba(28,86,128,.38),inset 0 -6px 14px rgba(0,0,0,.12);transition:transform .25s cubic-bezier(.34,1.56,.64,1)}
+        .aiFabOrb::before{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,transparent 0 70%,rgba(255,255,255,.75) 82%,transparent 94%);animation:aiFabSpin 3.2s linear infinite;-webkit-mask:radial-gradient(circle,transparent 62%,#000 64%);mask:radial-gradient(circle,transparent 62%,#000 64%)}
+        .aiFabFace{position:relative;z-index:1;width:52px;height:52px;border-radius:50%;background:#fff;display:grid;place-items:center;box-shadow:0 3px 10px rgba(20,60,90,.25)}
+        .aiFabFace img{width:40px;height:40px;object-fit:contain;animation:aiFabNod 5s ease-in-out infinite;transform-origin:50% 80%}
+        .aiFabRing{position:absolute;inset:0;border-radius:50%;border:2px solid rgba(77,168,218,.7);animation:aiFabPulse 2.6s ease-out infinite}
+        .aiFabRing2{animation-delay:1.3s}
+        .aiFabDot{position:absolute;z-index:2;right:3px;bottom:5px;width:14px;height:14px;border-radius:50%;background:#35d07f;border:2.5px solid #fff;animation:aiFabBlink 2s ease-in-out infinite}
+        .aiFabLabel{order:-1;max-width:0;opacity:0;overflow:hidden;white-space:nowrap;margin-right:0;padding:10px 0;border-radius:999px;background:#fff;color:#1e5a8c;font-size:13.5px;font-weight:800;box-shadow:0 8px 20px rgba(28,86,128,.2);transition:max-width .3s ease,opacity .25s ease,padding .3s ease,margin .3s ease}
+        .chatbotLauncher:hover .aiFabLabel,.chatbotLauncher:focus-visible .aiFabLabel{max-width:180px;opacity:1;padding:10px 16px;margin-right:10px}
+        .chatbotLauncher:hover .aiFabOrb{transform:scale(1.08) rotate(-4deg)}
+        @keyframes aiFabFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+        @keyframes aiFabPulse{0%{transform:scale(1);opacity:.8}100%{transform:scale(1.55);opacity:0}}
+        @keyframes aiFabSpin{to{transform:rotate(360deg)}}
+        @keyframes aiFabNod{0%,86%,100%{transform:rotate(0)}90%{transform:rotate(-10deg)}94%{transform:rotate(8deg)}}
+        @keyframes aiFabBlink{0%,100%{box-shadow:0 0 0 0 rgba(53,208,127,.6)}50%{box-shadow:0 0 0 5px rgba(53,208,127,0)}}
+        @media(prefers-reduced-motion:reduce){.chatbotLauncher,.aiFabOrb::before,.aiFabFace img,.aiFabRing,.aiFabDot{animation:none}.aiFabRing{display:none}}
         .sidebar{transition:width .22s ease}.shell main{transition:margin-left .22s ease}.topBar{transition:left .22s ease}
         .sidebarToggleRow{display:flex;justify-content:center;padding:2px 0 16px;flex-shrink:0}
         .sidebarToggle{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.28);padding:0;display:grid;place-items:center;cursor:pointer;box-shadow:0 3px 8px rgba(19,49,64,.18);transition:background .18s ease;flex-shrink:0}.sidebarToggle:hover{background:rgba(255,255,255,.26)}.sidebarBrand .sidebarToggle{margin-left:auto}
@@ -597,7 +628,7 @@ export default function AppShell({ profile, title, children }) {
           .shell.collapsed .topBar{left:88px}
         }
         @media(max-width:800px){
-          .sidebarToggle,.sidebarToggleRow{display:none}.sidebar{transform:translateX(-105%);transition:transform .25s ease}.sidebar.open{transform:translateX(0)}.sidebarClose{display:grid}.sidebarOverlay{display:block;position:fixed;inset:0;background:rgba(16,41,54,.45);opacity:0;visibility:hidden;transition:.2s;z-index:90}.sidebarOverlay.visible{opacity:1;visibility:visible}.shell main{margin-left:0}.menu{display:grid}.topBar{left:0;height:86px;padding:0 14px;gap:10px}.pageHeading{min-width:0;flex:1}.topBar h1{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.topBar p{font-size:11px;margin-top:4px}.headerActions{gap:8px}.headerActions>.nb .bell{width:46px;height:46px;border-radius:15px!important}.profileLink{padding:8px 9px;border-radius:13px}.userText{display:none}.content{padding:108px 16px 16px}.chatbotLauncher{width:62px;height:62px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom, 0px))}}
+          .sidebarToggle,.sidebarToggleRow{display:none}.sidebar{transform:translateX(-105%);transition:transform .25s ease}.sidebar.open{transform:translateX(0)}.sidebarClose{display:grid}.sidebarOverlay{display:block;position:fixed;inset:0;background:rgba(16,41,54,.45);opacity:0;visibility:hidden;transition:.2s;z-index:90}.sidebarOverlay.visible{opacity:1;visibility:visible}.shell main{margin-left:0}.menu{display:grid}.topBar{left:0;height:86px;padding:0 14px;gap:10px}.pageHeading{min-width:0;flex:1}.topBar h1{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.topBar p{font-size:11px;margin-top:4px}.headerActions{gap:8px}.headerActions>.nb .bell{width:46px;height:46px;border-radius:15px!important}.profileLink{padding:8px 9px;border-radius:13px}.userText{display:none}.content{padding:108px 16px 16px}.chatbotLauncher{right:16px;bottom:calc(16px + env(safe-area-inset-bottom, 0px))}.aiFabOrb{width:60px;height:60px}.aiFabFace{width:46px;height:46px}.aiFabFace img{width:35px;height:35px}}
 
         /* Staff-only "professional blue" chrome. Sidebar/top bar only --
            content areas (cards, tables, inputs) are untouched, still the
@@ -623,7 +654,7 @@ export default function AppShell({ profile, title, children }) {
         .shell.theme-professional-blue .profileLink{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.1);color:#fff}
         .shell.theme-professional-blue .profileLink:hover{background:rgba(255,255,255,.2)}
         .shell.theme-professional-blue .userRole{color:rgba(255,255,255,.82)}
-        .shell.theme-professional-blue .chatbotLauncher{border-color:#fff;box-shadow:0 8px 24px rgba(18,58,94,.35)}
+        .shell.theme-professional-blue .aiFabOrb{box-shadow:0 12px 28px rgba(18,58,94,.4),inset 0 -6px 14px rgba(0,0,0,.12)}
       `}</style>
     </div>
   );

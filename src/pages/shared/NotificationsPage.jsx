@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BellRing,
+  CalendarClock,
   CalendarDays,
   Check,
   CheckCheck,
@@ -53,6 +54,7 @@ function iconForNotificationType(notificationType) {
 
   if (type.includes("queue")) return Clock3;
   if (type.includes("appointment")) return CalendarDays;
+  if (type.includes("leave") || type.includes("schedule")) return CalendarClock;
   if (type.includes("stock") || type.includes("inventory")) return PackageX;
   if (type.includes("broadcast") || type.includes("announcement")) return Megaphone;
   if (type.includes("message")) return MessageSquare;

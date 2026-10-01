@@ -56,6 +56,7 @@ import {
 } from "../constants/petOptions";
 import AnimalPatientAIHealth from "./AnimalPatientAIHealth";
 import ConsultationHealthInsight from "./ConsultationHealthInsight";
+import { withDrTitle } from "../utils/vetName";
 import { getMedicalRecordTemplate } from "../constants/medicalRecordTemplates";
 import PrintPreviewModal from "./PrintPreviewModal";
 import usePrintPreview from "../hooks/usePrintPreview";
@@ -238,6 +239,10 @@ export default function PetManagementModule({
   // stays a staff/admin/pet-owner action, so the button is hidden here even
   // though a vet otherwise has full canManageAll access to this module.
   const canRegisterPet = ownerOnly || (canManageAll && profile.role !== "veterinarian");
+
+  // Pet owners and vets open the prescription slip on screen ("View"), the
+  // same wording on both sides; staff/admin keep "Download".
+  const viewOnlyPrescriptions = ownerOnly || profile.role === "veterinarian";
 
   // Staff/Vet/Admin see it inside their patient-management view; a pet
   // owner sees the same section for their own pets (getMedicalRecords
@@ -2392,7 +2397,7 @@ export default function PetManagementModule({
                             </span>
 
                             <span className="consultation-meta">
-                              {vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "Veterinarian not recorded"}
+                              {withDrTitle(vetsById[record.veterinarian_id]?.full_name, "Veterinarian not recorded")}
                               {record.weight ? ` · ${record.weight}kg` : ""}
                               {record.temperature ? ` · ${record.temperature}°C` : ""}
                               {" · "}{appointment?.status ? `${appointment.status} · ` : ""}{record.record_status || "Draft"}
@@ -2414,8 +2419,8 @@ export default function PetManagementModule({
                             <div className="consultation-details">
                               {record.original_veterinarian_id && record.original_veterinarian_id !== record.veterinarian_id && (
                                 <p className="consultation-reassignment-note">
-                                  Originally assigned to {vetsById[record.original_veterinarian_id]?.full_name ? `Dr. ${vetsById[record.original_veterinarian_id].full_name}` : "another veterinarian"} — this
-                                  visit was covered by {vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "a substitute veterinarian"} as an emergency substitute.
+                                  Originally assigned to {withDrTitle(vetsById[record.original_veterinarian_id]?.full_name, "another veterinarian")} — this
+                                  visit was covered by {withDrTitle(vetsById[record.veterinarian_id]?.full_name, "a substitute veterinarian")} as an emergency substitute.
                                 </p>
                               )}
 
@@ -2643,7 +2648,7 @@ export default function PetManagementModule({
                                           className="pet-download-btn"
                                           onClick={() => {
                                             const meta = {
-                                              veterinarianName: vetsById[record.veterinarian_id]?.full_name ? `Dr. ${vetsById[record.veterinarian_id].full_name}` : "",
+                                              veterinarianName: withDrTitle(vetsById[record.veterinarian_id]?.full_name, ""),
                                               veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
                                               veterinarianLicense: vetsById[record.veterinarian_id]?.license_number || "",
                                               ownerName: selectedPet.owner?.full_name,
@@ -2654,7 +2659,7 @@ export default function PetManagementModule({
                                               petAge: formatPetAge(selectedPet.date_of_birth),
                                               date: formatVisitDateTime({ date: entry.visitDate, hasTime: entry.visitHasTime }),
                                             };
-                                            if (ownerOnly) {
+                                            if (viewOnlyPrescriptions) {
                                               printPreview.showPdf(viewPrescriptionPadPdf(billingByRecordId[record.id].prescriptions, meta), "Prescription");
                                             } else {
                                               const { url, download } = downloadPrescriptionPadPdf(billingByRecordId[record.id].prescriptions, meta);
@@ -2662,7 +2667,7 @@ export default function PetManagementModule({
                                             }
                                           }}
                                         >
-                                          {ownerOnly ? <><Eye size={13} /> View</> : <><Download size={13} /> Download</>}
+                                          {viewOnlyPrescriptions ? <><Eye size={13} /> View</> : <><Download size={13} /> Download</>}
                                         </button>
                                       )}
                                       <button type="button" className="pet-billing-refresh" onClick={() => refreshBillingForRecord(record)} disabled={billingByRecordId[record.id]?.loading}>

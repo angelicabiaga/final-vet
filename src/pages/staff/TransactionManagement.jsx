@@ -36,6 +36,7 @@ import { getActiveVeterinarians } from "../../services/medicalRecordService";
 import { downloadPrescriptionNoticePdf } from "../../utils/invoicePdf";
 import { formatDateTime12h } from "../../utils/timeFormat";
 import { focusFirstInvalidField, invalidClass } from "../../utils/formValidation";
+import { withDrTitle } from "../../utils/vetName";
 import {
   getConsultationForBilling,
   getOutstandingPrescriptions,
@@ -340,7 +341,7 @@ function OutstandingPrescriptions({ profile, embedded }) {
                     <ShoppingCart size={14} />
                   </button>
                   <button type="button" className="table-action action-details" title="Download" aria-label="Download" onClick={() => {
-                    const { url, download } = downloadPrescriptionNoticePdf(row, { petName: row.pet?.pet_name, ownerName: row.owner?.full_name, veterinarianName: vetsById[row.veterinarian_id]?.full_name ? `Dr. ${vetsById[row.veterinarian_id].full_name}` : "", veterinarianPhone: vetsById[row.veterinarian_id]?.phone || "", veterinarianLicense: vetsById[row.veterinarian_id]?.license_number || "" });
+                    const { url, download } = downloadPrescriptionNoticePdf(row, { petName: row.pet?.pet_name, ownerName: row.owner?.full_name, veterinarianName: withDrTitle(vetsById[row.veterinarian_id]?.full_name, ""), veterinarianPhone: vetsById[row.veterinarian_id]?.phone || "", veterinarianLicense: vetsById[row.veterinarian_id]?.license_number || "" });
                     printPreview.showPdf(url, "Prescription Notice", { onDownload: download, showPrint: false });
                   }}>
                     <Download size={14} />
@@ -798,7 +799,7 @@ function PaymentTransactionHistory({ profile }) {
                     <button type="button" className="elsewhere-btn" disabled={otherRxBusyId === rx.id} onClick={() => handleOtherElsewhere(rx.id)}>Purchasing Elsewhere</button>
                   </>}
                   <button type="button" className="table-action action-details" onClick={() => {
-                    const { url, download } = downloadPrescriptionNoticePdf(rx, { petName: details.pet?.pet_name, ownerName: details.owner?.full_name, veterinarianName: vetsById[rx.veterinarian_id]?.full_name ? `Dr. ${vetsById[rx.veterinarian_id].full_name}` : "", veterinarianPhone: vetsById[rx.veterinarian_id]?.phone || "", veterinarianLicense: vetsById[rx.veterinarian_id]?.license_number || "" });
+                    const { url, download } = downloadPrescriptionNoticePdf(rx, { petName: details.pet?.pet_name, ownerName: details.owner?.full_name, veterinarianName: withDrTitle(vetsById[rx.veterinarian_id]?.full_name, ""), veterinarianPhone: vetsById[rx.veterinarian_id]?.phone || "", veterinarianLicense: vetsById[rx.veterinarian_id]?.license_number || "" });
                     printPreview.showPdf(url, "Prescription Notice", { onDownload: download, showPrint: false });
                   }}><Download size={15} /> Download</button>
                 </div>

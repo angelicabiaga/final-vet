@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import { formatDateTime12h, formatDateLong } from "./timeFormat";
+import { withDrTitle } from "./vetName";
 import pawLogo from "../assets/reference/paw.png";
 
 function money(value) {
@@ -204,7 +205,7 @@ export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
   };
   infoRow("Pet owner", meta.ownerName || "—");
   infoRow("Pet", meta.petName || "—");
-  infoRow("Prescribing Veterinarian", meta.veterinarianName || "—");
+  infoRow("Prescribing Veterinarian", withDrTitle(meta.veterinarianName, "—"));
   infoRow("Veterinarian Contact Number", meta.veterinarianPhone || "N/A");
   infoRow("Veterinary License Number", meta.veterinarianLicense || "N/A");
 
@@ -307,7 +308,7 @@ function buildPrescriptionPadPdf(prescriptions, meta = {}) {
     y += 10 + extraLines * 5;
   };
 
-  fieldRow("Prescribing Veterinarian", meta.veterinarianName || "—", vetLabelWidth);
+  fieldRow("Prescribing Veterinarian", withDrTitle(meta.veterinarianName, "—"), vetLabelWidth);
   fieldRow("Veterinarian Contact Number", meta.veterinarianPhone || "N/A", vetLabelWidth);
   fieldRow("Veterinary License Number", meta.veterinarianLicense || "N/A", vetLabelWidth);
   fieldRow("Client / Pet Owner", meta.ownerName || "—");
@@ -361,7 +362,7 @@ function buildPrescriptionPadPdf(prescriptions, meta = {}) {
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10.5);
   pdf.setTextColor(30, 49, 58);
-  pdf.text(meta.veterinarianName || "Attending Veterinarian", sigX, y);
+  pdf.text(withDrTitle(meta.veterinarianName, "Attending Veterinarian"), sigX, y);
   y += 4.5;
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8.5);
@@ -694,7 +695,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   sectionTitle("Attending Veterinarian");
   fieldGrid(
     [
-      ["Attending Veterinarian", meta.veterinarianName ? `Dr. ${meta.veterinarianName}` : ""],
+      ["Attending Veterinarian", withDrTitle(meta.veterinarianName)],
       ["Veterinarian Contact Number", meta.veterinarianPhone],
     ],
     2
@@ -919,7 +920,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10.5);
   pdf.setTextColor(...TEXT_DARK);
-  pdf.text(meta.veterinarianName ? `Dr. ${meta.veterinarianName}` : "N/A", sigX, y);
+  pdf.text(withDrTitle(meta.veterinarianName, "N/A"), sigX, y);
   y += 4.5;
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8.5);

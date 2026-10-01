@@ -1,17 +1,29 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
+  AtSign,
+  Award,
   BadgeCheck,
+  BookOpen,
+  Briefcase,
   Camera,
+  Clock3,
   Eye,
   EyeOff,
   GraduationCap,
+  Heart,
+  IdCard,
+  KeyRound,
+  Lock,
   LockKeyhole,
   Mail,
   MapPin,
+  PencilLine,
   Phone,
   Save,
   Stethoscope,
   UserCircle,
+  UserRound,
+  X,
 } from "lucide-react";
 import {
   confirmPasswordChange,
@@ -33,6 +45,7 @@ import {
   sanitizePhoneInput,
 } from "../utils/validators";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
+import { stripDrTitle, withDrTitle } from "../utils/vetName";
 
 function validateVetProfileField(name, value) {
   switch (name) {
@@ -78,16 +91,21 @@ function validateVetPasswordField(name, passwords) {
   }
 }
 
+// "Dr." is a title, not a first name: keep it out of the name fields and put
+// it back on save only when the profile already stored it.
+const titleOf = (fullName) => (stripDrTitle(fullName) !== String(fullName || "").trim() ? "Dr." : "");
+
 function splitFullName(fullName) {
-  const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+  const parts = stripDrTitle(fullName).split(/\s+/).filter(Boolean);
   if (parts.length === 0) return { firstName: "", middleName: "", lastName: "" };
   if (parts.length === 1) return { firstName: parts[0], middleName: "", lastName: "" };
   if (parts.length === 2) return { firstName: parts[0], middleName: "", lastName: parts[1] };
   return { firstName: parts[0], middleName: parts.slice(1, -1).join(" "), lastName: parts[parts.length - 1] };
 }
 
-function joinFullName({ firstName, middleName, lastName }) {
-  return [firstName, middleName, lastName].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+function joinFullName({ firstName, middleName, lastName }, title = "") {
+  const name = [firstName, middleName, lastName].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+  return name && title ? `${title} ${name}` : name;
 }
 
 const EMPTY_FORM = {
@@ -95,6 +113,25 @@ const EMPTY_FORM = {
   specialization: "", education: "", years_experience: "", certifications_training: "",
   previous_practice: "", professional_interests: "", biography: "",
 };
+
+// The edit form's values from the saved profile.
+function formFromProfile(row) {
+  return {
+    ...splitFullName(row?.full_name),
+    username: row?.username || "",
+    email: row?.email || "",
+    phone: row?.phone || "",
+    address: row?.address || "",
+    avatar_url: row?.avatar_url || "",
+    specialization: row?.specialization || "",
+    education: row?.education || "",
+    years_experience: row?.years_experience ?? "",
+    certifications_training: row?.certifications_training || "",
+    previous_practice: row?.previous_practice || "",
+    professional_interests: row?.professional_interests || "",
+    biography: row?.biography || "",
+  };
+}
 
 // Full Veterinarian profile: read-only for Admin/Staff viewing someone
 // else's record, self-editable for the veterinarian viewing their own.
@@ -123,8 +160,9 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
   const registerPasswordFieldRef = (name) => (el) => { passwordFieldRefs[name] = el; };
   const [show, setShow] = useState({ current: false, next: false, confirm: false });
   const [otpModal, setOtpModal] = useState({ open: false, email: "", purpose: "", title: "" });
-  const passwordSectionRef = useRef(null);
   const forcePasswordChange = isSelf && !!viewerProfile?.must_change_password;
+  // "view" | "edit" | "password" (edit and password are only for the vet themselves).
+  const [mode, setMode] = useState(forcePasswordChange ? "password" : "view");
 
   const [verificationStatus, setVerificationStatus] = useState("Unverified");
 
@@ -137,21 +175,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
         const profileRow = await getProfile(vetId);
         if (!active) return;
         setData({ profile: profileRow });
-        setForm({
-          ...splitFullName(profileRow.full_name),
-          username: profileRow.username || "",
-          email: profileRow.email || "",
-          phone: profileRow.phone || "",
-          address: profileRow.address || "",
-          avatar_url: profileRow.avatar_url || "",
-          specialization: profileRow.specialization || "",
-          education: profileRow.education || "",
-          years_experience: profileRow.years_experience ?? "",
-          certifications_training: profileRow.certifications_training || "",
-          previous_practice: profileRow.previous_practice || "",
-          professional_interests: profileRow.professional_interests || "",
-          biography: profileRow.biography || "",
-        });
+        setForm(formFromProfile(profileRow));
         try {
           const verification = await getVerificationRecord(vetId);
           if (active) setVerificationStatus(verification.status || "Unverified");
@@ -168,9 +192,15 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     return () => { active = false; };
   }, [vetId]);
 
-  useEffect(() => {
-    if (forcePasswordChange) passwordSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [forcePasswordChange]);
+  function openMode(next) {
+    setMessage({ type: "", text: "" });
+    setFieldErrors({});
+    setPasswordFieldErrors({});
+    setForm(formFromProfile(data?.profile));
+    setPasswords({ current: "", next: "", confirm: "" });
+    setShow({ current: false, next: false, confirm: false });
+    setMode(next);
+  }
 
   useEffect(() => () => { if (avatarDraft?.previewUrl) URL.revokeObjectURL(avatarDraft.previewUrl); }, [avatarDraft]);
 
@@ -185,7 +215,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     event.preventDefault();
     setMessage({ type: "", text: "" });
     const errors = {};
-    ["firstName", "lastName", "username", "email", "phone", "address", "specialization"].forEach((name) => {
+    ["firstName", "lastName", "phone", "address", "specialization"].forEach((name) => {
       const errorMessage = validateVetProfileField(name, form[name]);
       if (errorMessage) errors[name] = errorMessage;
     });
@@ -197,9 +227,11 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     }
     setSaving(true);
     try {
-      const updated = await updateVeterinarianProfile(vetId, { ...form, full_name: joinFullName(form) }, viewerProfile);
-      setData((current) => ({ ...current, profile: updated }));
-      setForm((current) => ({ ...current, ...splitFullName(updated.full_name), avatar_url: updated.avatar_url || "" }));
+      // Username and email can't be changed here; always send the saved ones.
+      const saved = data?.profile || {};
+      const updated = await updateVeterinarianProfile(vetId, { ...form, username: saved.username ?? form.username, email: saved.email ?? form.email, full_name: joinFullName(form, titleOf(saved.full_name)) }, viewerProfile);
+      setData((current) => ({ ...current, profile: { ...current.profile, ...updated } }));
+      setMode("view");
       setMessage({ type: "success", text: "Profile updated successfully." });
     } catch (error) {
       setMessage({ type: "error", text: error.message });
@@ -235,8 +267,9 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     setUploading(true);
     try {
       const avatar_url = await uploadProfileAvatar(vetId, avatarDraft.file);
-      const updated = await updateVeterinarianProfile(vetId, { ...form, full_name: joinFullName(form), avatar_url }, viewerProfile);
-      setData((current) => ({ ...current, profile: updated }));
+      const saved = formFromProfile(data?.profile);
+      const updated = await updateVeterinarianProfile(vetId, { ...saved, full_name: joinFullName(saved, titleOf(data?.profile?.full_name)), avatar_url }, viewerProfile);
+      setData((current) => ({ ...current, profile: { ...current.profile, ...updated } }));
       setForm((current) => ({ ...current, avatar_url: updated.avatar_url || "" }));
       cancelAvatarDraft();
       setMessage({ type: "success", text: "Profile photo updated." });
@@ -251,8 +284,9 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     setMessage({ type: "", text: "" });
     setUploading(true);
     try {
-      const updated = await updateVeterinarianProfile(vetId, { ...form, full_name: joinFullName(form), avatar_url: null }, viewerProfile);
-      setData((current) => ({ ...current, profile: updated }));
+      const saved = formFromProfile(data?.profile);
+      const updated = await updateVeterinarianProfile(vetId, { ...saved, full_name: joinFullName(saved, titleOf(data?.profile?.full_name)), avatar_url: null }, viewerProfile);
+      setData((current) => ({ ...current, profile: { ...current.profile, ...updated } }));
       setForm((current) => ({ ...current, avatar_url: updated.avatar_url || "" }));
       setMessage({ type: "success", text: "Profile photo removed." });
     } catch (error) {
@@ -292,6 +326,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     await confirmPasswordChange(code);
     setPasswords({ current: "", next: "", confirm: "" });
     setPasswordFieldErrors({});
+    setMode("view");
     setMessage({ type: "success", text: "Password changed successfully." });
     setOtpModal({ open: false, email: "", purpose: "", title: "" });
   }
@@ -312,7 +347,10 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     });
   }
 
-  const PasswordField = ({ name, label }) => (
+  // Called as a function, not rendered as <PasswordField/>: a component
+  // declared inside this one would be recreated on every keystroke,
+  // remounting the input and losing focus after each letter.
+  const renderPasswordField = (name, label) => (
     <label><span>{label}<span className="required-mark"> *</span></span><div className={`vpd-passwordBox${passwordFieldErrors[name] ? " field-invalid" : ""}`}>
       <input ref={registerPasswordFieldRef(name)} type={show[name] ? "text" : "password"} value={passwords[name]} onChange={(e) => passwordField(name, e.target.value)} required />
       <button type="button" onClick={() => setShow((s) => ({ ...s, [name]: !s[name] }))}>{show[name] ? <EyeOff size={18} /> : <Eye size={18} />}</button>
@@ -326,130 +364,145 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
   if (!data) return null;
 
   const { profile: vet } = data;
-  const photoUrl = avatarDraft?.previewUrl || form.avatar_url;
+  const photoUrl = avatarDraft?.previewUrl || vet.avatar_url || "";
+  const contact = [
+    { icon: UserRound, label: "Full name", value: vet.full_name },
+    { icon: AtSign, label: "Username", value: vet.username ? `@${vet.username}` : "" },
+    { icon: Mail, label: "Email", value: vet.email },
+    { icon: Phone, label: "Contact number", value: vet.phone },
+    { icon: MapPin, label: "Address", value: vet.address },
+    { icon: Stethoscope, label: "Specialization", value: vet.specialization },
+  ];
+  const background = [
+    { icon: GraduationCap, label: "Education", value: vet.education },
+    { icon: Clock3, label: "Years of experience", value: vet.years_experience !== null && vet.years_experience !== undefined && vet.years_experience !== "" ? `${vet.years_experience} year${Number(vet.years_experience) === 1 ? "" : "s"}` : "" },
+    { icon: Award, label: "Certifications and training", value: vet.certifications_training },
+    { icon: Briefcase, label: "Previous practice", value: vet.previous_practice },
+    { icon: Heart, label: "Professional interests", value: vet.professional_interests },
+    { icon: BookOpen, label: "Short biography", value: vet.biography },
+  ];
+  const detailRows = rows => rows.map(({ icon: Icon, label, value }) => (
+    <div key={label} className="vpd-row">
+      <dt><Icon size={17} /> {label}</dt>
+      <dd className={value ? "" : "vpd-empty"}>{value || "Not set"}</dd>
+    </div>
+  ));
 
   return (
     <div className="vpd">
       {message.text && <div className={`vpd-notice ${message.type}`}>{message.text}</div>}
-      {forcePasswordChange && <div className="vpd-notice warn">You're using a temporary password. Please set a new password below to continue.</div>}
-
-      <section className="vpd-hero">
-        <div className="vpd-avatar">
-          <div className="vpd-avatarImg">
-            {photoUrl ? <img src={photoUrl} alt="Profile" /> : <UserCircle size={56} />}
-          </div>
-          {isSelf && (
-            <label className="vpd-camera" title={form.avatar_url ? "Change photo" : "Upload photo"}>
-              <Camera size={14} />
-              <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickAvatar} />
-            </label>
-          )}
-        </div>
-        <div className="vpd-hero-info">
-          <h2>{vet.full_name}</h2>
-          <div className="vpd-hero-tags">
-            <p className="vpd-role-tag">Veterinarian</p>
-            <VerificationStatusBadge status={verificationStatus} />
-          </div>
-          {isSelf && <p className="vpd-hint">JPG, JPEG, PNG, or WEBP. Max 25 MB.</p>}
-          {isSelf && avatarDraft && (
-            <div className="vpd-avatar-actions">
-              <button type="button" onClick={saveAvatarDraft} disabled={uploading}>{uploading ? "Saving..." : "Save Photo"}</button>
-              <button type="button" className="ghost" onClick={cancelAvatarDraft} disabled={uploading}>Cancel</button>
-            </div>
-          )}
-          {isSelf && !avatarDraft && form.avatar_url && (
-            <div className="vpd-avatar-actions">
-              <button type="button" className="ghost danger" onClick={removePhoto} disabled={uploading}>{uploading ? "Removing..." : "Remove Photo"}</button>
-            </div>
-          )}
-        </div>
-      </section>
+      {forcePasswordChange && <div className="vpd-notice warn">You're using a temporary password. Please set a new password to continue.</div>}
 
       <section className="vpd-card">
-        <h3><Stethoscope size={18} /> Professional Information</h3>
-
-        <div className="vpd-field-row">
-          <span className="vpd-label">Veterinary License Number</span>
-          <div className="vpd-license-row">
-            <input value={vet.license_number || "Not on file"} readOnly disabled />
-            {vet.license_number && <span className="vpd-fixed-badge"><BadgeCheck size={12} /> Verified</span>}
+        <div className="vpd-banner" aria-hidden="true" />
+        <div className="vpd-identity">
+          <div className="vpd-avatar">
+            <div className="vpd-avatarImg">{photoUrl ? <img src={photoUrl} alt="Profile" /> : <UserCircle size={64} />}</div>
+            {isSelf && (
+              <label className="vpd-camera" title={vet.avatar_url ? "Change photo" : "Upload photo"}>
+                <Camera size={15} />
+                <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickAvatar} />
+              </label>
+            )}
           </div>
-          <p className="vpd-license-locked-note">
-            {vet.license_number
-              ? "Confirmed by an administrator from your submitted PRC license number. It can't be edited here directly — see Verification Status below to resubmit."
-              : "Not on file until you submit your PRC license number below and an administrator approves it."}
-          </p>
+          <h2>{withDrTitle(vet.full_name, "Veterinarian")}</h2>
+          {vet.username && <p className="vpd-handle">@{vet.username}</p>}
+          <div className="vpd-tags">
+            <span className="vpd-role">Veterinarian</span>
+            <VerificationStatusBadge status={verificationStatus} />
+          </div>
+          {vet.specialization && <p className="vpd-spec"><Stethoscope size={15} /> {vet.specialization}</p>}
+          {isSelf && avatarDraft && (
+            <div className="vpd-photo-actions">
+              <button type="button" className="vpd-btn vpd-primary vpd-small" onClick={saveAvatarDraft} disabled={uploading}>{uploading ? "Saving…" : "Save photo"}</button>
+              <button type="button" className="vpd-btn vpd-ghost vpd-small" onClick={cancelAvatarDraft} disabled={uploading}>Cancel</button>
+            </div>
+          )}
+          {isSelf && !avatarDraft && vet.avatar_url && mode === "view" && (
+            <button type="button" className="vpd-link-danger" onClick={removePhoto} disabled={uploading}>{uploading ? "Removing…" : "Remove photo"}</button>
+          )}
+          {isSelf && mode === "view" && (
+            <div className="vpd-actions">
+              <button type="button" className="vpd-btn vpd-primary" onClick={() => openMode("edit")}><PencilLine size={17} /> Edit profile</button>
+              <button type="button" className="vpd-btn vpd-ghost" onClick={() => openMode("password")}><KeyRound size={17} /> Change password</button>
+            </div>
+          )}
         </div>
 
-        {isSelf ? (
-          <form onSubmit={saveDetails} className="vpd-form" noValidate>
-            <div className="vpd-pair">
-              <label><span>First name<span className="required-mark"> *</span></span><input ref={registerFieldRef("firstName")} className={invalidClass(fieldErrors, "firstName")} value={form.firstName} onChange={(e) => field("firstName", e.target.value)} required />{fieldErrors.firstName && <span className="field-error-text">{fieldErrors.firstName}</span>}</label>
-              <label><span>Last name<span className="required-mark"> *</span></span><input ref={registerFieldRef("lastName")} className={invalidClass(fieldErrors, "lastName")} value={form.lastName} onChange={(e) => field("lastName", e.target.value)} required />{fieldErrors.lastName && <span className="field-error-text">{fieldErrors.lastName}</span>}</label>
-            </div>
-            <label><span>Middle name<span className="optional-mark"> (Optional)</span></span><input value={form.middleName} onChange={(e) => field("middleName", e.target.value)} /></label>
-            <div className="vpd-pair">
-              <label><span>Username<span className="required-mark"> *</span></span><input ref={registerFieldRef("username")} className={invalidClass(fieldErrors, "username")} value={form.username} onChange={(e) => field("username", e.target.value)} required />{fieldErrors.username && <span className="field-error-text">{fieldErrors.username}</span>}</label>
-              <label><span>Email<span className="required-mark"> *</span></span><input ref={registerFieldRef("email")} className={invalidClass(fieldErrors, "email")} type="email" value={form.email} onChange={(e) => field("email", e.target.value)} required />{fieldErrors.email && <span className="field-error-text">{fieldErrors.email}</span>}</label>
-            </div>
-            <div className="vpd-pair">
-              <label><span>Contact number<span className="required-mark"> *</span></span>
-                <input ref={registerFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={(e) => field("phone", sanitizePhoneInput(e.target.value))} placeholder="09XXXXXXXXX" required />
-                {fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}
+        <div className="vpd-body">
+          {mode === "view" || !isSelf ? (
+            <>
+              <dl className="vpd-details">
+                {detailRows(contact)}
+                <div className="vpd-row">
+                  <dt><IdCard size={17} /> License number</dt>
+                  <dd className={vet.license_number ? "" : "vpd-empty"}>
+                    {vet.license_number || "Not on file"}
+                    {vet.license_number && <span className="vpd-fixed-badge"><BadgeCheck size={12} /> Verified</span>}
+                  </dd>
+                </div>
+              </dl>
+              <h4 className="vpd-subheading"><GraduationCap size={16} /> Background in Veterinary Medicine</h4>
+              <dl className="vpd-details">{detailRows(background)}</dl>
+            </>
+          ) : mode === "edit" ? (
+            <form onSubmit={saveDetails} className="vpd-form" noValidate>
+              <h3><PencilLine size={19} /> Edit profile</h3>
+              <div className="vpd-pair">
+                <label><span>First name<span className="required-mark"> *</span></span><input ref={registerFieldRef("firstName")} className={invalidClass(fieldErrors, "firstName")} value={form.firstName} onChange={(e) => field("firstName", e.target.value)} required />{fieldErrors.firstName && <span className="field-error-text">{fieldErrors.firstName}</span>}</label>
+                <label><span>Last name<span className="required-mark"> *</span></span><input ref={registerFieldRef("lastName")} className={invalidClass(fieldErrors, "lastName")} value={form.lastName} onChange={(e) => field("lastName", e.target.value)} required />{fieldErrors.lastName && <span className="field-error-text">{fieldErrors.lastName}</span>}</label>
+              </div>
+              <label><span>Middle name<span className="optional-mark"> (Optional)</span></span><input value={form.middleName} onChange={(e) => field("middleName", e.target.value)} /></label>
+              <div className="vpd-pair">
+                <label><span>Username</span><div className="vpd-locked" title="Username can't be changed"><AtSign size={16} /><span>{form.username || "—"}</span><Lock size={15} /></div></label>
+                <label><span>Email</span><div className="vpd-locked" title="Email can't be changed"><Mail size={16} /><span>{form.email || "—"}</span><Lock size={15} /></div></label>
+              </div>
+              <div className="vpd-pair">
+                <label><span>Contact number<span className="required-mark"> *</span></span>
+                  <input ref={registerFieldRef("phone")} className={invalidClass(fieldErrors, "phone")} type="tel" inputMode="numeric" maxLength={11} value={form.phone} onChange={(e) => field("phone", sanitizePhoneInput(e.target.value))} placeholder="09XXXXXXXXX" required />
+                  {fieldErrors.phone && <span className="field-error-text">{fieldErrors.phone}</span>}
+                </label>
+                <label><span>Specialization<span className="required-mark"> *</span></span>
+                  <input ref={registerFieldRef("specialization")} className={invalidClass(fieldErrors, "specialization")} value={form.specialization} onChange={(e) => field("specialization", e.target.value)} placeholder="e.g. Small Animal Medicine" required />
+                  {fieldErrors.specialization && <span className="field-error-text">{fieldErrors.specialization}</span>}
+                </label>
+              </div>
+              <label><span>Address<span className="required-mark"> *</span></span>
+                <textarea ref={registerFieldRef("address")} className={invalidClass(fieldErrors, "address")} value={form.address} onChange={(e) => field("address", e.target.value)} required />
+                {fieldErrors.address && <span className="field-error-text">{fieldErrors.address}</span>}
               </label>
-              <label><span>Specialization<span className="required-mark"> *</span></span>
-                <input ref={registerFieldRef("specialization")} className={invalidClass(fieldErrors, "specialization")} value={form.specialization} onChange={(e) => field("specialization", e.target.value)} placeholder="e.g. Small Animal Medicine" required />
-                {fieldErrors.specialization && <span className="field-error-text">{fieldErrors.specialization}</span>}
-              </label>
-            </div>
-            <label><span>Address<span className="required-mark"> *</span></span>
-              <textarea ref={registerFieldRef("address")} className={invalidClass(fieldErrors, "address")} value={form.address} onChange={(e) => field("address", e.target.value)} required />
-              {fieldErrors.address && <span className="field-error-text">{fieldErrors.address}</span>}
-            </label>
 
-            <h4 className="vpd-subheading"><GraduationCap size={16} /> Background in Veterinary Medicine</h4>
-            <label><span>Education<span className="optional-mark"> (Optional)</span></span><textarea value={form.education} onChange={(e) => field("education", e.target.value)} placeholder="Veterinary school, degree, year" /></label>
-            <label><span>Years of Veterinary Experience<span className="optional-mark"> (Optional)</span></span><input type="number" min="0" value={form.years_experience} onChange={(e) => field("years_experience", e.target.value)} /></label>
-            <label><span>Certifications and Professional Training<span className="optional-mark"> (Optional)</span></span><textarea value={form.certifications_training} onChange={(e) => field("certifications_training", e.target.value)} /></label>
-            <label><span>Previous Veterinary Practice<span className="optional-mark"> (Optional)</span></span><textarea value={form.previous_practice} onChange={(e) => field("previous_practice", e.target.value)} /></label>
-            <label><span>Professional Interests<span className="optional-mark"> (Optional)</span></span><textarea value={form.professional_interests} onChange={(e) => field("professional_interests", e.target.value)} /></label>
-            <label><span>Short Biography<span className="optional-mark"> (Optional)</span></span><textarea value={form.biography} onChange={(e) => field("biography", e.target.value)} /></label>
-
-            <button className="vpd-save-btn" disabled={saving}><Save size={17} />{saving ? "Saving..." : "Save Profile"}</button>
-          </form>
-        ) : (
-          <div className="vpd-readonly">
-            <div className="vpd-field-row"><span className="vpd-label"><Mail size={13} /> Email</span><p>{vet.email || "Not recorded"}</p></div>
-            <div className="vpd-field-row"><span className="vpd-label"><Phone size={13} /> Contact Number</span><p>{vet.phone || "Not recorded"}</p></div>
-            <div className="vpd-field-row"><span className="vpd-label"><MapPin size={13} /> Address</span><p>{vet.address || "Not recorded"}</p></div>
-            <div className="vpd-field-row"><span className="vpd-label">Specialization</span><p>{vet.specialization || "Not recorded"}</p></div>
-
-            <h4 className="vpd-subheading"><GraduationCap size={16} /> Background in Veterinary Medicine</h4>
-            <div className="vpd-field-row"><span className="vpd-label">Education</span><p>{vet.education || "Not recorded"}</p></div>
-            <div className="vpd-field-row"><span className="vpd-label">Years of Veterinary Experience</span><p>{vet.years_experience ?? "Not recorded"}</p></div>
-            <div className="vpd-field-row"><span className="vpd-label">Certifications and Professional Training</span><p>{vet.certifications_training || "Not recorded"}</p></div>
-            <div className="vpd-field-row"><span className="vpd-label">Previous Veterinary Practice</span><p>{vet.previous_practice || "Not recorded"}</p></div>
-            <div className="vpd-field-row"><span className="vpd-label">Professional Interests</span><p>{vet.professional_interests || "Not recorded"}</p></div>
-            <div className="vpd-field-row"><span className="vpd-label">Short Biography</span><p>{vet.biography || "Not recorded"}</p></div>
-          </div>
-        )}
+              <h4 className="vpd-subheading"><GraduationCap size={16} /> Background in Veterinary Medicine</h4>
+              <label><span>Education<span className="optional-mark"> (Optional)</span></span><textarea value={form.education} onChange={(e) => field("education", e.target.value)} placeholder="Veterinary school, degree, year" /></label>
+              <label><span>Years of Veterinary Experience<span className="optional-mark"> (Optional)</span></span><input type="number" min="0" value={form.years_experience} onChange={(e) => field("years_experience", e.target.value)} /></label>
+              <label><span>Certifications and Professional Training<span className="optional-mark"> (Optional)</span></span><textarea value={form.certifications_training} onChange={(e) => field("certifications_training", e.target.value)} /></label>
+              <label><span>Previous Veterinary Practice<span className="optional-mark"> (Optional)</span></span><textarea value={form.previous_practice} onChange={(e) => field("previous_practice", e.target.value)} /></label>
+              <label><span>Professional Interests<span className="optional-mark"> (Optional)</span></span><textarea value={form.professional_interests} onChange={(e) => field("professional_interests", e.target.value)} /></label>
+              <label><span>Short Biography<span className="optional-mark"> (Optional)</span></span><textarea value={form.biography} onChange={(e) => field("biography", e.target.value)} /></label>
+              <p className="vpd-hint">Username, email and license number can't be changed here.</p>
+              <div className="vpd-form-actions">
+                <button type="button" className="vpd-btn vpd-ghost" onClick={() => openMode("view")} disabled={saving}><X size={17} /> Cancel</button>
+                <button className="vpd-btn vpd-primary" disabled={saving}><Save size={17} /> {saving ? "Saving…" : "Save changes"}</button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={savePassword} className={`vpd-form${forcePasswordChange ? " vpd-highlight" : ""}`} noValidate>
+              <h3><LockKeyhole size={19} /> Change password</h3>
+              {renderPasswordField("current", "Current password")}
+              {renderPasswordField("next", "New password")}
+              <PasswordChecklist password={passwords.next} />
+              {renderPasswordField("confirm", "Confirm new password")}
+              <p className="vpd-hint">We'll email you a code to confirm the change.</p>
+              <div className="vpd-form-actions">
+                {!forcePasswordChange && <button type="button" className="vpd-btn vpd-ghost" onClick={() => openMode("view")} disabled={saving}><X size={17} /> Cancel</button>}
+                <button className="vpd-btn vpd-primary" disabled={saving}><LockKeyhole size={17} /> {saving ? "Sending code…" : "Update password"}</button>
+              </div>
+            </form>
+          )}
+        </div>
       </section>
 
       <VeterinarianVerificationPanel vetId={vetId} vetProfile={vet} viewerProfile={viewerProfile} />
-
-      {isSelf && (
-        <section className={`vpd-card${forcePasswordChange ? " highlight" : ""}`} ref={passwordSectionRef}>
-          <h3><LockKeyhole size={20} /> Change Password</h3>
-          <form onSubmit={savePassword} className="vpd-form" noValidate>
-            <PasswordField name="current" label="Current password" />
-            <PasswordField name="next" label="New password" />
-            <PasswordChecklist password={passwords.next} />
-            <PasswordField name="confirm" label="Confirm new password" />
-            <button className="vpd-save-btn" disabled={saving}><LockKeyhole size={17} />{saving ? "Saving..." : "Change Password"}</button>
-          </form>
-        </section>
-      )}
 
       <OtpModal
         open={otpModal.open}
@@ -461,59 +514,71 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
       />
 
       <style>{`
-        .vpd{display:grid;gap:16px}
+        .vpd{max-width:760px;width:100%;margin:0 auto;display:grid;gap:14px}
         .vpd-loading,.vpd-error-block{padding:30px;text-align:center;color:#6f7f88}
         .vpd-error-block{color:#a94444}
-
         .vpd-notice{padding:11px 14px;border-radius:11px;font-size:13px}
         .vpd-notice.error{background:#fff0f0;color:#a94444}
         .vpd-notice.success{background:#eaf8ef;color:#28794c}
         .vpd-notice.warn{background:#fff5d9;color:#9a7015;font-weight:700}
 
-        .vpd-hero{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-        .vpd-avatar{position:relative;width:88px;height:88px;flex-shrink:0}
-        .vpd-avatarImg{width:100%;height:100%;border-radius:50%;overflow:hidden;background:#e6f6fc;color:#4DA8DA;display:grid;place-items:center}
+        .vpd-card{background:#fff;border-radius:22px;box-shadow:0 12px 32px rgba(47,117,150,.1);overflow:hidden}
+        .vpd-banner{height:120px;background:linear-gradient(120deg,#1e5a8c 0%,#2c6ba3 35%,#4DA8DA 75%,#78c4ca 100%);position:relative}
+        .vpd-banner::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 18% 30%,rgba(255,255,255,.18) 0 60px,transparent 61px),radial-gradient(circle at 85% 70%,rgba(255,255,255,.12) 0 90px,transparent 91px)}
+        .vpd-identity{display:grid;justify-items:center;text-align:center;padding:0 24px 22px;margin-top:-58px;position:relative}
+        .vpd-avatar{position:relative;width:116px;height:116px;margin-bottom:12px}
+        .vpd-avatarImg{width:100%;height:100%;border-radius:50%;overflow:hidden;background:#e6f6fc;color:#4DA8DA;display:grid;place-items:center;border:5px solid #fff;box-shadow:0 8px 22px rgba(20,73,94,.2)}
         .vpd-avatarImg img{width:100%;height:100%;object-fit:cover;display:block}
-        .vpd-camera{position:absolute;right:-2px;bottom:-2px;background:#4DA8DA;color:#fff;width:28px;height:28px;border-radius:50%;display:grid!important;place-items:center;cursor:pointer;border:2px solid #fff;box-shadow:0 2px 6px rgba(20,73,94,.18)}
+        .vpd-camera{position:absolute;right:4px;bottom:6px;width:34px;height:34px;border-radius:50%;background:#2c6ba3;color:#fff;display:grid;place-items:center;cursor:pointer;border:3px solid #fff;box-shadow:0 3px 8px rgba(20,73,94,.25);transition:transform .15s ease}
+        .vpd-camera:hover{transform:scale(1.08)}
         .vpd-camera input{display:none}
-        .vpd-hero-info h2{margin:0 0 4px;color:#20313b}
-        .vpd-hero-tags{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px}
-        .vpd-role-tag{margin:0;display:inline-block;background:#e7f6fc;color:#267fa9;padding:5px 10px;border-radius:999px;font-size:11.5px;font-weight:700}
-        .vpd-hint{margin:0;color:#8a9aa2;font-size:11.5px}
-        .vpd-avatar-actions{display:flex;gap:8px;margin-top:8px}
-        .vpd-avatar-actions button{border:0;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;background:#4DA8DA;color:#fff}
-        .vpd-avatar-actions button.ghost{background:#eef4f6;color:#536b78}
-        .vpd-avatar-actions button.ghost.danger{background:#fdeceb;color:#c1454c}
-        .vpd-avatar-actions button:disabled{opacity:.6;cursor:not-allowed}
+        .vpd-identity h2{margin:0;font-size:24px;color:#1d3a4a;overflow-wrap:anywhere}
+        .vpd-handle{margin:4px 0 0;color:#6F7F88;font-weight:600}
+        .vpd-tags{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+        .vpd-role{background:#e7f6fc;color:#267fa9;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800}
+        .vpd-spec{display:flex;align-items:center;gap:6px;margin:10px 0 0;color:#2c6ba3;font-weight:700;font-size:13.5px}
+        .vpd-photo-actions{display:flex;gap:8px;margin-top:12px}
+        .vpd-link-danger{margin-top:10px;border:0;background:none;color:#c1454c;font-weight:700;font-size:12.5px;cursor:pointer;text-decoration:underline}
+        .vpd-link-danger:disabled{opacity:.6;cursor:not-allowed}
+        .vpd-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:18px}
+        .vpd-btn{display:inline-flex;align-items:center;gap:8px;border-radius:12px;padding:11px 18px;font:inherit;font-weight:800;font-size:14px;cursor:pointer;border:1px solid transparent;transition:transform .15s ease,box-shadow .15s ease,background .15s ease}
+        .vpd-btn:disabled{opacity:.6;cursor:not-allowed}
+        .vpd-small{padding:8px 14px;font-size:13px}
+        .vpd-primary{background:#2c6ba3;color:#fff;box-shadow:0 6px 16px rgba(44,107,163,.25)}
+        .vpd-primary:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 10px 20px rgba(44,107,163,.32)}
+        .vpd-ghost{background:#fff;color:#2c6ba3;border-color:#cfe4ed}
+        .vpd-ghost:not(:disabled):hover{background:#f1f9fd}
 
-        .vpd-card{background:#fff;border:1px solid #e6f0f4;border-radius:16px;padding:20px;box-shadow:0 7px 20px rgba(47,117,150,.06)}
-        .vpd-card.highlight{outline:2px solid #f0c869;outline-offset:2px}
-        .vpd-card h3{display:flex;align-items:center;gap:8px;margin:0 0 14px;color:#20313b;font-size:16px}
+        .vpd-body{border-top:1px solid #edf3f6;padding:22px 28px 26px}
+        .vpd-details{margin:0;display:grid;gap:2px}
+        .vpd-row{display:grid;grid-template-columns:200px 1fr;gap:14px;align-items:start;padding:12px 4px;border-bottom:1px solid #f0f5f7}
+        .vpd-row:last-child{border-bottom:0}
+        .vpd-row dt{display:flex;align-items:center;gap:9px;color:#6F7F88;font-size:13px;font-weight:700}
+        .vpd-row dt svg{color:#4DA8DA;flex-shrink:0}
+        .vpd-row dd{margin:0;color:#1d3a4a;font-weight:600;overflow-wrap:anywhere;white-space:pre-line;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+        .vpd-row dd.vpd-empty{color:#a3b3ba;font-weight:500;font-style:italic}
+        .vpd-fixed-badge{display:inline-flex;align-items:center;gap:4px;background:#e5f4ea;color:#2f8f5b;padding:4px 9px;border-radius:999px;font-size:10.5px;font-weight:800;font-style:normal;white-space:nowrap}
         .vpd-subheading{display:flex;align-items:center;gap:7px;margin:18px 0 4px;color:#17445a;font-size:13px;text-transform:uppercase;letter-spacing:.3px}
 
-        .vpd-field-row{display:grid;gap:4px;margin-bottom:13px}
-        .vpd-label{display:flex;align-items:center;gap:6px;color:#6f7f88;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.2px}
-        .vpd-field-row p{margin:0;color:#334e5a;line-height:1.5;overflow-wrap:anywhere;white-space:pre-line}
-        .vpd-readonly{display:grid;gap:2px}
-
-        .vpd-license-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-        .vpd-license-row input{flex:1;min-width:160px;border:1px solid #e1e9ec;border-radius:9px;padding:10px;background:#f4f6f7;color:#536b78;font:inherit}
-        .vpd-fixed-badge{display:inline-flex;align-items:center;gap:4px;background:#e5f4ea;color:#2f8f5b;padding:4px 9px;border-radius:999px;font-size:10.5px;font-weight:800;white-space:nowrap}
-        .vpd-license-locked-note{margin:6px 0 0;color:#8a9aa2;font-size:11.5px}
-
         .vpd-form{display:grid;gap:13px}
+        .vpd-form h3{display:flex;align-items:center;gap:8px;margin:0 0 4px;color:#1d3a4a}
         .vpd-form label{display:grid;gap:6px;font-size:13px;font-weight:700;color:#334e5a}
-        .vpd-form input,.vpd-form textarea{width:100%;border:1px solid #d8e8ef;border-radius:10px;padding:11px;font:inherit;box-sizing:border-box}
+        .vpd-form input,.vpd-form textarea{width:100%;border:1px solid #d8e8ef;border-radius:11px;padding:11px 12px;font:inherit;background:#fbfeff;box-sizing:border-box}
+        .vpd-form input:focus,.vpd-form textarea:focus{outline:none;border-color:#4DA8DA;box-shadow:0 0 0 3px rgba(77,168,218,.18)}
         .vpd-form textarea{min-height:78px;resize:vertical}
         .vpd-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-        .vpd-save-btn{justify-self:start;border:0;border-radius:10px;padding:11px 15px;background:#4DA8DA;color:#fff;display:flex;align-items:center;gap:7px;cursor:pointer;font-weight:700}
-        .vpd-save-btn:disabled{opacity:.65;cursor:not-allowed}
+        .vpd-locked{display:flex;align-items:center;gap:8px;min-height:44px;border:1px dashed #d3e2e8;border-radius:11px;padding:10px 12px;background:#f4f7f8;color:#5f7380;font-weight:600;cursor:not-allowed}
+        .vpd-locked span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .vpd-locked svg{flex-shrink:0;color:#9aa9b0}
+        .vpd-hint{margin:0;font-size:12.5px;color:#6F7F88}
+        .vpd-form-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:4px}
+        .vpd-highlight{outline:2px solid #f0c869;outline-offset:8px;border-radius:12px}
+        .vpd-passwordBox{display:flex;border:1px solid #d8e8ef;border-radius:11px;overflow:hidden;background:#fbfeff}
+        .vpd-passwordBox:focus-within{border-color:#4DA8DA;box-shadow:0 0 0 3px rgba(77,168,218,.18)}
+        .vpd-passwordBox input{border:0!important;box-shadow:none!important;background:transparent}
+        .vpd-passwordBox button{border:0;background:transparent;color:#54707d;padding:0 13px;cursor:pointer}
 
-        .vpd-passwordBox{display:flex;border:1px solid #d8e8ef;border-radius:10px;overflow:hidden}
-        .vpd-passwordBox input{border:0}
-        .vpd-passwordBox button{border:0;background:#fff;color:#54707d;padding:0 12px;cursor:pointer}
-
-        @media(max-width:900px){.vpd-pair{grid-template-columns:1fr}.vpd-hero{flex-direction:column;text-align:center;gap:12px}.vpd-hero-tags{justify-content:center}}
+        @media(max-width:640px){.vpd-body{padding:18px 16px 20px}.vpd-row{grid-template-columns:1fr;gap:4px}.vpd-pair{grid-template-columns:1fr}.vpd-form-actions{justify-content:stretch}.vpd-form-actions .vpd-btn{flex:1;justify-content:center}}
       `}</style>
     </div>
   );
