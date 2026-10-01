@@ -26,6 +26,7 @@ export default function Login() {
   const fieldRefs = useRef({}).current;
   const registerFieldRef = (name) => (el) => { fieldRefs[name] = el; };
   const [message, setMessage] = useState("");
+  const [authError, setAuthError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -35,11 +36,13 @@ export default function Login() {
     setFieldErrors((current) => (
       current[name] ? { ...current, [name]: validateLoginField(name, value) } : current
     ));
+    if (authError) setAuthError("");
   }
 
   async function submit(e) {
     e.preventDefault();
     setMessage("");
+    setAuthError("");
 
     const errors = {};
     ["identifier", "password"].forEach((name) => {
@@ -68,7 +71,15 @@ export default function Login() {
         state: { from: location.state?.from?.pathname || null, email: result.email },
       });
     } catch (err) {
-      setMessage(err.message || "Unable to log in.");
+      // Every credential mismatch from loginUser() throws this exact
+      // message -- shown once, in the alert box above the fields, never as
+      // per-field red text. Any other failure (e.g. inactive account) keeps
+      // using the plain inline message below the form.
+      if (/invalid credentials/i.test(err.message || "")) {
+        setAuthError("Invalid credentials.");
+      } else {
+        setMessage(err.message || "Unable to log in.");
+      }
     } finally {
       setLoading(false);
     }
@@ -81,6 +92,7 @@ export default function Login() {
       showBackToHome
     >
       <form onSubmit={submit} noValidate>
+        {authError && <div className="auth-error-box">{authError}</div>}
         <label>
           Email or Username<span className="required-mark"> *</span>
           <input
@@ -387,6 +399,19 @@ export function LoginLayout({ title, subtitle, children, showBackToHome = false 
           border: 1px solid #f4cbd0;
         }
 
+        .login-screen-card .auth-error-box {
+          width: 100%;
+          padding: 12px 16px;
+          border-radius: 14px;
+          border: 1px solid #f4b8bd;
+          background: #fdecec;
+          color: #c0392b;
+          font-size: 14px;
+          font-weight: 700;
+          text-align: center;
+          box-sizing: border-box;
+        }
+
         .login-screen-card .success {
           color: #2f8050;
           background: #ebf8ef;
@@ -519,6 +544,12 @@ export function LoginLayout({ title, subtitle, children, showBackToHome = false 
           .login-screen-card label {
             gap: 4px;
             font-size: 11px;
+          }
+
+          .login-screen-card .auth-error-box {
+            padding: 10px 12px;
+            font-size: 12.5px;
+            border-radius: 12px;
           }
 
           .login-screen-card input,

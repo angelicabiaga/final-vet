@@ -305,14 +305,11 @@ export async function loginUser(identifier, password) {
 
   const { data: profile, error } = await supabase.from("profiles").select("*").eq(normalized.includes("@") ? "email" : "username", normalized).limit(1).maybeSingle();
   if (error) throw new Error("Unable to validate your account. Apply custom_auth_patch.sql in Supabase.");
-  if (!profile) {
-    await writeActivity(null, "Failed login", `Failed login attempt for unknown identifier ${normalized}.`);
-    const { data: passwordMatch } = await supabase.from("profiles").select("id").eq("password", enteredPassword).limit(1).maybeSingle();
-    throw new Error(passwordMatch ? "Incorrect email and correct password." : "Incorrect email and incorrect password.");
-  }
-  if (String(profile.password) !== enteredPassword) {
+  if (!profile || String(profile.password) !== enteredPassword) {
+    // Never reveals which part was wrong -- same message whether the
+    // identifier doesn't exist, the password doesn't match, or both.
     await writeActivity(profile, "Failed login", `Failed login attempt for ${normalized}.`);
-    throw new Error("Correct email and incorrect password.");
+    throw new Error("Invalid credentials.");
   }
   if (profile.account_status !== "active") throw new Error("Your account is inactive. Contact the administrator.");
 
