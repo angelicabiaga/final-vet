@@ -517,6 +517,10 @@ export default function AppShell({ profile, title, children }) {
             .logoutConfirmActions button {
               min-width: 0;
               min-height: 45px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              text-align: center;
               padding: 10px 15px;
               border-radius: 11px;
               font-family: inherit;

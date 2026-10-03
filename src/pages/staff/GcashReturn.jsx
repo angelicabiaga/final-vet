@@ -8,6 +8,7 @@ import {
 
 import AppShell from "../../components/AppShell";
 import {
+  cancelPendingGcashTransaction,
   getTransactionById,
   pollTransactionStatus,
 } from "../../services/transactionService";
@@ -44,9 +45,17 @@ export default function GcashReturn({ profile }) {
         // The customer's GCash redirect only tells us they finished the GCash
         // flow, not that the money actually arrived. Poll until PayMongo's
         // webhook has flipped the transaction to Paid or Cancelled.
-        const result = redirectResult === "failed"
+        let result = redirectResult === "failed"
           ? await getTransactionById(transactionId)
           : await pollTransactionStatus(transactionId);
+
+        // A failed/cancelled GCash checkout must not stay a pending payment:
+        // cancel it so it never reaches Payment History, and the visit goes
+        // back to the Pending Billing Queue.
+        if (redirectResult === "failed" && result.payment_status === "Pending") {
+          await cancelPendingGcashTransaction(transactionId, "GCash payment failed or was cancelled.");
+          result = await getTransactionById(transactionId);
+        }
 
         if (cancelled) return;
 
@@ -131,7 +140,7 @@ export default function GcashReturn({ profile }) {
           <>
             <XCircle size={40} className="err" />
             <h2>Payment Not Completed</h2>
-            <p>{error || "The GCash payment was not completed or was cancelled."}</p>
+            <p>{error || "The GCash payment was not completed or was cancelled. Nothing was charged, and the bill is back in the Pending Billing Queue."}</p>
           </>
         )}
 

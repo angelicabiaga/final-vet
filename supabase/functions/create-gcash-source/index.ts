@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
     // Confirm the transaction exists and hasn't already been paid.
     const { data: transaction, error: fetchError } = await supabase
       .from("transactions")
-      .select("id,total_amount,payment_status")
+      .select("id,total_amount,payment_status,payment_method,split_payment_details")
       .eq("id", transactionId)
       .single();
 
@@ -53,8 +53,20 @@ Deno.serve(async (req) => {
       return json({ error: "This transaction has already been paid." }, 409);
     }
 
+    // A Split Payment only sends its GCash portion through PayMongo -- the
+    // Cash portion was already collected by staff. The amount comes from the
+    // saved split, not the client, so the QR can never ask for the cash too.
+    const isSplit = transaction.payment_method === "Split Payment";
+    const chargeAmount = isSplit
+      ? Number(transaction.split_payment_details?.GCash ?? 0)
+      : cleanAmount;
+
+    if (!Number.isFinite(chargeAmount) || chargeAmount <= 0) {
+      return json({ error: "This split payment has no GCash portion to charge." }, 400);
+    }
+
     // PayMongo expects the amount in centavos (smallest currency unit).
-    const amountInCentavos = Math.round(cleanAmount * 100);
+    const amountInCentavos = Math.round(chargeAmount * 100);
 
     const authHeader = "Basic " + btoa(`${secretKey}:`);
 
@@ -70,7 +82,9 @@ Deno.serve(async (req) => {
             type: "gcash",
             amount: amountInCentavos,
             currency: "PHP",
-            description: description || `PawCruz transaction ${transactionId}`,
+            description: isSplit
+              ? `PawCruz GCash portion of split payment (${transactionId})`
+              : description || `PawCruz transaction ${transactionId}`,
             redirect: {
               success: successUrl,
               failed: failedUrl,
@@ -99,7 +113,9 @@ Deno.serve(async (req) => {
       .update({
         paymongo_source_id: sourceId,
         paymongo_checkout_url: checkoutUrl,
-        payment_method: "GCash",
+        // payment_method is left as checkout saved it ("GCash" or "Split
+        // Payment") -- overwriting a split with "GCash" made settlement
+        // treat the whole total as paid through GCash.
         payment_status: "Pending",
       })
       .eq("id", transactionId);

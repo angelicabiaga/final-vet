@@ -25,7 +25,21 @@ export async function getPendingBillingQueue() {
   const rows = data || [];
   if (!rows.length) return [];
 
-  const petIds = uniq(rows.map((row) => row.pet_id));
+  // A multi-pet visit's ticket only carries its first pet in pet_id; the
+  // rest are linked through queue_entry_pets.
+  const { data: petLinks } = await supabase
+    .from("queue_entry_pets")
+    .select("queue_entry_id,pet_id")
+    .in("queue_entry_id", rows.map((row) => row.id));
+  const linkedPetIdsByEntry = new Map();
+  (petLinks || []).forEach((link) => {
+    const list = linkedPetIdsByEntry.get(link.queue_entry_id) || [];
+    list.push(link.pet_id);
+    linkedPetIdsByEntry.set(link.queue_entry_id, list);
+  });
+  const entryPetIds = (row) => uniq([row.pet_id, ...(linkedPetIdsByEntry.get(row.id) || [])]);
+
+  const petIds = uniq(rows.flatMap(entryPetIds));
   const profileIds = uniq(rows.flatMap((row) => [row.owner_id, row.veterinarian_id]));
 
   const [petsResult, profilesResult] = await Promise.all([
@@ -39,6 +53,7 @@ export async function getPendingBillingQueue() {
   return rows.map((row) => ({
     ...row,
     pet: petsById.get(row.pet_id) || null,
+    pets: entryPetIds(row).map((id) => petsById.get(id)).filter(Boolean),
     owner: profilesById.get(row.owner_id) || null,
     veterinarian: profilesById.get(row.veterinarian_id) || null,
   }));
@@ -80,9 +95,11 @@ export async function startBillingProcessing(queueEntryId, profile) {
  * owner, pet, veterinarian, consultation fee, and every test/medicine/
  * vaccine the vet recorded. A visit with more than one medical-record
  * template (e.g. Health Record + Vaccination Record) shares one
- * queue_entry_id, so their inventory items are merged (de-duplicated) and
- * their diagnosis/treatment/notes are concatenated; the consultation fee is
- * taken from the first (earliest) record so it is only charged once.
+ * queue_entry_id, so their inventory items are merged (de-duplicated per
+ * pet) and their diagnosis/treatment/notes are concatenated. A multi-pet
+ * visit also shares one queue_entry_id: every pet on the ticket is billed
+ * here together, with one checkup fee per pet (from that pet's first record)
+ * and an item given to two pets counted twice.
  *
  * A visit can be billed here more than once in its lifetime -- a vet may
  * complete a second template (e.g. via the Drafts flow) after the first was
@@ -102,13 +119,28 @@ export async function getConsultationForBilling(queueEntryId) {
     .single();
   if (entryError) throw new Error(`Unable to load this consultation: ${entryError.message}`);
 
-  const { data: records, error: recordsError } = await supabase
-    .from("medical_records")
-    .select("id,appointment_id,diagnosis,treatment,veterinarian_notes,consultation_fee,template_data,record_template,created_at")
-    .eq("queue_entry_id", queueEntryId)
-    .order("created_at", { ascending: true });
+  const [{ data: records, error: recordsError }, { data: petLinks }] = await Promise.all([
+    supabase
+      .from("medical_records")
+      .select("id,pet_id,appointment_id,diagnosis,treatment,veterinarian_notes,consultation_fee,template_data,record_template,created_at")
+      .eq("queue_entry_id", queueEntryId)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("queue_entry_pets")
+      .select("pet_id")
+      .eq("queue_entry_id", queueEntryId),
+  ]);
   if (recordsError) throw new Error(`Unable to load the consultation record: ${recordsError.message}`);
   if (!records?.length) throw new Error("No finalized medical record was found for this consultation.");
+
+  // A multi-pet visit shares one queue ticket; every pet on it is billed
+  // together. The ticket's own pet_id comes first so it stays the "primary"
+  // pet the transaction row is filed under.
+  const petIds = uniq([
+    entry.pet_id,
+    ...(petLinks || []).map((link) => link.pet_id),
+    ...records.map((record) => record.pet_id),
+  ]);
 
   const { data: priorTransactions, error: priorError } = await supabase
     .from("transactions")
@@ -135,23 +167,64 @@ export async function getConsultationForBilling(queueEntryId) {
     alreadyBilledItemIds = new Set((priorItems || []).map((row) => row.inventory_item_id).filter(Boolean));
   }
 
-  const [petResult, profilesResult] = await Promise.all([
-    supabase.from("pets").select("id,pet_name,species").eq("id", entry.pet_id).maybeSingle(),
+  const [petsResult, profilesResult] = await Promise.all([
+    supabase.from("pets").select("id,pet_name,species").in("id", petIds),
     supabase.from("profiles").select("id,full_name").in("id", uniq([entry.owner_id, entry.veterinarian_id])),
   ]);
   const profilesById = new Map((profilesResult.data || []).map((row) => [row.id, row]));
+  const petsById = new Map((petsResult.data || []).map((row) => [row.id, row]));
+  const pets = petIds.map((id) => petsById.get(id)).filter(Boolean);
+  const petName = (id) => petsById.get(id)?.pet_name || "Pet";
+  const isMultiPet = petIds.length > 1;
 
-  const inventoryItems = [];
-  const seen = new Set();
+  // Records with no pet_id (older data) belong to the ticket's primary pet.
+  const recordsByPet = new Map(petIds.map((id) => [id, []]));
   records.forEach((record) => {
-    (record.template_data?.inventoryItems || []).forEach((item) => {
-      if (item.isNA || seen.has(item.id) || alreadyBilledItemIds.has(item.id)) return;
-      seen.add(item.id);
-      inventoryItems.push(item);
-    });
+    recordsByPet.get(record.pet_id || entry.pet_id)?.push(record);
   });
 
-  const joinField = (field) => records.map((record) => (record[field] || "").trim()).filter(Boolean).join("\n\n");
+  // Items are de-duplicated within one pet (its several templates may list
+  // the same item), but never across pets: the same vaccine given to two
+  // pets is two vaccines. Same item across pets becomes one cart line with
+  // the quantities added up, tagged with which pets it was for.
+  const itemsById = new Map();
+  recordsByPet.forEach((petRecords, petId) => {
+    const seenForPet = new Set();
+    petRecords.forEach((record) => {
+      (record.template_data?.inventoryItems || []).forEach((item) => {
+        if (item.isNA || seenForPet.has(item.id) || alreadyBilledItemIds.has(item.id)) return;
+        seenForPet.add(item.id);
+        const quantity = Math.max(1, Math.round(Number(item.quantity) || 1));
+        const existing = itemsById.get(item.id);
+        if (existing) {
+          existing.quantity += quantity;
+          existing.petNames.push(petName(petId));
+        } else {
+          itemsById.set(item.id, { ...item, quantity, petNames: [petName(petId)] });
+        }
+      });
+    });
+  });
+  const inventoryItems = Array.from(itemsById.values());
+
+  // One checkup fee per pet that was actually seen (has a record), taken
+  // from that pet's first record.
+  const consultationFee = Array.from(recordsByPet.values())
+    .filter((petRecords) => petRecords.length)
+    .reduce((sum, petRecords) => sum + Number(petRecords[0].consultation_fee ?? 500), 0);
+
+  const petsWithoutRecord = petIds
+    .filter((id) => !recordsByPet.get(id)?.length)
+    .map(petName);
+
+  const joinField = (field) => records
+    .map((record) => {
+      const text = (record[field] || "").trim();
+      if (!text) return "";
+      return isMultiPet ? `${petName(record.pet_id || entry.pet_id)}: ${text}` : text;
+    })
+    .filter(Boolean)
+    .join("\n\n");
 
   return {
     queueEntryId: entry.id,
@@ -161,10 +234,12 @@ export async function getConsultationForBilling(queueEntryId) {
     veterinarianId: entry.veterinarian_id,
     appointmentId: records[0].appointment_id || entry.appointment_id || null,
     primaryMedicalRecordId: records[0].id,
-    pet: petResult.data || null,
+    pet: petsById.get(entry.pet_id) || pets[0] || null,
+    pets,
+    petsWithoutRecord,
     owner: profilesById.get(entry.owner_id) || null,
     veterinarian: profilesById.get(entry.veterinarian_id) || null,
-    consultationFee: alreadyBilled ? 0 : Number(records[0].consultation_fee ?? 500),
+    consultationFee: alreadyBilled ? 0 : consultationFee,
     alreadyBilled,
     diagnosis: joinField("diagnosis"),
     treatment: joinField("treatment"),

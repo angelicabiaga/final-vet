@@ -166,8 +166,17 @@ export async function cancelAppointment(id, ownerId) {
   if (error) throw new Error('Unable to cancel the appointment.');
 }
 
+// Rebooking only moves an existing appointment -- its pet never changes, so
+// unlike a new booking there's no pet to select or validate here.
+function validateReschedule(id, values) {
+  if (!id) throw new Error("This appointment can't be found. Refresh the list and try again.");
+  if (!values.veterinarianId) throw new Error('Select a veterinarian.');
+  if (!values.appointmentDate || values.appointmentDate < todayLocal()) throw new Error('Select today or a future date.');
+  if (!values.startTime) throw new Error('Select an available time.');
+}
+
 export async function rescheduleAppointment(id, values, ownerId, changedBy) {
-  validatePayload({ ...values, ownerId });
+  validateReschedule(id, values);
   const { error } = await supabase
     .from('appointments')
     .update({

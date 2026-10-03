@@ -42,7 +42,6 @@ export default function VetScheduleModule({ profile }) {
   const [overview, setOverview] = useState(null);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [modal, setModal] = useState(null);
@@ -56,7 +55,7 @@ export default function VetScheduleModule({ profile }) {
 
   const load = useCallback(async (silent = false) => {
     if (!profile?.id) return;
-    silent ? setRefreshing(true) : setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const [nextOverview, nextRequests] = await Promise.all([
         getScheduleOverview(profile.id, OVERVIEW_DAYS),
@@ -69,7 +68,6 @@ export default function VetScheduleModule({ profile }) {
       setError(loadError.message);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, [profile?.id]);
 
@@ -230,7 +228,6 @@ export default function VetScheduleModule({ profile }) {
             <button type="button" className="vsm-btn vsm-btn-danger" disabled={Boolean(emergencyBlockedReason)} title={emergencyBlockedReason || "Leave today because of an emergency"} onClick={() => setModal({ mode: "Emergency" })}><Siren size={17} /> Emergency leave</button>
           )}
           {emergencyBlockedReason && !activeEmergency && <small>{emergencyBlockedReason}</small>}
-          <button type="button" className="vsm-refresh" onClick={() => { load(true); loadWeek(); }} disabled={refreshing}><RefreshCw size={14} className={refreshing ? "vsm-spin" : ""} /> {refreshing ? "Refreshing" : "Refresh"}</button>
         </div>
       </section>
 

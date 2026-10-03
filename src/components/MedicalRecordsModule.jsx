@@ -1,6 +1,7 @@
 import React, {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -438,17 +439,34 @@ export default function MedicalRecordsModule({
     [pets, form.petId]
   );
 
-  // Every record already saved for this visit, regardless of template --
-  // lets the left-side template rail mark which ones are done, and lets
-  // selectTemplate know whether switching needs to save first.
+  const hasMoreQueuePets = Boolean(
+    queueContext &&
+      queueContext.currentIndex < queueContext.petIds.length - 1
+  );
+
+  // Bumped on every queue pet switch so a slow lookup for a pet the vet has
+  // already moved past can't overwrite the form/panels of the current one.
+  const queuePetLoadSeq = useRef(0);
+
+  function getQueuePetName(petId) {
+    return pets.find((pet) => pet.id === petId)?.pet_name || "this pet";
+  }
+
+  // Every record already saved for this visit and the pet currently being
+  // charted, regardless of template -- lets the left-side template rail mark
+  // which ones are done, and lets selectTemplate know whether switching
+  // needs to save first. Scoped to the pet because a multi-pet visit shares
+  // one queue entry but each pet gets its own records.
   const visitSavedRecords = useMemo(
     () =>
       queueContext
         ? records.filter(
-            (record) => record.queue_entry_id === queueContext.queueEntryId
+            (record) =>
+              record.queue_entry_id === queueContext.queueEntryId &&
+              record.pet_id === form.petId
           )
         : [],
-    [records, queueContext]
+    [records, queueContext, form.petId]
   );
 
   const visitSavedTemplateValues = useMemo(
@@ -736,92 +754,132 @@ export default function MedicalRecordsModule({
       return;
     }
 
-    setQueueContext({
-      ...queueLaunch,
-      currentIndex: 0,
-    });
-
     setPendingQueueCompletion(null);
 
-    // Reopening this exact consultation (same queue visit + template) that
-    // was already finalized -- a refresh, a re-clicked queue link, a second
-    // tab, browser back-then-forward -- must load the saved record instead
-    // of a blank one, so clicking Complete again updates it in place.
-    // (saveMedicalRecord also guards this server-side regardless of what
-    // the form shows; this just keeps the form from lying about it.) Looked
-    // up directly instead of depending on `records` in this effect, so
-    // saving a second template for the same visit -- which reloads
-    // `records` -- can't re-fire this and stomp the next template's blank
-    // form with the one that was just finalized. `active` guards against a
-    // slow lookup from a superseded navigation landing after a newer one.
+    // Start on the first pet right away; the lookup below may move to a
+    // later pet (or load a saved record) once it knows what's been charted.
+    switchQueuePet(queueLaunch, 0);
+
+    // A multi-pet visit is charted one pet at a time. Reopening it -- a
+    // refresh, a re-clicked queue link, a second tab -- should land on the
+    // first pet that doesn't have a finalized record yet, instead of always
+    // restarting at pet 1. `active` guards against a slow lookup from a
+    // superseded navigation landing after a newer one.
     let active = true;
-    getMedicalRecords(profile, { petId: queueLaunch.petIds[0] })
-      .then((petRecords) => {
-        if (!active) return;
+    Promise.all(
+      queueLaunch.petIds.map((petId) =>
+        getMedicalRecords(profile, { petId }).catch(() => [])
+      )
+    ).then((perPetRecords) => {
+      if (!active) return;
+      const allRecords = perPetRecords.flat();
 
-        // Explicit resume (from the Queue page's Drafts panel) takes
-        // priority over the same-template auto-reopen below -- it can
-        // target any of this visit's records, Draft or Finalized, by id.
-        if (queueLaunch.resumeRecordId) {
-          const resumeRecord = petRecords.find(
-            (record) => record.id === queueLaunch.resumeRecordId
-          );
-          if (resumeRecord) {
-            setForm(recordToFormValues(resumeRecord));
-            return;
-          }
-        }
-
-        const alreadyFinalized = petRecords.find(
-          (record) =>
-            record.queue_entry_id === queueLaunch.queueEntryId &&
-            (record.record_template || DEFAULT_MEDICAL_RECORD_TEMPLATE) === queueLaunch.recordTemplate &&
-            record.record_status === "Finalized"
+      // Explicit resume (from the Queue page's Drafts panel) takes priority
+      // -- it can target any pet's record in this visit, Draft or Finalized.
+      if (queueLaunch.resumeRecordId) {
+        const resumeRecord = allRecords.find(
+          (record) => record.id === queueLaunch.resumeRecordId
         );
-        if (alreadyFinalized) setForm(recordToFormValues(alreadyFinalized));
-      })
-      .catch(() => {});
+        const resumeIndex = resumeRecord
+          ? queueLaunch.petIds.indexOf(resumeRecord.pet_id)
+          : -1;
+        if (resumeIndex >= 0) {
+          switchQueuePet(queueLaunch, resumeIndex, resumeRecord);
+          return;
+        }
+      }
 
-    setForm({
-      ...blank,
-      petId: queueLaunch.petIds[0],
-      ownerId: queueLaunch.ownerId,
-      veterinarianId:
-        queueLaunch.veterinarianId,
-      originalVeterinarianId:
-        queueLaunch.originalVeterinarianId,
-      appointmentId:
-        queueLaunch.appointmentIds[0] || "",
-      recordTemplate:
-        queueLaunch.recordTemplate,
-      templateData: {},
+      const firstOpenIndex = queueLaunch.petIds.findIndex(
+        (petId) =>
+          !allRecords.some(
+            (record) =>
+              record.pet_id === petId &&
+              record.queue_entry_id === queueLaunch.queueEntryId &&
+              record.record_status === "Finalized"
+          )
+      );
+
+      if (firstOpenIndex > 0) switchQueuePet(queueLaunch, firstOpenIndex);
     });
 
-    getAppointmentsForPet(queueLaunch.petIds[0])
-      .then(setAppointments)
-      .catch(() => setAppointments([]));
+    return () => { active = false; };
+    // switchQueuePet only uses state setters and refs, so it's safe to leave out.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canEdit, queueLaunch, profile]);
+
+  // Points the queued record form at one pet of the visit: that pet's
+  // appointment, history and a blank form for the current template. If
+  // `record` is given it's loaded as-is; otherwise any record already saved
+  // for this visit + pet + template (Draft or Finalized) is loaded instead
+  // of the blank form, so clicking Complete updates it in place rather than
+  // overwriting it with empty fields.
+  function switchQueuePet(context, index, record = null) {
+    const petId = context.petIds[index];
+    const appointmentId = context.appointmentIds[index] || "";
+    const template = record?.record_template || context.recordTemplate;
+    const seq = ++queuePetLoadSeq.current;
+    const isCurrent = () => seq === queuePetLoadSeq.current;
+
+    const nextContext = {
+      ...context,
+      currentIndex: index,
+      selectedPetId: petId,
+      selectedAppointmentId: appointmentId,
+    };
+    setQueueContext(nextContext);
+
+    setForm(
+      record
+        ? recordToFormValues(record)
+        : {
+            ...blank,
+            petId,
+            ownerId: context.ownerId,
+            veterinarianId: context.veterinarianId,
+            originalVeterinarianId: context.originalVeterinarianId,
+            appointmentId,
+            recordTemplate: template,
+            templateData: {},
+          }
+    );
+
+    if (!record) {
+      getMedicalRecords(profile, { petId })
+        .then((petRecords) => {
+          if (!isCurrent()) return;
+          const saved = petRecords.find(
+            (row) =>
+              row.queue_entry_id === context.queueEntryId &&
+              (row.record_template || DEFAULT_MEDICAL_RECORD_TEMPLATE) === template
+          );
+          if (saved) setForm(recordToFormValues(saved));
+        })
+        .catch(() => {});
+    }
+
+    getAppointmentsForPet(petId)
+      .then((rows) => { if (isCurrent()) setAppointments(rows); })
+      .catch(() => { if (isCurrent()) setAppointments([]); });
 
     // History panel: every vet's finalized past visits for this pet, minus
     // whatever's already been saved for the visit in progress right now.
-    getMedicalRecords(profile, {
-      petId: queueLaunch.petIds[0],
-      allVeterinarians: true,
-    })
+    getMedicalRecords(profile, { petId, allVeterinarians: true })
       .then((pastRecords) => {
-        if (!active) return;
+        if (!isCurrent()) return;
         setHistoryRecords(
           pastRecords.filter(
-            (record) => record.queue_entry_id !== queueLaunch.queueEntryId
+            (row) => row.queue_entry_id !== context.queueEntryId
           )
         );
       })
-      .catch(() => setHistoryRecords([]));
+      .catch(() => { if (isCurrent()) setHistoryRecords([]); });
 
+    setViewingHistoryId(null);
     setInventorySearch("");
     setShow(true);
 
-    return () => { active = false; };
-  }, [canEdit, queueLaunch, profile]);
+    return nextContext;
+  }
 
   function chooseOwner(ownerId) {
     setForm((current) => ({
@@ -1217,6 +1275,26 @@ export default function MedicalRecordsModule({
         return;
       }
 
+      // Multi-pet visit: each pet gets its own medical record. Completing
+      // one pet moves on to the next; only the last pet's Complete finalizes
+      // the visit and sends it to billing.
+      const petIndex = queueContext.petIds.indexOf(
+        savedRecord?.pet_id || form.petId
+      );
+      const nextPetIndex = petIndex + 1;
+
+      if (petIndex >= 0 && nextPetIndex < queueContext.petIds.length) {
+        const doneName = getQueuePetName(queueContext.petIds[petIndex]);
+        const nextName = getQueuePetName(queueContext.petIds[nextPetIndex]);
+
+        triggerInsightPersistence(savedRecord);
+        switchQueuePet(queueContext, nextPetIndex);
+        setSuccess(
+          `${doneName}'s record is saved. Now add the record for ${nextName} (pet ${nextPetIndex + 1} of ${queueContext.petIds.length}).`
+        );
+        return;
+      }
+
       try {
         await finalizeQueueDrafts(queueContext.queueEntryId);
 
@@ -1541,14 +1619,17 @@ export default function MedicalRecordsModule({
                 {pendingQueueCompletion
                   ? `${pendingQueueCompletion.templateLabel} is already saved. Retry Complete to send this consultation to billing without creating another record.`
                   : <>
-                      Adding {activeTemplate.label} for pet{" "}
-                      {queueContext.currentIndex + 1}{" "}
+                      Adding {activeTemplate.label} for{" "}
+                      <strong>{getQueuePetName(form.petId)}</strong>{" "}
+                      (pet {queueContext.currentIndex + 1}{" "}
                       of {queueContext.petIds.length}{" "}
-                      in this visit. Choose a
+                      in this visit). Choose a
                       different template on the left
                       whenever you need to, then
-                      choose Complete to
-                      finish this consultation.
+                      choose Complete to{" "}
+                      {hasMoreQueuePets
+                        ? `save this pet's record and continue to ${getQueuePetName(queueContext.petIds[queueContext.currentIndex + 1])}.`
+                        : "finish this consultation."}
                     </>}
               </div>
             )}
@@ -3089,8 +3170,12 @@ export default function MedicalRecordsModule({
 
       <ConfirmDialog
         open={showCompleteConfirm}
-        title="Complete Consultation?"
-        description="This medical record will be finalized and sent to Staff POS for billing."
+        title={hasMoreQueuePets ? `Complete ${getQueuePetName(form.petId)}'s Record?` : "Complete Consultation?"}
+        description={
+          hasMoreQueuePets
+            ? `${getQueuePetName(form.petId)}'s medical record will be saved, then you'll continue to ${getQueuePetName(queueContext.petIds[queueContext.currentIndex + 1])}'s record. The visit is sent to Staff POS for billing after the last pet.`
+            : "This medical record will be finalized and sent to Staff POS for billing."
+        }
         confirmLabel="Complete"
         cancelLabel="Cancel"
         tone="primary"

@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { CalendarCheck, Download, Printer, Receipt, RefreshCw, Stethoscope, TriangleAlert, Wallet } from "lucide-react";
+import { CalendarCheck, Download, Printer, Receipt, Stethoscope, TriangleAlert, Wallet } from "lucide-react";
 
 import AppShell from "../../components/AppShell";
 import { supabase } from "../../config/supabaseClient";
@@ -298,9 +298,6 @@ export default function ReportsAnalytics({ profile }) {
 
   return <AppShell profile={profile} title="Reports & Analytics"><div className="reports">
     <div className="screen-only">
-    <div className="head">
-      <div><button className="soft" onClick={load}><RefreshCw size={16} /> Refresh</button><button className="soft" onClick={openReportPreview} disabled={loading}><Printer size={16} /> Print</button></div>
-    </div>
 
     {error && <div className="error">{error}</div>}
 
@@ -315,7 +312,7 @@ export default function ReportsAnalytics({ profile }) {
         <button className="chip" onClick={() => applyPreset("month")}>This month</button>
         <button className="chip" onClick={() => applyPreset("year")}>This year</button>
       </div>
-      <button onClick={load}>Apply</button>
+      <button className="soft filter-print" onClick={openReportPreview} disabled={loading}><Printer size={16} /> Print</button>
     </div>
 
     {loading ? <div className="card">Loading analytics…</div> : <>
@@ -622,7 +619,7 @@ export default function ReportsAnalytics({ profile }) {
       .filters{display:flex;gap:var(--gap-md);padding:20px;align-items:end;flex-wrap:wrap}
       .filters label{display:grid;gap:6px;flex:1 1 160px;min-width:150px;color:#536b78;font-size:13px;font-weight:700}
       .filters input,.filters select{height:var(--control-h);padding:0 12px;border:1px solid #d9e9ef;border-radius:9px;font-size:13.5px;box-sizing:border-box;color:#243342}
-      .presets{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+      .presets{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.filter-print{height:var(--control-h);display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
 
       .error{background:#fff0f0;color:#a94444;padding:14px 16px;border-radius:10px}
 

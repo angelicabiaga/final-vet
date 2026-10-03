@@ -113,7 +113,7 @@ async function enrich(rows){
 async function enrichCheckinGroups(cards){
   if(!cards.length)return [];
   const [pets,profiles]=await Promise.all([
-    supabase.from("pets").select("id,pet_name,species,breed,photo_url").in("id",uniq(cards.flatMap(c=>c.petIds))),
+    supabase.from("pets").select("id,pet_name,species,breed,photo_url,sex,date_of_birth,weight,color,notes").in("id",uniq(cards.flatMap(c=>c.petIds))),
     supabase.from("profiles").select("id,full_name,username,email,role,avatar_url").in("id",uniq(cards.flatMap(c=>[c.owner_id,c.veterinarian_id])))
   ]);
   const pm=new Map((pets.data||[]).map(x=>[x.id,x]));

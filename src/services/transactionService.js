@@ -68,7 +68,26 @@ async function decorateTransactions(rows) {
   const transactionRows = rows || [];
   if (!transactionRows.length) return [];
 
-  const petIds = [...new Set(transactionRows.map((row) => row.pet_id).filter(Boolean))];
+  // A multi-pet visit shares one queue ticket but the transaction row only
+  // carries its first pet -- the rest are linked through queue_entry_pets,
+  // so every pet the payment covered can be shown.
+  const queueEntryIds = [...new Set(transactionRows.map((row) => row.queue_entry_id).filter(Boolean))];
+  const [linksResult, queueResult] = queueEntryIds.length
+    ? await Promise.all([
+        supabase.from("queue_entry_pets").select("queue_entry_id,pet_id").in("queue_entry_id", queueEntryIds),
+        supabase.from("queue_entries").select("id,queue_number").in("id", queueEntryIds),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const linkedPetIdsByEntry = new Map();
+  (linksResult.data || []).forEach((link) => {
+    const list = linkedPetIdsByEntry.get(link.queue_entry_id) || [];
+    list.push(link.pet_id);
+    linkedPetIdsByEntry.set(link.queue_entry_id, list);
+  });
+  const queueNumberById = new Map((queueResult.data || []).map((entry) => [entry.id, entry.queue_number]));
+  const transactionPetIds = (row) => [...new Set([row.pet_id, ...(linkedPetIdsByEntry.get(row.queue_entry_id) || [])].filter(Boolean))];
+
+  const petIds = [...new Set(transactionRows.flatMap(transactionPetIds))];
   const profileIds = [
     ...new Set(
       transactionRows
@@ -96,6 +115,8 @@ async function decorateTransactions(rows) {
   return transactionRows.map((transaction) => ({
     ...transaction,
     pet: petsById.get(transaction.pet_id) || null,
+    pets: transactionPetIds(transaction).map((id) => petsById.get(id)).filter(Boolean),
+    queue_number: queueNumberById.get(transaction.queue_entry_id) || null,
     owner: profilesById.get(transaction.owner_id) || null,
     cashier: profilesById.get(transaction.staff_id || transaction.created_by) || null,
   }));
@@ -309,6 +330,18 @@ export async function voidStalePendingTransactions(queueEntryId, profile) {
   await Promise.all(stale.map((row) =>
     reverseTransaction({ transactionId: row.id, reason: "Abandoned GCash/Split payment attempt." }, profile).catch(() => {})
   ));
+}
+
+// GCash checkout failed or was cancelled on the customer's side. Cancels the
+// still-Pending transaction so it never shows as a payment, and (via the
+// database trigger) puts the visit back in the Pending Billing Queue. A
+// transaction that's no longer Pending is left alone.
+export async function cancelPendingGcashTransaction(transactionId, reason) {
+  const { error } = await supabase.rpc("pawcruz_cancel_pos_transaction", {
+    p_transaction_id: transactionId,
+    p_reason: reason,
+  });
+  if (error) throw friendly(error, "Unable to cancel the GCash payment.");
 }
 
 export async function pollTransactionStatus(transactionId, { intervalMs = 2000, timeoutMs = 60000 } = {}) {

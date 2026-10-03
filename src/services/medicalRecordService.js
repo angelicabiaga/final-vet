@@ -676,9 +676,11 @@ export async function saveMedicalRecord(
 
   // A "Complete" click that fires twice for the same consultation -- a
   // refreshed tab, a re-opened queue link, a slow request retried by hand --
-  // must update the already-saved record for this queue visit + template
-  // instead of inserting a duplicate one. queue_entry_id + record_template
-  // together identify one consultation record, whether it's still a Draft
+  // must update the already-saved record for this queue visit + pet +
+  // template instead of inserting a duplicate one. queue_entry_id + pet_id +
+  // record_template together identify one consultation record (a multi-pet
+  // visit shares one queue_entry_id, so each pet needs its own record),
+  // whether it's still a Draft
   // (the vet switched away mid-entry) or already Finalized.
   let targetId = values.id || null;
 
@@ -687,6 +689,7 @@ export async function saveMedicalRecord(
       .from("medical_records")
       .select("id")
       .eq("queue_entry_id", values.queueEntryId)
+      .eq("pet_id", values.petId)
       .eq("record_template", normalizedTemplate)
       .order("created_at", { ascending: true })
       .limit(1);
