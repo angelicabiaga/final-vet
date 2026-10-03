@@ -5,7 +5,7 @@ import ConfirmDialog from "../../components/ConfirmDialog";
 import DoctorOfferNotice from "../../components/DoctorOfferNotice";
 import { drName, formatDayLabel } from "../../components/VetLeaveImpact";
 import { getQueue, subscribeToQueue } from "../../services/queueService";
-import { getMyDoctorOffers, getQueueDoctorAlerts, getQueueVisitRescheduleOptions, ownerChangeQueueVisit } from "../../services/doctorChangeService";
+import { getMyDoctorOffers, getQueueDoctorAlerts, getQueueVisitRescheduleOptions, ownerChangeQueueVisit, ownerErrorMessage } from "../../services/doctorChangeService";
 import { subscribeToLeaveChanges } from "../../services/vetLeaveService";
 import { formatTime, todayLocal } from "../../services/appointmentService";
 import { formatClockTime, formatTime12h } from "../../utils/timeFormat";
@@ -40,7 +40,7 @@ function QueueSelfService({ entry, profile, petNames, onDone }) {
     setChoice("");
     getQueueVisitRescheduleOptions(entry.id, date)
       .then(result => { if (active) setSlots(result?.vets || []); })
-      .catch(err => { if (active) { setSlots([]); setError(err.message); } });
+      .catch(err => { if (active) { setSlots([]); setError(ownerErrorMessage(err)); } });
     return () => { active = false; };
   }, [rebooking, date, entry.id]);
 
@@ -62,7 +62,7 @@ function QueueSelfService({ entry, profile, petNames, onDone }) {
       setBusy("");
       onDone(success);
     } catch (err) {
-      setError(err.message);
+      setError(ownerErrorMessage(err));
       setBusy("");
     }
   }
@@ -178,7 +178,8 @@ export default function MyQueue({ profile }) {
           <span><b>{away ? "Waiting for a new doctor" : active.status}</b>Status</span>
           <span><b>{booking.value}</b>{booking.label}</span>
         </div>
-        {active.status === "Waiting" && (
+        {/* Only when the doctor had a sudden leave after check-in. */}
+        {away && (
           <QueueSelfService key={active.id} entry={active} profile={profile} petNames={petNames} onDone={message => { setNotice(message); load(); }} />
         )}
         {active.late_arrival && <div className="warn">Late arrival recorded. Your place follows the active queue order.</div>}

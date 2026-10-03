@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { CalendarClock, TriangleAlert } from "lucide-react";
 import ConfirmDialog from "./ConfirmDialog";
-import { getRescheduleOptions, respondDoctorOffer } from "../services/doctorChangeService";
+import { getRescheduleOptions, ownerErrorMessage, respondDoctorOffer } from "../services/doctorChangeService";
 import { drName, formatDayLabel } from "./VetLeaveImpact";
 import { todayLocal } from "../services/appointmentService";
 import { formatTime12h } from "../utils/timeFormat";
@@ -37,7 +37,7 @@ export default function DoctorOfferNotice({ offer, profile, onDone }) {
     setChoice("");
     getRescheduleOptions(offer.id, date)
       .then(result => active && setSlots(result.vets || []))
-      .catch(err => active && setError(err.message));
+      .catch(err => active && setError(ownerErrorMessage(err)));
     return () => { active = false; };
   }, [rescheduling, date, offer.id]);
 
@@ -54,7 +54,7 @@ export default function DoctorOfferNotice({ offer, profile, onDone }) {
       await respondDoctorOffer(offer.id, profile.id, action, extra);
       onDone?.(success);
     } catch (err) {
-      setError(err.message);
+      setError(ownerErrorMessage(err));
       setBusy("");
     }
   }
