@@ -10,6 +10,7 @@ import {
   CreditCard,
   Download,
   Edit3,
+  Pencil,
   Eye,
   FileHeart,
   History,
@@ -25,6 +26,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import ConfirmDialog from "./ConfirmDialog";
 
 import { getOwners } from "../services/appointmentService";
 import {
@@ -1136,6 +1138,25 @@ export default function PetManagementModule({
     }
   }
 
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [archiving, setArchiving] = useState(false);
+
+  function requestArchiveToggle(pet) {
+    if (pet.is_archived) {
+      handleArchiveToggle(pet);
+      return;
+    }
+    setArchiveTarget(pet);
+  }
+
+  async function confirmArchive() {
+    if (!archiveTarget || archiving) return;
+    setArchiving(true);
+    await handleArchiveToggle(archiveTarget);
+    setArchiving(false);
+    setArchiveTarget(null);
+  }
+
   async function handleArchiveToggle(pet) {
     setMessage("");
 
@@ -1158,6 +1179,22 @@ export default function PetManagementModule({
 
   return (
     <div className="pet-module">
+      <ConfirmDialog
+        open={!!archiveTarget}
+        title="Archive this pet?"
+        description={
+          archiveTarget
+            ? `${archiveTarget.pet_name}'s record will be archived and hidden from the active list. You can restore it anytime from View Archived.`
+            : ""
+        }
+        confirmLabel={archiving ? "Archiving..." : "Yes, Archive"}
+        cancelLabel="No"
+        tone="danger"
+        icon={Archive}
+        busy={archiving}
+        onConfirm={confirmArchive}
+        onCancel={() => setArchiveTarget(null)}
+      />
       {message && !formOpen && (
         <div
           className={`notice ${
@@ -2005,26 +2042,24 @@ export default function PetManagementModule({
               )}
             </div>
 
-            <label
+            <button
+              type="button"
               className={
                 showArchived
                   ? "archive-check active"
                   : "archive-check"
               }
+              aria-pressed={showArchived}
+              title={
+                showArchived
+                  ? "Showing archived pets. Click to show active pets."
+                  : "Click to show archived pets."
+              }
+              onClick={() => setShowArchived((current) => !current)}
             >
-              <input
-                type="checkbox"
-                checked={showArchived}
-                onChange={(event) =>
-                  setShowArchived(
-                    event.target.checked
-                  )
-                }
-              />
-
               <Archive size={15} />
               <span>View Archived</span>
-            </label>
+            </button>
           </div>
         </div>
 
@@ -2165,35 +2200,36 @@ export default function PetManagementModule({
                       <div className="actions">
                         <button
                           type="button"
+                          className="edit-icon-btn"
                           disabled={pet.is_archived}
                           title={
                             pet.is_archived
                               ? "Restore this pet to edit its record."
-                              : undefined
+                              : "Edit"
                           }
+                          aria-label="Edit"
                           onClick={() => handleEdit(pet)}
                         >
-                          <Edit3 size={15} />
-                          Edit
+                          <Pencil size={15} />
                         </button>
 
                         <button
                           type="button"
-                          className={
+                          className={`icon-only-btn ${
                             pet.is_archived ? "restore" : "danger"
+                          }`}
+                          title={pet.is_archived ? "Restore" : "Archive"}
+                          aria-label={
+                            pet.is_archived
+                              ? `Restore ${pet.pet_name}`
+                              : `Archive ${pet.pet_name}`
                           }
-                          onClick={() => handleArchiveToggle(pet)}
+                          onClick={() => requestArchiveToggle(pet)}
                         >
                           {pet.is_archived ? (
-                            <>
-                              <RotateCcw size={15} />
-                              Restore
-                            </>
+                            <RotateCcw size={15} />
                           ) : (
-                            <>
-                              <Archive size={15} />
-                              Archive
-                            </>
+                            <Archive size={15} />
                           )}
                         </button>
                       </div>
@@ -3336,6 +3372,7 @@ export default function PetManagementModule({
           color: #435f6b;
           font-size: 13px;
           font-weight: 700;
+          font-family: inherit;
           cursor: pointer;
           transition:
             background 0.2s ease,
@@ -3347,10 +3384,20 @@ export default function PetManagementModule({
           flex-shrink: 0;
         }
 
+        .archive-check:hover {
+          border-color: #9fcbe0;
+          background: #f5fbfd;
+        }
+
         .archive-check.active {
           border-color: #4da8da;
-          background: #eaf8fd;
-          color: #237da4;
+          background: #4da8da;
+          color: #ffffff;
+        }
+
+        .archive-check.active:hover {
+          border-color: #3f97c8;
+          background: #3f97c8;
         }
 
         .result-summary {
@@ -3533,6 +3580,24 @@ export default function PetManagementModule({
           cursor: not-allowed;
           background: #eef2f4;
           color: #9aa9b0;
+        }
+
+        .actions button.icon-only-btn {
+          width: 32px;
+          height: 32px;
+          padding: 0;
+          justify-content: center;
+          border-radius: 10px;
+        }
+
+        .actions button.edit-icon-btn {
+          width: 32px;
+          height: 32px;
+          padding: 0;
+          justify-content: center;
+          border-radius: 10px;
+          background: #e6f4fb;
+          color: #2c7fb8;
         }
 
         .actions .danger {
@@ -4485,8 +4550,28 @@ export default function PetManagementModule({
         .list-card .search { min-width:0; }
         .list-card .species-filter { min-width:0; }
         .list-card .archive-check { justify-content:center; white-space:nowrap; padding:0 16px; }
-        .list-card .archive-check input { width:17px; height:17px; accent-color:#4da8da; }
         .list-card .result-summary { padding-top:17px; border-top:1px solid #edf3f6; margin-top:22px; }
+
+        /* Pet list polish (styles only). */
+        .list-card .register-pet-btn { min-height:48px; padding:0 20px; border-radius:12px; font-size:14px; box-shadow:0 6px 16px rgba(77,168,218,.22); }
+        .list-card .result-summary { font-size:13.5px; color:#6f8792; }
+        .list-card .table-scroll { margin-top:16px; }
+        .list-card .table thead th { padding:14px 18px; color:#5f7884; letter-spacing:.06em; }
+        .list-card .table thead th:first-child { border-radius:12px 0 0 12px; }
+        .list-card .table thead th:last-child { border-radius:0 12px 12px 0; }
+        .list-card .table td { padding:14px 18px; font-size:14.5px; color:#2f4a56; }
+        .list-card .table td small { font-size:12.5px; color:#7b8e97; margin-top:2px; }
+        .list-card .table tbody tr:hover { background:#f5fbfe; }
+        /* Pet name: bold and clickable (it opens the pet's history). */
+        .list-card .pet-cell-link { gap:13px; }
+        .list-card .pet-cell-link span { font-weight:700; font-size:15px; color:#1d3a4a; transition:color .15s ease; }
+        .list-card .pet-cell-link:hover span { text-decoration:none; color:#2c7fb8; }
+        .list-card .pet-cell-link img,
+        .list-card .pet-cell-link .photo { width:44px; height:44px; border-radius:12px; box-shadow:0 2px 8px rgba(47,117,150,.10); }
+        /* Owner: lighter than the pet name, with a round avatar. */
+        .list-card td > .pet-cell:not(.pet-cell-link) { gap:10px; font-weight:600; font-size:14.5px; color:#2f4a56; }
+        .list-card td > .pet-cell:not(.pet-cell-link) .owner-avatar { width:32px; height:32px; border-radius:50%; }
+        .list-card .pill { padding:5px 12px; font-weight:700; }
 
         @media (max-width: 1000px) {
           .grid {

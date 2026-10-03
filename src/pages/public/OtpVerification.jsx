@@ -163,6 +163,12 @@ export default function OtpVerification() {
   const [resent, setResent] = useState(false);
   const [resetToken, setResetToken] = useState(0);
   const [trustDevice, setTrustDevice] = useState(false);
+  // Set synchronously so the auto-verify and a Verify OTP click landing at
+  // almost the same moment can never send two verification requests.
+  const submittingRef = useRef(false);
+  // The last complete code that was auto-submitted, so a wrong code isn't
+  // re-sent over and over -- it's only retried once the user edits it.
+  const lastAutoSubmittedRef = useRef('');
 
   function updateCode(value) {
     setCode(value);
@@ -170,8 +176,8 @@ export default function OtpVerification() {
   }
 
   async function submit(event) {
-    event.preventDefault();
-    if (loading) return;
+    event?.preventDefault();
+    if (loading || submittingRef.current) return;
 
     if (!/^\d{6}$/.test(code)) {
       setCodeError('Enter the 6-digit OTP sent to your email.');
@@ -180,6 +186,7 @@ export default function OtpVerification() {
     }
     setCodeError('');
 
+    submittingRef.current = true;
     setLoading(true);
     setMessage('');
     setResent(false);
@@ -203,9 +210,24 @@ export default function OtpVerification() {
     } catch (error) {
       setMessage(error.message || 'Unable to verify OTP.');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   }
+
+  // Verify automatically as soon as all 6 boxes hold a digit (typed or
+  // pasted), using the same submit() as the Verify OTP button. Clearing or
+  // changing a digit re-arms it; the same wrong code isn't re-sent on its own.
+  useEffect(() => {
+    if (!/^\d{6}$/.test(code)) {
+      lastAutoSubmittedRef.current = '';
+      return;
+    }
+    if (code === lastAutoSubmittedRef.current) return;
+    lastAutoSubmittedRef.current = code;
+    submit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code]);
 
   async function resend() {
     setLoading(true);

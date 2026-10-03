@@ -93,12 +93,12 @@ export default function GlobalToastCenter() {
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }
 
-  function showToast(message, type = 'info', duration = 5000) {
+  function showToast(message, type = 'info', duration = 5000, title = '') {
     const text = String(message || '').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 500) return;
 
     const id = `${Date.now()}-${sequence.current++}`;
-    setToasts((current) => [...current.slice(-3), { id, message: text, type }]);
+    setToasts((current) => [...current.slice(-3), { id, message: text, type, title: String(title || '').trim() }]);
 
     const timer = window.setTimeout(() => dismiss(id), duration);
     timers.current.set(id, timer);
@@ -117,7 +117,8 @@ export default function GlobalToastCenter() {
       if (seen.current.get(element) === text) return;
       seen.current.set(element, text);
 
-      showToast(text, getType(element, text));
+      // A notice can carry a short bold heading via data-toast-title.
+      showToast(text, getType(element, text), 5000, element.getAttribute('data-toast-title'));
       element.classList.add('pawcruz-toast-source');
       element.setAttribute('aria-hidden', 'true');
     }
@@ -187,7 +188,14 @@ export default function GlobalToastCenter() {
           return (
             <div key={toast.id} className={`global-toast ${toast.type}`} role="status">
               <Icon size={22} strokeWidth={2.2} aria-hidden="true" />
-              <p>{toast.message}</p>
+              {toast.title ? (
+                <div className="global-toast-body">
+                  <strong>{toast.title}</strong>
+                  <p>{toast.message}</p>
+                </div>
+              ) : (
+                <p>{toast.message}</p>
+              )}
               <button type="button" onClick={() => dismiss(toast.id)} aria-label="Close notification">
                 <X size={18} />
               </button>
@@ -200,6 +208,9 @@ export default function GlobalToastCenter() {
         .global-toast-region{position:fixed;top:20px;right:22px;z-index:2147483000;width:min(420px,calc(100vw - 32px));display:grid;gap:12px;pointer-events:none}
         .global-toast{pointer-events:auto;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;min-height:64px;padding:15px 14px 15px 16px;border:1px solid;border-radius:16px;background:#fff;box-shadow:0 14px 42px rgba(25,64,82,.20);animation:pawcruzToastIn .24s ease-out both}
         .global-toast p{margin:0;font-size:15px;font-weight:650;line-height:1.45;overflow-wrap:anywhere}
+        .global-toast-body{display:grid;gap:2px;min-width:0}
+        .global-toast-body strong{font-size:15.5px;font-weight:800;line-height:1.3}
+        .global-toast-body p{font-size:14px;font-weight:550;opacity:.85}
         .global-toast button{width:32px;height:32px;display:grid;place-items:center;border:0;border-radius:9px;background:transparent;color:currentColor;cursor:pointer;opacity:.72}
         .global-toast button:hover{background:rgba(0,0,0,.06);opacity:1}
         .global-toast.success{color:#167348;background:#effaf4;border-color:#ccebd9}

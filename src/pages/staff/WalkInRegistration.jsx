@@ -220,9 +220,6 @@ export default function WalkInRegistration({ profile }) {
         <div className="wr-toolbar">
           <div className="wr-toolbar-left">
             <h2><Users /> List of Pet Owners</h2>
-            <p className="wr-list-description">
-              Search registered pet owners, then create an appointment for one.
-            </p>
           </div>
 
           <div className="wr-toolbar-right">
@@ -456,15 +453,15 @@ export default function WalkInRegistration({ profile }) {
           <div className="wr-owner-pets-toolbar">
             <h3>Animal Patients ({visibleOwnerPets.length})</h3>
 
-            <label className={showArchivedForOwner ? "wr-archive-check active" : "wr-archive-check"}>
-              <input
-                type="checkbox"
-                checked={showArchivedForOwner}
-                onChange={(event) => setShowArchivedForOwner(event.target.checked)}
-              />
+            <button
+              type="button"
+              className={showArchivedForOwner ? "wr-archive-check active" : "wr-archive-check"}
+              aria-pressed={showArchivedForOwner}
+              onClick={() => setShowArchivedForOwner((current) => !current)}
+            >
               <Archive size={15} />
               <span>View Archived</span>
-            </label>
+            </button>
           </div>
 
           {ownerPetsError && <p className="wr-error">{ownerPetsError}</p>}
@@ -624,8 +621,10 @@ const styles = `
 .wr-owner-summary .wr-new-account-btn{margin-left:auto;flex-shrink:0}
 .wr-owner-pets-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;margin:0 0 16px}
 .wr-owner-pets-toolbar h3{margin:0;color:#20313b}
-.wr-archive-check{display:inline-flex;align-items:center;gap:7px;border:1px solid #cfe4ed;border-radius:10px;padding:8px 12px;color:#55707c;font-weight:700;font-size:13px;cursor:pointer}
-.wr-archive-check.active{background:#eaf8fd;border-color:#a9dff0;color:#21697f}
+.wr-archive-check{display:inline-flex;align-items:center;gap:7px;border:1px solid #cfe4ed;border-radius:10px;padding:8px 12px;background:#fff;color:#55707c;font:inherit;font-weight:700;font-size:13px;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.wr-archive-check:hover{border-color:#9fcbe0;background:#f5fbfd}
+.wr-archive-check.active{background:#4da8da;border-color:#4da8da;color:#fff}
+.wr-archive-check.active:hover{background:#3f97c8;border-color:#3f97c8}
 .wr-pet-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
 .wr-pet-card{display:flex;gap:13px;align-items:flex-start;text-align:left;border:1px solid #e3edf2;border-radius:15px;padding:15px;background:#fff;cursor:pointer;font:inherit;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
 .wr-pet-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(47,117,150,.14);border-color:#a9dff0}
@@ -645,6 +644,28 @@ const styles = `
    becomes its own labeled row inside the card, using data-label (set in
    the JSX) as the visible label via ::before. Data-fetching and actions
    are unchanged; only the same cells render in a different layout. */
+/* Pet owner list polish (styles only). */
+.wr-list-card .wr-toolbar{margin-bottom:18px}
+.wr-list-card .search{height:46px;max-width:460px;flex:1 1 360px;border-color:#d6e7ee;border-radius:12px;padding-left:14px;gap:9px;transition:border-color .15s ease,box-shadow .15s ease}
+.wr-list-card .search:focus-within{border-color:#4DA8DA;box-shadow:0 0 0 3px rgba(77,168,218,.14)}
+.wr-list-card .search input{font-size:14px}
+.wr-list-card .wr-new-account-btn{height:46px;border-radius:12px;padding:0 18px;box-shadow:0 6px 16px rgba(77,168,218,.22)}
+.wr-list-card .wr-table thead th{padding:14px 16px;color:#5f7884;font-size:11px;letter-spacing:.06em}
+.wr-list-card .wr-table thead th:first-child{border-radius:12px 0 0 12px}
+.wr-list-card .wr-table thead th:last-child{border-radius:0 12px 12px 0}
+.wr-list-card .wr-table tbody td{padding:13px 16px;border-bottom:1px solid #edf4f7}
+.wr-list-card .wr-table tbody tr:last-child td{border-bottom:0}
+.wr-list-card .wr-table tbody tr{transition:background .15s ease}
+.wr-list-card .wr-table tbody tr:hover{background:#f5fbfe}
+.wr-list-card .wr-owner-cell-link{gap:12px}
+.wr-list-card .wr-owner-name{font-weight:700;font-size:14.5px;color:#1d3a4a;transition:color .15s ease}
+.wr-list-card .wr-owner-cell-link:hover .wr-owner-name{text-decoration:none;color:#2c7fb8}
+.wr-list-card .wr-owner-avatar{width:40px;height:40px;box-shadow:0 2px 8px rgba(47,117,150,.10)}
+.wr-list-card .wr-cell-text{font-size:14px;color:#3f5966}
+.wr-list-card .wr-pill{padding:5px 12px;font-size:12px;font-weight:700}
+.wr-list-card .wr-appt-btn{height:34px;padding:0 12px;border-radius:10px;font-size:12px;transition:background .15s ease,color .15s ease}
+.wr-list-card .wr-view-pets-btn{background:#fff;color:#2c7fb8;border:1px solid #cfe6f0}
+.wr-list-card .wr-view-pets-btn:hover{background:#f0f8fc;border-color:#a9d6ea}
 @media(max-width:800px){
   .wr-toolbar{flex-direction:column;align-items:stretch}
   .wr-toolbar-right{justify-content:stretch}

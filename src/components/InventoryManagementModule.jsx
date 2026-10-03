@@ -13,7 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Edit3,
+  Pencil,
   FileDown,
   History,
   PackagePlus,
@@ -1998,34 +1998,29 @@ export default function InventoryManagementModule({
         </select>
 
         {canManageItems && (
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={
-                filters.includeArchived
-              }
-              onChange={(e) =>
-                setFilters({
-                  ...filters,
-                  includeArchived:
-                    e.target
-                      .checked,
-                })
-              }
-            />
-
+          <button
+            type="button"
+            className={`toggle-filter${
+              filters.includeArchived ? " on" : ""
+            }`}
+            aria-pressed={filters.includeArchived}
+            title={
+              filters.includeArchived
+                ? "Showing deactivated items too. Click to hide them."
+                : "Click to also show deactivated items."
+            }
+            onClick={() =>
+              setFilters({
+                ...filters,
+                includeArchived:
+                  !filters.includeArchived,
+              })
+            }
+          >
+            <Archive size={16} />
             Deactivated
-          </label>
+          </button>
         )}
-
-        <button
-          type="button"
-          className="secondary"
-          onClick={load}
-        >
-          <RefreshCw size={17} />
-          Refresh
-        </button>
 
         <button
           type="button"
@@ -2225,18 +2220,16 @@ export default function InventoryManagementModule({
                           {canManageItems && (
                             <button
                               type="button"
+                              className="edit-icon-btn"
                               title="Edit"
+                              aria-label="Edit"
                               onClick={() =>
                                 openEdit(
                                   item
                                 )
                               }
                             >
-                              <Edit3
-                                size={
-                                  16
-                                }
-                              />
+                              <Pencil size={15} />
                             </button>
                           )}
 
@@ -4087,6 +4080,38 @@ export default function InventoryManagementModule({
           transition: border-color .15s ease, background .15s ease;
         }
 
+        .toggle-filter {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          font-size: 14px;
+          font-weight: 600;
+          color: #20313b;
+          background: #fff;
+          border: 1px solid #cfe4ec;
+          border-radius: 10px;
+          padding: 9px 13px;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: border-color .15s ease, background .15s ease, color .15s ease;
+        }
+
+        .toggle-filter:hover {
+          border-color: #9fcbe0;
+          background: #f5fbfd;
+        }
+
+        .toggle-filter.on {
+          background: #4da8da;
+          border-color: #4da8da;
+          color: #fff;
+        }
+
+        .toggle-filter.on:hover {
+          background: #3f97c8;
+          border-color: #3f97c8;
+        }
+
         .check:hover {
           border-color: #9fcbe0;
           background: #f5fbfd;
@@ -4222,6 +4247,16 @@ export default function InventoryManagementModule({
           padding: 7px 9px;
           background: #eaf7fb;
           color: #287ca5;
+        }
+
+        .actions button.edit-icon-btn {
+          width: 32px;
+          height: 32px;
+          padding: 0;
+          justify-content: center;
+          border-radius: 10px;
+          background: #e6f4fb;
+          color: #2c7fb8;
         }
 
         .archived {

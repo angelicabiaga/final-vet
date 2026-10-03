@@ -308,7 +308,7 @@ export async function rescheduleAppointment(id, values, ownerId, changedBy) {
 // Guaranteed to satisfy the app-wide password policy (8+ chars, upper,
 // lower, number, special) so a guest's temp password never fails the same
 // checklist they're required to meet when they change it on first login.
-function generateTempPassword() {
+export function generateTempPassword() {
   const upper = "ABCDEFGHJKMNPQRSTUVWXYZ";
   const lower = "abcdefghjkmnpqrstuvwxyz";
   const digits = "23456789";

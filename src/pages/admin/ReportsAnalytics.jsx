@@ -629,7 +629,7 @@ export default function ReportsAnalytics({ profile }) {
       .kpi b{font-size:21px;color:#24566d;display:block;line-height:1.2;white-space:nowrap}
       .kpi span{color:#6F7F88;font-size:12.5px;font-weight:700;white-space:nowrap}
 
-      .panel{padding:24px;display:grid;gap:20px}
+      .panel{padding:24px;display:grid;gap:20px;overflow:hidden}.panel>.panel-head{margin:-24px -24px 0;padding:18px 24px;background:linear-gradient(115deg,#2c7fb8,#1f5f8f)}.panel>.panel-head h3{color:#fff!important;font-size:18px!important}.panel>.panel-head span{color:rgba(255,255,255,.82)!important}.panel>.panel-head button{border-radius:999px;padding:0 18px;font-weight:700;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.45)}.panel>.panel-head button:hover{background:rgba(255,255,255,.24)}
       .panel-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
       .panel-head h3{margin:0;color:#24566d;font-size:17px}
       .panel-head span{color:#6F7F88;font-size:13px;line-height:1.5}
@@ -664,7 +664,7 @@ export default function ReportsAnalytics({ profile }) {
       @media(max-width:700px){
         .head,.filters{flex-direction:column;align-items:stretch}
         .head>div:last-child{flex-wrap:wrap}
-        .panel{padding:18px}
+        .panel{padding:18px}.panel>.panel-head{margin:-18px -18px 0;padding:16px 18px}
         .panel-head{align-items:flex-start;flex-direction:column}
         .kpi,.stat-grid article,.period-row article{flex-basis:100%;max-width:none}
       }

@@ -5,9 +5,9 @@ import {
   MessageCircle,
   Paperclip,
   Plus,
+  Search,
   Send,
   Sparkles,
-  UserCircle,
   X,
 } from "lucide-react";
 import {
@@ -20,16 +20,57 @@ import {
   subscribeToMessages,
   subscribeToMessagingOverview,
 } from "../services/messageService";
-import { formatDateTime12h } from "../utils/timeFormat";
 import chatbotIcon from "../assets/reference/chatbot.png";
+
+function isSameDay(a, b) {
+  return a.toDateString() === b.toDateString();
+}
+
+// Separator between days in a conversation: "Today", "Yesterday", or the date.
+function formatDayLabel(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  if (isSameDay(date, now)) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (isSameDay(date, yesterday)) return "Yesterday";
+  return date.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+  });
+}
+
+// Time under each bubble, e.g. "9:31 AM".
+function formatClock(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+// Initials ("Neil Norrman A. Cruz" -> "NC") for anyone without a photo.
+function initialsOf(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  const first = parts[0][0] || "";
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
+  return (first + last).toUpperCase();
+}
 
 // Consistent default avatar whenever a profile photo isn't on file.
 function Avatar({ src, alt, size = 38 }) {
   return src ? (
     <img className="msgAvatar" src={src} alt={alt} style={{ width: size, height: size }} />
   ) : (
-    <span className="msgAvatar msgAvatarFallback" style={{ width: size, height: size }}>
-      <UserCircle size={Math.round(size * 0.72)} />
+    <span
+      className="msgAvatar msgAvatarFallback"
+      style={{ width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.34)) }}
+      role="img"
+      aria-label={alt}
+    >
+      {initialsOf(alt)}
     </span>
   );
 }
@@ -44,6 +85,7 @@ export default function MessagingModule({ profile }) {
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [selectedContacts, setSelectedContacts] = useState([]);
   const [subject, setSubject] = useState("");
+  const [contactSearch, setContactSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -252,6 +294,7 @@ export default function MessagingModule({ profile }) {
       setShowNewConversation(false);
       setSelectedContacts([]);
       setSubject("");
+      setContactSearch("");
       await loadConversations();
       setActiveConversation(conversation);
     } catch (createError) {
@@ -341,6 +384,12 @@ export default function MessagingModule({ profile }) {
     return `${senderName}: ${content}`;
   }
 
+  // A conversation with nobody else in it (left over from older data) is just
+  // you talking to yourself -- keep it out of the list. Nothing is deleted.
+  const inboxConversations = conversations.filter(
+    (conversation) => getOtherParticipants(conversation).length > 0
+  );
+
   return (
     <div className="msg">
       <div className="left">
@@ -371,10 +420,10 @@ export default function MessagingModule({ profile }) {
 
         {loading ? (
           <p className="muted">Loading conversations...</p>
-        ) : conversations.length === 0 ? (
+        ) : inboxConversations.length === 0 ? (
           <p className="muted">No conversations yet.</p>
         ) : (
-          conversations.map((conversation) => (
+          inboxConversations.map((conversation) => (
             <button
               type="button"
               className={`conv ${
@@ -413,15 +462,25 @@ export default function MessagingModule({ profile }) {
             </div>
 
             <div className="messages" ref={messagesContainerRef} onScroll={handleMessagesScroll}>
-              {messages.map((message) => {
+              {messages.map((message, index) => {
                 const mine = message.sender_id === profile.id;
+                const previous = messages[index - 1];
+                const newDay = !previous ||
+                  new Date(previous.created_at).toDateString() !== new Date(message.created_at).toDateString();
                 return (
-                  <div key={message.id} className={`bubbleRow ${mine ? "mine" : ""}`}>
+                  <React.Fragment key={message.id}>
+                  {newDay && (
+                    <div className="msgDay" role="separator">
+                      <span>{formatDayLabel(message.created_at)}</span>
+                    </div>
+                  )}
+                  <div className={`bubbleRow ${mine ? "mine" : ""}`}>
                     <Avatar
                       src={mine ? profile.avatar_url : message.sender?.avatar_url}
                       alt={mine ? (profile.full_name || profile.username || "You") : (message.sender?.full_name || "PawCruz User")}
                       size={28}
                     />
+                    <div className="bubbleStack">
                     <div className={`bubble ${mine ? "mine" : ""}`}>
                       <small className="senderName">{mine ? (profile.full_name || profile.username || "You") : (message.sender?.full_name || "PawCruz User")}</small>
                       {message.body && <p>{message.body}</p>}
@@ -434,9 +493,11 @@ export default function MessagingModule({ profile }) {
                           📎 {message.attachment_name || "Attachment"}
                         </a>
                       )}
-                      <time>{formatDateTime12h(message.created_at)}</time>
+                    </div>
+                    <time className="bubbleTime" dateTime={message.created_at}>{formatClock(message.created_at)}</time>
                     </div>
                   </div>
+                  </React.Fragment>
                 );
               })}
               <div ref={endRef} />
@@ -480,7 +541,7 @@ export default function MessagingModule({ profile }) {
             <button
               type="button"
               className="x"
-              onClick={() => setShowNewConversation(false)}
+              onClick={() => { setShowNewConversation(false); setContactSearch(""); }}
             >
               <X />
             </button>
@@ -494,8 +555,33 @@ export default function MessagingModule({ profile }) {
               />
             </label>
             <p>Select recipient(s)</p>
+            <label className="contactSearch">
+              <Search size={17} />
+              <input
+                value={contactSearch}
+                onChange={(event) => setContactSearch(event.target.value)}
+                placeholder="Search by name, role or email"
+                aria-label="Search recipients"
+              />
+              {contactSearch && (
+                <button type="button" aria-label="Clear search" onClick={() => setContactSearch("")}>
+                  <X size={14} />
+                </button>
+              )}
+            </label>
             <div className="contacts">
-              {contacts.map((contact) => (
+              {/* Ticked recipients stay selected while the list is filtered. */}
+              {contacts
+                .filter((contact) => {
+                  const term = contactSearch.trim().toLowerCase();
+                  if (!term) return true;
+                  return [contact.full_name, contact.username, contact.email, contact.role]
+                    .join(" ")
+                    .toLowerCase()
+                    .replace(/_/g, " ")
+                    .includes(term);
+                })
+                .map((contact) => (
                 <label key={contact.id}>
                   <input
                     type="checkbox"
@@ -530,7 +616,7 @@ export default function MessagingModule({ profile }) {
       )}
 
       <style>{`
-        .msg{height:calc(100vh - 138px);min-height:570px;background:#fff;border-radius:18px;display:grid;grid-template-columns:320px 1fr;overflow:hidden;box-shadow:0 8px 24px #2f759616}.left{min-height:0;border-right:1px solid #deedf2;overflow-y:auto}.lefthead{display:flex;align-items:center;justify-content:space-between;padding:18px}.lefthead h3{margin:0}.lefthead button,.composer button{border:0;background:#4DA8DA;color:white;border-radius:10px;padding:8px}.composer button:disabled{opacity:.6;cursor:not-allowed}.conv{width:100%;border:0;border-top:1px solid #edf5f7;background:white;padding:14px;text-align:left;display:flex;align-items:center;gap:11px;justify-content:space-between;cursor:pointer}.conv.active{background:#eaf7fc}.conv div{flex:1;display:grid;gap:4px;min-width:0}.msgAvatar{flex-shrink:0;border-radius:50%;object-fit:cover;display:grid;place-items:center}.msgAvatarFallback{background:#e6f6fc;color:#4DA8DA}.conversationRole{font-style:normal;color:#397d9d;font-size:11px;font-weight:700;text-transform:capitalize}.conv small{color:#73858e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}.conv span{background:#4DA8DA;color:#fff;border-radius:20px;padding:4px 8px;height:max-content}.chat{display:flex;flex-direction:column;min-width:0;min-height:0}.chathead{flex-shrink:0;display:flex;align-items:center;gap:11px;padding:17px;border-bottom:1px solid #deedf2}.chathead div{display:grid;gap:4px;min-width:0}.chathead small{color:#73858e}.messages{flex:1;min-height:0;overflow-y:auto;padding:20px;background:#f7fcfe;scrollbar-width:thin;scrollbar-color:#b8dcec transparent}.messages::-webkit-scrollbar{width:8px}.messages::-webkit-scrollbar-track{background:transparent}.messages::-webkit-scrollbar-thumb{background:#b8dcec;border-radius:999px}.messages::-webkit-scrollbar-thumb:hover{background:#8fc4de}.bubbleRow{display:flex;align-items:flex-end;gap:8px;margin-bottom:12px}.bubbleRow.mine{flex-direction:row-reverse}.bubble{max-width:72%;background:#fff;padding:11px 13px;border-radius:4px 14px 14px 14px;box-shadow:0 3px 12px #2f759610;display:grid;gap:5px;min-width:0}.bubble.mine{background:#dff3fb;border-radius:14px 4px 14px 14px}.bubble p{margin:0;white-space:pre-wrap}.bubble small,.bubble time{font-size:10px;color:#758790}.bubble .senderName{font-weight:800;color:#315f76;font-size:11px}.bubble.mine .senderName{text-align:right;color:#2b6f8d}.bubble a{color:#217ba7}.composer{flex-shrink:0;display:flex;gap:8px;padding:13px;border-top:1px solid #deedf2}.composer>input{flex:1;border:1px solid #cfe2e9;border-radius:12px;padding:12px}.composer label{display:grid;place-items:center;cursor:pointer}.composer label input{display:none}.empty{margin:auto;text-align:center;color:#789}.muted{padding:15px;color:#789}.modal{position:fixed;inset:0;background:#20313b99;z-index:60;display:grid;place-items:center;padding:20px}.new{background:#fff;border-radius:18px;padding:24px;width:min(520px,100%);max-height:90vh;overflow-y:auto;box-sizing:border-box;position:relative}.x{position:absolute;right:15px;top:15px;border:0;background:#eef6f9;border-radius:50%;padding:6px}.new>label{display:grid;gap:6px}.new input[type=text],.new>label input{padding:11px;border:1px solid #cee2e9;border-radius:9px}.contacts{max-height:300px;overflow:auto;border:1px solid #e0edf1;border-radius:10px}.contacts label{display:flex;gap:10px;padding:11px;border-bottom:1px solid #edf3f5}.contacts span{display:grid}.contacts small{color:#789}.create{width:100%;margin-top:14px;border:0;background:#4DA8DA;color:white;padding:12px;border-radius:10px}.toast{position:fixed;right:20px;bottom:20px;background:#fff0f0;color:#a33;padding:12px;border-radius:10px;display:flex;gap:10px}.toast button{border:0;background:none}.aiEntry{position:relative;display:flex;align-items:center;gap:12px;margin:0 12px 12px;padding:12px 12px;border-radius:16px;text-decoration:none;color:#fff;background:linear-gradient(120deg,#2c6ba3 0%,#3b8fc4 55%,#4DA8DA 100%);background-size:200% 200%;box-shadow:0 10px 22px rgba(44,107,163,.28);overflow:hidden;isolation:isolate;animation:aiEntryShift 8s ease-in-out infinite;transition:transform .2s ease,box-shadow .2s ease}
+        .msg{height:calc(100vh - 138px);min-height:570px;background:#fff;border-radius:20px;display:grid;grid-template-columns:minmax(280px,28%) minmax(0,1fr);overflow:hidden;box-shadow:0 10px 30px rgba(47,117,150,.10);border:1px solid #e6f0f4;color:#1d3a4a}.left{min-height:0;border-right:1px solid #e6f0f4;overflow-y:auto;background:#fff;scrollbar-width:thin;scrollbar-color:#cfe6f0 transparent}.lefthead{position:sticky;top:0;z-index:2;box-sizing:border-box;min-height:78px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 22px;background:#fff;border-bottom:1px solid #e6f0f4}.lefthead h3{margin:0;font-size:21px;font-weight:800;color:#1d3a4a;letter-spacing:-.01em}.lefthead button,.composer button{border:0;background:#4DA8DA;color:white;border-radius:12px;padding:8px;cursor:pointer}.lefthead button{width:44px;height:44px;display:grid;place-items:center;box-shadow:0 6px 16px rgba(77,168,218,.32);transition:background .15s ease,transform .15s ease}.lefthead button:hover{background:#3d97c9;transform:translateY(-1px)}.composer button:disabled{opacity:.6;cursor:not-allowed}.conv{position:relative;width:100%;border:0;border-bottom:1px solid #eef4f7;background:white;padding:16px 22px;text-align:left;display:flex;align-items:center;gap:14px;justify-content:space-between;cursor:pointer;transition:background .15s ease}.conv:hover{background:#f6fbfd}.conv.active{background:#eaf6fc;box-shadow:inset 3px 0 0 #4DA8DA}.conv div{flex:1;display:grid;gap:3px;min-width:0}.conv b{font-size:15px;font-weight:700;color:#1d3a4a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv .msgAvatar{width:44px!important;height:44px!important}.msgAvatar{flex-shrink:0;box-sizing:border-box;border-radius:30%;object-fit:cover;display:grid;place-items:center}.msgAvatarFallback{background:#e3f2fa;color:#2c7fb8;font-weight:800;letter-spacing:.02em;line-height:1;user-select:none}.conv .msgAvatarFallback,.chathead .msgAvatarFallback{font-size:15px!important}.bubbleRow .msgAvatarFallback{font-size:11px!important}.conversationRole{font-style:normal;color:#2c7fb8;font-size:11.5px;font-weight:700;text-transform:capitalize}.conv small{color:#7b8e97;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.conv span{flex-shrink:0;min-width:22px;height:22px;box-sizing:border-box;display:grid;place-items:center;background:#2c7fb8;color:#fff;border-radius:999px;padding:0 7px;font-size:11.5px;font-weight:700}.chat{display:flex;flex-direction:column;min-width:0;min-height:0;background:#fff}.chathead{flex-shrink:0;box-sizing:border-box;min-height:78px;display:flex;align-items:center;gap:13px;padding:16px 24px;background:#fff;border-bottom:1px solid #e3eff4}.chathead .msgAvatar{width:44px!important;height:44px!important}.chathead div{display:grid;gap:2px;min-width:0}.chathead b{font-size:16.5px;font-weight:700;color:#1d3a4a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chathead small{color:#7b8e97;font-size:13px}.messages{flex:1;min-height:0;overflow-y:auto;padding:26px 30px;background:#f8fcfe;scrollbar-width:thin;scrollbar-color:#b8dcec transparent}.messages::-webkit-scrollbar{width:8px}.messages::-webkit-scrollbar-track{background:transparent}.messages::-webkit-scrollbar-thumb{background:#b8dcec;border-radius:999px}.messages::-webkit-scrollbar-thumb:hover{background:#8fc4de}.msgDay{display:flex;align-items:center;gap:14px;margin:6px 0 20px;color:#8a9ca5;font-size:12px}.msgDay::before,.msgDay::after{content:"";flex:1;height:1px;background:#e3eff4}.bubbleRow{display:flex;align-items:flex-end;gap:10px;margin-bottom:16px}.bubbleStack{display:flex;flex-direction:column;align-items:flex-start;gap:5px;max-width:58%;min-width:0}.bubbleRow.mine .bubbleStack{align-items:flex-end}.bubbleStack .bubble{max-width:100%}.bubbleRow .msgAvatar{margin-bottom:21px}.bubbleTime{font-size:11px;color:#8a9ca5;padding:0 4px}.bubbleRow.mine{flex-direction:row-reverse}.bubbleRow .msgAvatar{width:32px!important;height:32px!important}.bubble{max-width:58%;background:#fff;padding:12px 16px;border:1px solid #e1edf2;border-radius:6px 18px 18px 18px;box-shadow:0 2px 10px rgba(47,117,150,.06);display:grid;gap:4px;min-width:0}.bubble.mine{background:#d4ecf8;border-color:#c2e2f2;border-radius:18px 6px 18px 18px;box-shadow:0 4px 14px rgba(77,168,218,.18)}.bubble p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.5;color:#1d3a4a}.bubble small,.bubble time{font-size:10.5px;color:#7b8e97}.bubble .senderName{font-weight:600;color:#2c7fb8;font-size:11.5px}.bubble.mine .senderName{text-align:right;color:#1f6f9f}.bubble time{margin-top:2px}.bubble.mine time{text-align:right;color:#5f7f8f}.bubble a{color:#217ba7;font-weight:600;overflow-wrap:anywhere}.composer{flex-shrink:0;display:flex;align-items:center;gap:12px;padding:15px 20px;background:#fff;border-top:1px solid #e3eff4}.composer>input{flex:1;min-width:0;height:46px;box-sizing:border-box;border:1px solid #d6e7ee;border-radius:12px;padding:0 16px;background:#fff;font-size:14.5px;color:#1d3a4a;outline:0;transition:border-color .15s ease,box-shadow .15s ease}.composer>input:focus{border-color:#4DA8DA;box-shadow:0 0 0 3px rgba(77,168,218,.14)}.composer label{width:42px;height:42px;flex-shrink:0;border-radius:12px;display:grid;place-items:center;cursor:pointer;color:#5f7f8f;transition:background .15s ease,color .15s ease}.composer label:hover{background:#f0f8fc;color:#2c7fb8}.composer label input{display:none}.composer button{width:46px;height:46px;flex-shrink:0;display:grid;place-items:center;border-radius:12px;box-shadow:0 6px 16px rgba(77,168,218,.30);transition:background .15s ease}.composer button:hover:not(:disabled){background:#3d97c9}.empty{margin:auto;text-align:center;color:#7b8e97}.empty h3{color:#1d3a4a;margin:12px 0 6px}.empty svg{color:#9fcbe0}.muted{padding:16px 22px;color:#7b8e97}.modal{position:fixed;inset:0;background:#20313b99;z-index:60;display:grid;place-items:center;padding:20px}.new{background:#fff;border-radius:20px;padding:24px;width:min(520px,100%);max-height:90vh;overflow-y:auto;box-sizing:border-box;position:relative;display:grid;gap:12px}.new h2{margin:0;color:#1d3a4a;font-size:21px}.new p{margin:0;font-weight:600;color:#2c7fb8;font-size:13px}.x{position:absolute;right:15px;top:15px;border:0;background:#eef6f9;border-radius:50%;padding:6px;cursor:pointer}.new>label{display:grid;gap:6px;font-weight:600;color:#2c7fb8;font-size:13px}.new input[type=text],.new>label input{padding:11px 13px;border:1px solid #d6e7ee;border-radius:12px;font-size:14.5px}.new .contactSearch{display:flex;align-items:center;gap:10px;height:46px;box-sizing:border-box;padding:0 14px;border:1px solid #d6e7ee;border-radius:12px;background:#fff;color:#7b8e97;font-weight:400;cursor:text}.contactSearch:focus-within{border-color:#4DA8DA;box-shadow:0 0 0 3px rgba(77,168,218,.14)}.new .contactSearch input{flex:1;min-width:0;height:100%;padding:0!important;border-radius:0!important;border:0!important;outline:0;background:transparent!important;box-shadow:none!important;font-size:14.5px;color:#1d3a4a}.contactSearch button{width:24px;height:24px;flex-shrink:0;border:0;border-radius:50%;display:grid;place-items:center;background:#eaf6fc;color:#2c7fb8;cursor:pointer}.contacts{max-height:300px;overflow:auto;border:1px solid #e1edf2;border-radius:14px}.contacts label{display:flex;align-items:center;gap:10px;padding:11px 13px;border-bottom:1px solid #eef4f7;cursor:pointer}.contacts label:last-child{border-bottom:0}.contacts span{display:grid;color:#1d3a4a;font-weight:600}.contacts small{color:#7b8e97;font-weight:400}.create{width:100%;margin-top:4px;border:0;background:#4DA8DA;color:white;padding:13px;border-radius:12px;font-weight:700;cursor:pointer}.toast{position:fixed;right:20px;bottom:20px;background:#fff0f0;color:#a33;padding:12px 14px;border-radius:12px;display:flex;align-items:center;gap:10px;box-shadow:0 10px 26px rgba(25,64,82,.14)}.toast button{border:0;background:none;cursor:pointer}.aiEntry{position:relative;display:flex;align-items:center;gap:12px;margin:0 12px 12px;padding:12px 12px;border-radius:16px;text-decoration:none;color:#fff;background:linear-gradient(120deg,#2c6ba3 0%,#3b8fc4 55%,#4DA8DA 100%);background-size:200% 200%;box-shadow:0 10px 22px rgba(44,107,163,.28);overflow:hidden;isolation:isolate;animation:aiEntryShift 8s ease-in-out infinite;transition:transform .2s ease,box-shadow .2s ease}
 .aiEntry::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.28) 48%,transparent 66%);transform:translateX(-120%);animation:aiEntryShine 4.5s ease-in-out infinite}
 .aiEntry:hover{transform:translateY(-2px);box-shadow:0 14px 28px rgba(44,107,163,.36)}
 .aiEntry:focus-visible{outline:3px solid #173e52;outline-offset:3px}
@@ -549,7 +635,7 @@ export default function MessagingModule({ profile }) {
 @keyframes aiEntryRing{0%{transform:scale(.92);opacity:.9}100%{transform:scale(1.18);opacity:0}}
 @keyframes aiEntryBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 @media(prefers-reduced-motion:reduce){.aiEntry,.aiEntry::before,.aiEntryAvatar::after,.aiEntryAvatar img{animation:none}}
-@media(max-width:750px){.msg{grid-template-columns:1fr;height:auto}.left{max-height:260px;border-right:0;border-bottom:1px solid #deedf2}.chat{min-height:500px}.bubble{max-width:88%}}
+@media(max-width:750px){.msg{grid-template-columns:1fr;height:auto}.left{max-height:300px;border-right:0;border-bottom:1px solid #e6f0f4}.chat{min-height:520px}.bubble{max-width:82%}.lefthead,.chathead{padding:14px 16px;min-height:68px}.conv{padding:14px 16px}.messages{padding:18px 14px}.composer{padding:12px 14px}}
       `}</style>
     </div>
   );
