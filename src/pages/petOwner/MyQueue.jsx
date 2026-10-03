@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { CalendarClock, RotateCcw, TriangleAlert, XCircle } from "lucide-react";
 import AppShell from "../../components/AppShell";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import DoctorOfferNotice from "../../components/DoctorOfferNotice";
+import DoctorTimeFields from "../../components/DoctorTimeFields";
 import { drName, formatDayLabel } from "../../components/VetLeaveImpact";
 import { getQueue, subscribeToQueue } from "../../services/queueService";
 import { getMyDoctorOffers, getQueueDoctorAlerts, getQueueVisitRescheduleOptions, ownerChangeQueueVisit, ownerErrorMessage } from "../../services/doctorChangeService";
@@ -44,13 +45,6 @@ function QueueSelfService({ entry, profile, petNames, onDone }) {
     return () => { active = false; };
   }, [rebooking, date, entry.id]);
 
-  const choices = useMemo(() => (slots || []).flatMap(vet => (vet.starts || []).map(time => ({
-    key: `${vet.veterinarian_id}|${String(time).slice(0, 5)}`,
-    label: `${formatTime12h(time)} · ${drName(vet.full_name)}`,
-    time: String(time).slice(0, 5),
-    vetName: vet.full_name
-  }))).sort((a, b) => a.time.localeCompare(b.time)), [slots]);
-
   async function run(action, extra, success) {
     try {
       setBusy(action);
@@ -83,19 +77,14 @@ function QueueSelfService({ entry, profile, petNames, onDone }) {
           <label>Date
             <input type="date" min={todayLocal()} value={date} onChange={event => setDate(event.target.value)} />
           </label>
-          <label>Time and doctor
-            <select value={choice} onChange={event => setChoice(event.target.value)} disabled={!slots || !choices.length}>
-              <option value="">{!slots ? "Loading free times…" : choices.length ? "Choose a time" : "No free times that day"}</option>
-              {choices.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
-            </select>
-          </label>
+          <DoctorTimeFields key={date} slots={slots} value={choice} onChange={setChoice} />
           <div className="mq-self-actions">
             <button type="button" className="mq-btn mq-btn-ghost" disabled={Boolean(busy)} onClick={() => setRebooking(false)}>Back</button>
             <button type="button" className="mq-btn mq-btn-primary" disabled={!choice || Boolean(busy)} onClick={() => {
               const [veterinarianId, time] = choice.split("|");
-              const picked = choices.find(item => item.key === choice);
+              const picked = (slots || []).find(vet => vet.veterinarian_id === veterinarianId);
               run("reschedule", { date, veterinarianId, startTime: time },
-                `Rebooked: ${petNames || "your visit"} with ${drName(picked?.vetName)} at ${when(date, time)}.${date === todayLocal() ? "" : " Your queue number for today was released."}`);
+                `Rebooked: ${petNames || "your visit"} with ${drName(picked?.full_name)} at ${when(date, time)}.${date === todayLocal() ? "" : " Your queue number for today was released."}`);
             }}>{busy === "reschedule" ? "Saving…" : "Confirm rebook"}</button>
           </div>
         </div>

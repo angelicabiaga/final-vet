@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { CalendarClock, TriangleAlert } from "lucide-react";
 import ConfirmDialog from "./ConfirmDialog";
 import { getRescheduleOptions, ownerErrorMessage, respondDoctorOffer } from "../services/doctorChangeService";
 import { drName, formatDayLabel } from "./VetLeaveImpact";
+import DoctorTimeFields from "./DoctorTimeFields";
 import { todayLocal } from "../services/appointmentService";
 import { formatTime12h } from "../utils/timeFormat";
 
@@ -40,12 +41,6 @@ export default function DoctorOfferNotice({ offer, profile, onDone }) {
       .catch(err => active && setError(ownerErrorMessage(err)));
     return () => { active = false; };
   }, [rescheduling, date, offer.id]);
-
-  const choices = useMemo(() => (slots || []).flatMap(vet => (vet.starts || []).map(time => ({
-    key: `${vet.veterinarian_id}|${String(time).slice(0, 5)}`,
-    label: `${formatTime12h(time)} · ${drName(vet.full_name)}`,
-    time: String(time).slice(0, 5)
-  }))).sort((a, b) => a.time.localeCompare(b.time)), [slots]);
 
   async function answer(action, extra, success) {
     try {
@@ -100,12 +95,7 @@ export default function DoctorOfferNotice({ offer, profile, onDone }) {
           <label>Date
             <input type="date" min={today} value={date} onChange={event => setDate(event.target.value)} />
           </label>
-          <label>Time and doctor
-            <select value={choice} onChange={event => setChoice(event.target.value)} disabled={!slots || !choices.length}>
-              <option value="">{!slots ? "Loading free times…" : choices.length ? "Choose a time" : "No free times that day"}</option>
-              {choices.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
-            </select>
-          </label>
+          <DoctorTimeFields key={date} slots={slots} value={choice} onChange={setChoice} />
           <div className="don-actions">
             <button type="button" className="don-confirm" disabled={!choice || Boolean(busy)} onClick={() => {
               const [veterinarianId, time] = choice.split("|");
