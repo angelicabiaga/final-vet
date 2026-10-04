@@ -151,7 +151,6 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
   const registerFieldRef = (name) => (el) => { fieldRefs[name] = el; };
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [avatarDraft, setAvatarDraft] = useState(null);
   const [message, setMessage] = useState({ type: "", text: "" });
 
   const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
@@ -202,7 +201,6 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     setMode(next);
   }
 
-  useEffect(() => () => { if (avatarDraft?.previewUrl) URL.revokeObjectURL(avatarDraft.previewUrl); }, [avatarDraft]);
 
   function field(name, value) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -240,7 +238,8 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     }
   }
 
-  function pickAvatar(event) {
+  // Same as the other profiles: choosing a photo saves it right away.
+  async function pickAvatar(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
@@ -250,45 +249,15 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
     } catch (error) {
       return setMessage({ type: "error", text: error.message });
     }
-    setAvatarDraft((current) => {
-      if (current?.previewUrl) URL.revokeObjectURL(current.previewUrl);
-      return { file, previewUrl: URL.createObjectURL(file) };
-    });
-  }
-
-  function cancelAvatarDraft() {
-    if (avatarDraft?.previewUrl) URL.revokeObjectURL(avatarDraft.previewUrl);
-    setAvatarDraft(null);
-  }
-
-  async function saveAvatarDraft() {
-    if (!avatarDraft?.file) return;
-    setMessage({ type: "", text: "" });
     setUploading(true);
     try {
-      const avatar_url = await uploadProfileAvatar(vetId, avatarDraft.file);
+      const avatar_url = await uploadProfileAvatar(vetId, file);
+      // Only the photo changes; unsaved edits in the form stay unsaved.
       const saved = formFromProfile(data?.profile);
       const updated = await updateVeterinarianProfile(vetId, { ...saved, full_name: joinFullName(saved, titleOf(data?.profile?.full_name)), avatar_url }, viewerProfile);
       setData((current) => ({ ...current, profile: { ...current.profile, ...updated } }));
       setForm((current) => ({ ...current, avatar_url: updated.avatar_url || "" }));
-      cancelAvatarDraft();
       setMessage({ type: "success", text: "Profile photo updated." });
-    } catch (error) {
-      setMessage({ type: "error", text: error.message });
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function removePhoto() {
-    setMessage({ type: "", text: "" });
-    setUploading(true);
-    try {
-      const saved = formFromProfile(data?.profile);
-      const updated = await updateVeterinarianProfile(vetId, { ...saved, full_name: joinFullName(saved, titleOf(data?.profile?.full_name)), avatar_url: null }, viewerProfile);
-      setData((current) => ({ ...current, profile: { ...current.profile, ...updated } }));
-      setForm((current) => ({ ...current, avatar_url: updated.avatar_url || "" }));
-      setMessage({ type: "success", text: "Profile photo removed." });
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     } finally {
@@ -364,7 +333,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
   if (!data) return null;
 
   const { profile: vet } = data;
-  const photoUrl = avatarDraft?.previewUrl || vet.avatar_url || "";
+  const photoUrl = vet.avatar_url || "";
   const contact = [
     { icon: UserRound, label: "Full name", value: vet.full_name },
     { icon: AtSign, label: "Username", value: vet.username ? `@${vet.username}` : "" },
@@ -401,7 +370,7 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
             {isSelf && (
               <label className="vpd-camera" title={vet.avatar_url ? "Change photo" : "Upload photo"}>
                 <Camera size={15} />
-                <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickAvatar} />
+                <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={pickAvatar} disabled={uploading} />
               </label>
             )}
           </div>
@@ -412,15 +381,6 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
             <VerificationStatusBadge status={verificationStatus} />
           </div>
           {vet.specialization && <p className="vpd-spec"><Stethoscope size={15} /> {vet.specialization}</p>}
-          {isSelf && avatarDraft && (
-            <div className="vpd-photo-actions">
-              <button type="button" className="vpd-btn vpd-primary vpd-small" onClick={saveAvatarDraft} disabled={uploading}>{uploading ? "Saving…" : "Save photo"}</button>
-              <button type="button" className="vpd-btn vpd-ghost vpd-small" onClick={cancelAvatarDraft} disabled={uploading}>Cancel</button>
-            </div>
-          )}
-          {isSelf && !avatarDraft && vet.avatar_url && mode === "view" && (
-            <button type="button" className="vpd-link-danger" onClick={removePhoto} disabled={uploading}>{uploading ? "Removing…" : "Remove photo"}</button>
-          )}
           {isSelf && mode === "view" && (
             <div className="vpd-actions">
               <button type="button" className="vpd-btn vpd-primary" onClick={() => openMode("edit")}><PencilLine size={17} /> Edit profile</button>
@@ -537,13 +497,9 @@ export default function VeterinarianProfileDetail({ vetId, viewerProfile }) {
         .vpd-tags{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:10px}
         .vpd-role{background:#e7f6fc;color:#267fa9;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800}
         .vpd-spec{display:flex;align-items:center;gap:6px;margin:10px 0 0;color:#2c6ba3;font-weight:700;font-size:13.5px}
-        .vpd-photo-actions{display:flex;gap:8px;margin-top:12px}
-        .vpd-link-danger{margin-top:10px;border:0;background:none;color:#c1454c;font-weight:700;font-size:12.5px;cursor:pointer;text-decoration:underline}
-        .vpd-link-danger:disabled{opacity:.6;cursor:not-allowed}
         .vpd-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:18px}
         .vpd-btn{display:inline-flex;align-items:center;gap:8px;border-radius:12px;padding:11px 18px;font:inherit;font-weight:800;font-size:14px;cursor:pointer;border:1px solid transparent;transition:transform .15s ease,box-shadow .15s ease,background .15s ease}
         .vpd-btn:disabled{opacity:.6;cursor:not-allowed}
-        .vpd-small{padding:8px 14px;font-size:13px}
         .vpd-primary{background:#2c6ba3;color:#fff;box-shadow:0 6px 16px rgba(44,107,163,.25)}
         .vpd-primary:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 10px 20px rgba(44,107,163,.32)}
         .vpd-ghost{background:#fff;color:#2c6ba3;border-color:#cfe4ed}

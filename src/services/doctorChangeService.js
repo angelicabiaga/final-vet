@@ -17,9 +17,18 @@ const SETUP_MESSAGE = "Doctor changes are not set up yet. Run supabase/QUEUE_DOC
 function toError(error, fallback) {
   const text = [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
   if (["PGRST202", "PGRST205", "42883", "42P01"].includes(error?.code) || text.includes("could not find the function") || text.includes("queue_doctor_offers")) {
-    return new Error(SETUP_MESSAGE);
+    return Object.assign(new Error(SETUP_MESSAGE), { setupMissing: true });
   }
   return new Error(error?.message || fallback);
+}
+
+// Pet owners never see the SQL setup instruction meant for the clinic.
+export function ownerErrorMessage(error) {
+  if (error?.setupMissing) {
+    console.warn(SETUP_MESSAGE);
+    return "Rebooking or cancelling here isn't available right now. Please ask the clinic front desk.";
+  }
+  return error?.message || "Something went wrong. Please try again.";
 }
 
 const timeOrNull = value => (value ? String(value).slice(0, 5) : null);
