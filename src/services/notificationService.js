@@ -160,6 +160,7 @@ export function showBrowserNotification(notification) {
     new Notification(notification.title || "PawCruz", {
       body: notification.message || "You have a new notification.",
       icon: "/web_logo.png",
+      image: notification.image_url || undefined,
       tag: notification.id ? String(notification.id) : undefined,
     });
   }

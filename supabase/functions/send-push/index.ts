@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
       .update({ push_sent_at: new Date().toISOString() })
       .eq("id", notificationId)
       .is("push_sent_at", null)
-      .select("id, recipient_id, title, message, notification_type, created_by")
+      .select("*")
       .maybeSingle();
 
     if (claimError) return json({ error: claimError.message }, 500);
@@ -70,6 +70,8 @@ Deno.serve(async (req) => {
 
     const title = notification.title || "PawCruz";
     const body = notification.message || "You have a new notification.";
+    // Picture attached to a broadcast (notifications.image_url), if any.
+    const image = typeof notification.image_url === "string" && notification.image_url ? notification.image_url : undefined;
     const staleIds: string[] = [];
     let webSent = 0;
     let expoSent = 0;
@@ -91,6 +93,7 @@ Deno.serve(async (req) => {
             body,
             tag: notification.id,
             url: notificationsPath(sub.profile?.role),
+            image,
           });
           try {
             await webpush.sendNotification({ endpoint: sub.token, keys: sub.keys! }, payload, { TTL: 60 * 60 * 24 });
@@ -117,7 +120,10 @@ Deno.serve(async (req) => {
             title,
             body,
             sound: "default",
-            data: { notification_id: notification.id, type: notification.notification_type },
+            data: { notification_id: notification.id, type: notification.notification_type, image },
+            // Big picture on Android; iOS shows text unless a notification
+            // service extension is added to the app.
+            ...(image ? { richContent: { image } } : {}),
           })),
         ),
       }).catch(() => null);
