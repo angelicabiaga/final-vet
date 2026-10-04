@@ -61,15 +61,21 @@ export async function updateProfile(profileId, values, role) {
 
 export async function requestProfileUpdate(profileId, values, role) {
   const payload = normalizeProfile(values, role);
+  if (!payload.phone) throw new Error(role === "pet_owner" ? "Contact number is required." : "Phone number is required.");
+  if (!payload.address) throw new Error("Address is required.");
   await ensureNoDuplicate(profileId, payload);
   const { data: current, error } = await supabase.from("profiles").select("id,email").eq("id", profileId).single();
   if (error) throw new Error(`Unable to validate profile: ${error.message}`);
-  if (String(current.email || "").toLowerCase() === payload.email) {
+  const currentEmail = String(current.email || "").toLowerCase();
+  if (currentEmail === payload.email) {
     const updated = await updateProfile(profileId, payload, role);
     return { requiresOtp: false, updated };
   }
-  await createAndSendOtp(payload.email, "change_email", { profileId, role, values: payload });
-  return { requiresOtp: true, email: payload.email, purpose: "change_email" };
+  // Email change: the account owner must confirm through the email that's on
+  // file NOW. The new address waits in the OTP payload until then.
+  if (!currentEmail) throw new Error("Your account has no current email to verify with. Contact the clinic.");
+  await createAndSendOtp(currentEmail, "change_email", { profileId, role, values: payload });
+  return { requiresOtp: true, email: currentEmail, newEmail: payload.email, purpose: "change_email" };
 }
 
 export async function confirmProfileEmailChange(code) {
