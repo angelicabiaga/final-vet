@@ -381,6 +381,7 @@ export default function NotificationBell({ profile }) {
                     {!notification.is_read && <span className="unreadDotNew" aria-label="Unread" />}
                   </div>
                   <p className="notificationMessage">{getNotificationMessage(notification)}</p>
+                  {notification.image_url && <img className="notificationThumb" src={notification.image_url} alt="" loading="lazy" />}
                   <small className="notificationMetaLine">
                     {getNotificationType(notification)} · {formatDate(notification.created_at)}
                   </small>
@@ -505,6 +506,7 @@ export default function NotificationBell({ profile }) {
           margin:0!important;color:#4f6b78!important;font-size:13px!important;line-height:1.45!important;font-weight:500!important;
           display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere
         }
+        .nb .notificationThumb{display:block;max-width:100%;max-height:110px;margin:4px 0 2px;border-radius:10px;object-fit:cover;border:1px solid #e3eef3}
         .nb .notificationMetaLine{
           display:block;color:#8197a2!important;font-size:11.5px!important;line-height:1.3!important;font-weight:600!important;
           text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis

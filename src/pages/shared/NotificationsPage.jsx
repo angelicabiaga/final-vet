@@ -6,6 +6,7 @@ import {
   CalendarClock,
   CalendarDays,
   Check,
+  ImagePlus,
   Clock3,
   Megaphone,
   MessageSquare,
@@ -22,9 +23,11 @@ import {
   markNotificationRead,
   sendBroadcast,
   subscribeNotifications,
+  uploadBroadcastImage,
 } from "../../services/notificationService";
 import { formatDateTime12h } from "../../utils/timeFormat";
 import { focusFirstInvalidField, invalidClass } from "../../utils/formValidation";
+import { MAX_IMAGE_BYTES, validateImageFile } from "../../utils/validators";
 
 // Each tab groups the notification types PawCruz actually saves, e.g.
 // Appointments = "Appointment" + "Appointment Reminder". clinicOnly tabs are
@@ -83,6 +86,35 @@ export default function NotificationsPage({ profile }) {
   const [filter, setFilter] = useState("all");
 
   const [form, setForm] = useState(INITIAL_BROADCAST_FORM);
+  // Optional picture for the broadcast, with a local preview.
+  const [broadcastImage, setBroadcastImage] = useState(null);
+  const [broadcastImagePreview, setBroadcastImagePreview] = useState("");
+  const broadcastImageInputRef = useRef(null);
+
+  useEffect(() => () => {
+    if (broadcastImagePreview) URL.revokeObjectURL(broadcastImagePreview);
+  }, [broadcastImagePreview]);
+
+  function chooseBroadcastImage(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      validateImageFile(file);
+    } catch (imageError) {
+      event.target.value = "";
+      setSuccess("");
+      setError(imageError.message);
+      return;
+    }
+    setBroadcastImage(file);
+    setBroadcastImagePreview(URL.createObjectURL(file));
+  }
+
+  function removeBroadcastImage() {
+    setBroadcastImage(null);
+    setBroadcastImagePreview("");
+    if (broadcastImageInputRef.current) broadcastImageInputRef.current.value = "";
+  }
   const [fieldErrors, setFieldErrors] = useState({});
   const fieldRefs = useRef({}).current;
   const registerFieldRef = (name) => (el) => { fieldRefs[name] = el; };
@@ -296,16 +328,19 @@ export default function NotificationsPage({ profile }) {
     setSending(true);
 
     try {
+      const image_url = broadcastImage ? await uploadBroadcastImage(broadcastImage, profile?.id) : null;
       const notification = await sendBroadcast(
         {
           title,
           message,
           related_module: form.related_module,
+          image_url,
         },
         profile
       );
 
       setForm(INITIAL_BROADCAST_FORM);
+      removeBroadcastImage();
       setFieldErrors({});
 
       setItems((currentItems) => {
@@ -359,6 +394,11 @@ export default function NotificationsPage({ profile }) {
                 </div>
               </div>
               <p className="notif-detail-message">{detailNotification.message || "You have a new notification."}</p>
+              {detailNotification.image_url && (
+                <a href={detailNotification.image_url} target="_blank" rel="noreferrer" className="notif-detail-image">
+                  <img src={detailNotification.image_url} alt={detailNotification.title || "Announcement picture"} />
+                </a>
+              )}
               <small className="notif-detail-date">
                 {detailNotification.created_at ? formatDateTime12h(detailNotification.created_at) : "Date unavailable"}
               </small>
@@ -449,13 +489,46 @@ export default function NotificationsPage({ profile }) {
               {fieldErrors.message && <span className="field-error-text">{fieldErrors.message}</span>}
             </label>
 
-            <button type="submit" disabled={sending}>
-              <Send size={16} />
+            {broadcastImagePreview && (
+            <div className="broadcast-image-field">
+                <div className="broadcast-image-preview">
+                  <img src={broadcastImagePreview} alt="Attached preview" />
+                  <div className="broadcast-image-meta">
+                    <strong>{broadcastImage?.name}</strong>
+                    <small>{broadcastImage ? `${(broadcastImage.size / 1024 / 1024).toFixed(2)} MB` : ""}</small>
+                    <button type="button" className="broadcast-image-remove" onClick={removeBroadcastImage} disabled={sending}>
+                      <X size={15} /> Remove picture
+                    </button>
+                  </div>
+                </div>
+            </div>
+            )}
 
-              {sending
-                ? "Sending..."
-                : "Send to All Users"}
-            </button>
+            <div className="broadcast-actions">
+              {/* Messenger-style attach button with a hover tooltip */}
+              <label
+                className={`broadcast-attach${broadcastImage ? " has-file" : ""}${sending ? " disabled" : ""}`}
+                data-tip={broadcastImage ? "Replace the picture" : `Attach a picture up to ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)} MB`}
+                aria-label="Attach a picture"
+              >
+                <ImagePlus size={20} />
+                <input
+                  ref={broadcastImageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
+                  onChange={chooseBroadcastImage}
+                  disabled={sending}
+                />
+              </label>
+
+              <button type="submit" disabled={sending}>
+                <Send size={16} />
+
+                {sending
+                  ? "Sending..."
+                  : "Send to All Users"}
+              </button>
+            </div>
           </form>
         )}
 
@@ -552,6 +625,10 @@ export default function NotificationsPage({ profile }) {
                     {notification.message ||
                       "You have a new notification."}
                   </p>
+
+                  {notification.image_url && (
+                    <img className="notification-thumb" src={notification.image_url} alt="" loading="lazy" />
+                  )}
 
                   <small>
                     {notification.notification_type || "General"}
@@ -871,6 +948,169 @@ export default function NotificationsPage({ profile }) {
 
           .notification-item small {
             color: #78909b;
+          }
+
+          /* Broadcast picture attachment */
+          .broadcast-image-field {
+            display: grid;
+            gap: 7px;
+            margin-bottom: 14px;
+          }
+
+          .broadcast-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+
+          .broadcast-form label.broadcast-attach {
+            position: relative;
+            display: grid;
+            place-items: center;
+            width: 44px;
+            height: 44px;
+            margin: 0;
+            border-radius: 50%;
+            background: #eaf6fc;
+            color: #2c7fb8;
+            cursor: pointer;
+            transition: background 0.15s ease, transform 0.15s ease;
+          }
+
+          .broadcast-form label.broadcast-attach:hover {
+            background: #dcf0fa;
+            transform: translateY(-1px);
+          }
+
+          .broadcast-form label.broadcast-attach.has-file {
+            background: #4da8da;
+            color: #ffffff;
+          }
+
+          .broadcast-form label.broadcast-attach.disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+          }
+
+          .broadcast-attach input {
+            display: none;
+          }
+
+          /* Dark tooltip above the button, like Messenger */
+          .broadcast-attach::after {
+            content: attr(data-tip);
+            position: absolute;
+            bottom: calc(100% + 10px);
+            left: 50%;
+            transform: translate(-50%, 4px);
+            padding: 7px 11px;
+            border-radius: 8px;
+            background: #1f2a30;
+            color: #ffffff;
+            font-size: 12.5px;
+            font-weight: 600;
+            white-space: nowrap;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease, transform 0.15s ease;
+            z-index: 5;
+          }
+
+          .broadcast-attach::before {
+            content: "";
+            position: absolute;
+            bottom: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: #1f2a30;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            z-index: 5;
+          }
+
+          .broadcast-attach:hover::after,
+          .broadcast-attach:focus-within::after {
+            opacity: 1;
+            transform: translate(-50%, 0);
+          }
+
+          .broadcast-attach:hover::before,
+          .broadcast-attach:focus-within::before {
+            opacity: 1;
+          }
+
+          .broadcast-image-preview {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 10px;
+            border: 1px solid #d6e7ee;
+            border-radius: 14px;
+            background: #fbfeff;
+          }
+
+          .broadcast-image-preview img {
+            width: 110px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 10px;
+            flex-shrink: 0;
+          }
+
+          .broadcast-image-meta {
+            display: grid;
+            gap: 4px;
+            min-width: 0;
+          }
+
+          .broadcast-image-meta strong {
+            font-size: 13.5px;
+            color: #1d3a4a;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .broadcast-image-meta small {
+            color: #8197a2;
+            font-size: 12px;
+          }
+
+          .broadcast-form .broadcast-image-remove {
+            justify-self: start;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: #fff2f3;
+            color: #ad3540;
+            font-size: 12.5px;
+            font-weight: 700;
+          }
+
+          .notification-thumb {
+            display: block;
+            max-width: 220px;
+            max-height: 140px;
+            margin: 4px 0 6px;
+            border-radius: 12px;
+            object-fit: cover;
+            border: 1px solid #e6f0f4;
+          }
+
+          .notif-detail-image {
+            display: block;
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid #e6f0f4;
+          }
+
+          .notif-detail-image img {
+            display: block;
+            width: 100%;
+            max-height: 360px;
+            object-fit: contain;
+            background: #f7fbfd;
           }
 
           /* Detail pop-up for notifications without a page of their own. */

@@ -1,5 +1,18 @@
 import { supabase } from "../config/supabaseClient";
 import { formatTime12h } from "../utils/timeFormat";
+import { validateImageFile } from "../utils/validators";
+
+// Picture attached to a broadcast (public broadcast-images bucket, see
+// supabase/BROADCAST_IMAGES.sql). Returns its public URL.
+export async function uploadBroadcastImage(file, actorId) {
+  if (!file) return null;
+  validateImageFile(file);
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const path = `${actorId || "admin"}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await supabase.storage.from("broadcast-images").upload(path, file, { contentType: file.type || undefined });
+  if (error) throw new Error(`Unable to upload the picture: ${error.message}`);
+  return supabase.storage.from("broadcast-images").getPublicUrl(path).data.publicUrl;
+}
 
 export async function getNotifications(profileId) {
   if (!profileId) return [];
@@ -46,6 +59,9 @@ export async function sendBroadcast(values, actor) {
       notification_type: "Broadcast Announcement",
       related_module: values.related_module || null,
       created_by: actor.id,
+      // Only sent when a picture is attached, so plain broadcasts keep
+      // working even before the image_url column exists.
+      ...(values.image_url ? { image_url: values.image_url } : {}),
     })
     .select()
     .single();
