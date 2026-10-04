@@ -967,8 +967,9 @@ export default function PetManagementModule({
         setMedicalHistory(records);
         setExpandedRecordId(records[0]?.id || null);
         if (records[0] && canViewBilling) loadBillingForRecord(records[0]);
-        loadAiHealthAnalysis(pet, records);
-        loadConsultationInsights(pet, records);
+        // Predictive Health first; the per-visit insights follow one at a
+        // time so the AI service isn't hit with a burst of requests at once.
+        loadAiHealthAnalysis(pet, records).finally(() => loadConsultationInsights(pet, records));
       } catch (error) {
         console.warn(
           "Unable to load medical history for this pet:",
@@ -1066,7 +1067,7 @@ export default function PetManagementModule({
     }
   }
 
-  function loadConsultationInsights(pet, records) {
+  async function loadConsultationInsights(pet, records) {
     // Newest first, matching how Medical History is already displayed --
     // finding this record's own index gives every strictly-older finalized
     // consultation as its comparison context, with no extra query.
@@ -1074,9 +1075,11 @@ export default function PetManagementModule({
       .filter((record) => record.record_status === "Finalized")
       .sort((a, b) => new Date(b.consultation_date || 0) - new Date(a.consultation_date || 0));
 
-    finalized.slice(0, CONSULTATION_INSIGHT_EAGER_CAP).forEach((record, index) => {
-      generateInsightFor(pet, record, finalized.slice(index + 1));
-    });
+    // One at a time (saved insights return instantly without an AI call).
+    const eager = finalized.slice(0, CONSULTATION_INSIGHT_EAGER_CAP);
+    for (let index = 0; index < eager.length; index += 1) {
+      await generateInsightFor(pet, eager[index], finalized.slice(index + 1));
+    }
   }
 
   function toggleConsultationInsight(record) {

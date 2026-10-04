@@ -92,6 +92,57 @@ function safe(value, fallback = "Not recorded") {
   return String(value).trim();
 }
 
+// Compact version for previous records sent with AI Predictive Health: only
+// fields that were actually recorded, each trimmed, so a pet's history fits
+// inside the AI service's per-minute token allowance.
+const AI_HISTORY_RECORD_LIMIT = 8;
+const AI_HISTORY_FIELD_MAX_CHARS = 280;
+
+function formatHistoryRecordForAi(record, label) {
+  const trim = (value) => {
+    const text = String(value).replace(/\s+/g, " ").trim();
+    return text.length > AI_HISTORY_FIELD_MAX_CHARS
+      ? `${text.slice(0, AI_HISTORY_FIELD_MAX_CHARS)}…`
+      : text;
+  };
+  const fields = [
+    ["Date", record.consultation_date],
+    ["Chief Complaint", record.chief_complaint],
+    ["Symptoms", record.symptoms],
+    ["Vital Signs", record.vital_signs],
+    ["Weight", record.weight !== null && record.weight !== undefined ? `${record.weight} kg` : ""],
+    ["Temperature", record.temperature !== null && record.temperature !== undefined ? `${record.temperature} °C` : ""],
+    ["Diagnosis", record.diagnosis],
+    ["Treatment", record.treatment],
+    ["Treatment Plan", record.treatment_plan],
+    ["Medication", [record.medication, record.dosage, record.frequency, record.duration].filter((part) => part && String(part).trim()).join(", ")],
+    ["Lab Request", record.laboratory_request],
+    ["Lab Result", record.laboratory_result],
+    ["Vaccination", record.vaccination],
+    ["Follow-up", record.follow_up_date],
+    ["Vet Notes", record.veterinarian_notes],
+  ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
+
+  if (fields.length <= 1) return `${label}: no clinical details recorded.`;
+  return `${label}\n${fields.map(([name, value]) => `${name}: ${trim(value)}`).join("\n")}`;
+}
+
+// Groq's free plan allows a limited number of tokens per minute. If a request
+// is refused for that reason (HTTP 429), wait briefly and try once more
+// before reporting the limit to the user.
+const GROQ_RETRY_DELAY_MS = 8000;
+
+async function groqFetch(options) {
+  const response = await fetch(GROQ_ENDPOINT, options);
+  if (response.status !== 429) return response;
+  const retryAfterSeconds = Number(response.headers.get("retry-after"));
+  const delay = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? Math.min(retryAfterSeconds * 1000, 20000)
+    : GROQ_RETRY_DELAY_MS;
+  await new Promise((resolve) => setTimeout(resolve, delay));
+  return fetch(GROQ_ENDPOINT, options);
+}
+
 function formatMedicalRecordForAi(
   record,
   label = "Medical Record"
@@ -1229,22 +1280,15 @@ Date of Birth: ${safe(
       "CURRENT MEDICAL RECORD"
     );
 
+  // Most recent first, compact, capped -- see formatHistoryRecordForAi.
   const historyText =
     previousRecords.length
       ? previousRecords
-          .map(
-            (
-              previous,
-              index
-            ) =>
-              formatMedicalRecordForAi(
-                previous,
-                `PREVIOUS RECORD ${
-                  index + 1
-                }`
-              )
+          .slice(0, AI_HISTORY_RECORD_LIMIT)
+          .map((previous, index) =>
+            formatHistoryRecordForAi(previous, `PREVIOUS RECORD ${index + 1}`)
           )
-          .join("\n")
+          .join("\n\n")
       : "No previous finalized medical records are available for this pet.";
 
   const prompt = `
@@ -1344,8 +1388,7 @@ AI predictive health analysis is based only on available PawCruz medical records
   let response;
 
   try {
-    response = await fetch(
-      GROQ_ENDPOINT,
+    response = await groqFetch(
       {
         method: "POST",
 
@@ -1374,7 +1417,10 @@ AI predictive health analysis is based only on available PawCruz medical records
           ],
 
           temperature: 0.15,
-          max_tokens: 1500,
+          // Less hidden "thinking" + a smaller answer reservation keeps each
+          // request well inside the per-minute token allowance.
+          reasoning_effort: "low",
+          max_tokens: 1100,
         }),
       }
     );
@@ -1570,7 +1616,7 @@ This AI health insight is based only on this consultation's recorded information
   let response;
 
   try {
-    response = await fetch(GROQ_ENDPOINT, {
+    response = await groqFetch({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1587,6 +1633,7 @@ This AI health insight is based only on this consultation's recorded information
           { role: "user", content: prompt },
         ],
         temperature: 0.15,
+        reasoning_effort: "low",
         max_tokens: 900,
       }),
     });
