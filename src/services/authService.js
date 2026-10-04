@@ -1,6 +1,7 @@
 import { supabase } from "../config/supabaseClient";
 import { validatePassword, isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
 import { clearWelcomed } from "../utils/notificationSound";
+import { unregisterWebPush } from "./notificationService";
 import { CONSENT_REQUIRED_ERROR, PRIVACY_NOTICE_VERSION } from "../constants/privacyNotice";
 import { getQueue } from "./queueService";
 import { getAppointments, todayLocal } from "./appointmentService";
@@ -354,6 +355,8 @@ export async function completeLoginOtp(code, trustDevice = false) {
 }
 
 export async function logoutUser() {
+  // Best-effort: don't let push cleanup ever block signing out.
+  await unregisterWebPush().catch(() => {});
   const session = getStoredSession();
   if (session?.profile) await writeActivity(session.profile, "Logout", `${session.profile.full_name} logged out.`);
   localStorage.removeItem(SESSION_KEY);

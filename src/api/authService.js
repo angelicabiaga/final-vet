@@ -2,6 +2,7 @@
 
 import * as SecureStore from "expo-secure-store";
 import { supabase } from "../config/supabaseClient";
+import { registerMobilePush, unregisterMobilePush } from "./pushRegistration";
 import { CONSENT_REQUIRED_ERROR, PRIVACY_NOTICE_VERSION } from "../constants/privacyNotice";
 import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
 import { getQueue } from "./queueService";
@@ -55,10 +56,14 @@ async function saveSession(profile) {
     JSON.stringify(session)
   );
 
+  // Register this phone for background push (fire-and-forget; never blocks login).
+  registerMobilePush(profile.id);
+
   return session;
 }
 
 export async function logoutUser() {
+  await unregisterMobilePush();
   await SecureStore.deleteItemAsync(SESSION_KEY);
 }
 

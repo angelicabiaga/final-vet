@@ -1,39 +1,46 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { getNotificationLink } from "../../utils/notificationLink";
 import {
   BellRing,
   CalendarClock,
   CalendarDays,
   Check,
-  CheckCheck,
   Clock3,
   Megaphone,
   MessageSquare,
   PackageX,
-  RefreshCw,
   Send,
   ShieldAlert,
+  X,
 } from "lucide-react";
 
 import AppShell from "../../components/AppShell";
 
 import {
   getNotifications,
-  markAllRead,
   markNotificationRead,
-  requestBrowserNotifications,
   sendBroadcast,
   subscribeNotifications,
 } from "../../services/notificationService";
 import { formatDateTime12h } from "../../utils/timeFormat";
 import { focusFirstInvalidField, invalidClass } from "../../utils/formValidation";
 
-const FILTER_OPTIONS = [
-  "Appointment Confirmation",
-  "Queue Serving",
-  "Low-stock Alert",
-  "Broadcast Announcement",
-  "New Message",
+// Each tab groups the notification types PawCruz actually saves, e.g.
+// Appointments = "Appointment" + "Appointment Reminder". clinicOnly tabs are
+// for staff, vets and admins (pet owners never get those notifications).
+const CATEGORY_FILTERS = [
+  { key: "appointments", label: "Appointments", pattern: /appointment|booking/ },
+  { key: "queue", label: "Queue", pattern: /queue|serving|reassign/ },
+  { key: "messages", label: "Messages", pattern: /message/ },
+  { key: "announcements", label: "Announcements", pattern: /broadcast|announcement/ },
+  { key: "inventory", label: "Inventory", pattern: /inventory|stock/, clinicOnly: true },
+  { key: "schedule", label: "Schedule", pattern: /schedule|leave/, clinicOnly: true },
 ];
+
+function matchesCategory(notification, category) {
+  return category.pattern.test(String(notification?.notification_type || "").toLowerCase());
+}
 
 const INITIAL_BROADCAST_FORM = {
   title: "",
@@ -64,9 +71,11 @@ function iconForNotificationType(notificationType) {
 }
 
 export default function NotificationsPage({ profile }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [detailNotification, setDetailNotification] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -83,40 +92,6 @@ export default function NotificationsPage({ profile }) {
     setError("");
     setSuccess("");
   };
-
-  const loadNotifications = useCallback(
-    async (showMainLoading = true) => {
-      if (!profile?.id) {
-        setItems([]);
-        setLoading(false);
-        return;
-      }
-
-      clearMessages();
-
-      if (showMainLoading) {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
-      }
-
-      try {
-        const notifications = await getNotifications(profile.id);
-        setItems(notifications);
-      } catch (loadError) {
-        console.error("Unable to load notifications:", loadError);
-
-        setError(
-          loadError?.message ||
-            "Unable to load notifications. Please try again."
-        );
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [profile?.id]
-  );
 
   useEffect(() => {
     if (!profile?.id) {
@@ -200,9 +175,22 @@ export default function NotificationsPage({ profile }) {
         return !notification.is_read;
       }
 
-      return notification.notification_type === filter;
+      const category = CATEGORY_FILTERS.find((item) => item.key === filter);
+      return category ? matchesCategory(notification, category) : true;
     });
   }, [items, filter]);
+
+  // Tabs for this role, hiding ones with nothing in them yet (the selected
+  // tab always stays visible).
+  const categoryTabs = useMemo(() => {
+    const isPetOwner = profile?.role === "pet_owner";
+    return CATEGORY_FILTERS.filter((category) => !(category.clinicOnly && isPetOwner))
+      .map((category) => ({
+        ...category,
+        count: items.filter((notification) => matchesCategory(notification, category)).length,
+      }))
+      .filter((category) => category.count > 0 || category.key === filter);
+  }, [items, filter, profile?.role]);
 
   const unreadCount = useMemo(() => {
     return items.filter((notification) => !notification.is_read).length;
@@ -239,65 +227,37 @@ export default function NotificationsPage({ profile }) {
     }
   }
 
-  async function handleReadAll() {
-    if (!profile?.id || unreadCount === 0) {
+  // Clicking a notification marks it read and opens the page it is about
+  // (stays here when it has no more specific page, e.g. announcements).
+  function openNotification(notification) {
+    handleRead(notification);
+    const destination = getNotificationLink(notification, profile?.role);
+    if (destination && destination !== window.location.pathname) {
+      navigate(destination);
       return;
     }
-
-    clearMessages();
-
-    try {
-      await markAllRead(profile.id);
-
-      const readAt = new Date().toISOString();
-
-      setItems((currentItems) =>
-        currentItems.map((notification) => ({
-          ...notification,
-          is_read: true,
-          read_at: notification.read_at || readAt,
-        }))
-      );
-
-      setSuccess("All notifications were marked as read.");
-    } catch (readError) {
-      console.error("Unable to mark all notifications as read:", readError);
-
-      setError(
-        readError?.message ||
-          "Unable to mark all notifications as read."
-      );
-    }
+    // No more specific page (e.g. a broadcast): show it in full here.
+    setDetailNotification(notification);
   }
 
-  async function handleEnablePush() {
-    clearMessages();
+  // Opened from the bell dropdown with a specific notification to show.
+  const requestedNotificationId = location.state?.openNotificationId;
+  useEffect(() => {
+    if (!requestedNotificationId || !items.length) return;
+    const match = items.find((item) => item.id === requestedNotificationId);
+    if (!match) return;
+    setDetailNotification(match);
+    handleRead(match);
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedNotificationId, items]);
 
-    try {
-      const permission = await requestBrowserNotifications();
-
-      if (permission === "granted") {
-        setSuccess("Browser notifications are now enabled.");
-        return;
-      }
-
-      if (permission === "denied") {
-        setError(
-          "Browser notifications were denied. Enable them in your browser settings."
-        );
-        return;
-      }
-
-      setSuccess(`Browser notification permission: ${permission}`);
-    } catch (pushError) {
-      console.error("Unable to enable browser notifications:", pushError);
-
-      setError(
-        pushError?.message ||
-          "Unable to enable browser notifications."
-      );
-    }
-  }
+  useEffect(() => {
+    if (!detailNotification) return undefined;
+    const onKey = (event) => { if (event.key === "Escape") setDetailNotification(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [detailNotification]);
 
   function handleBroadcastChange(event) {
     const { name, value } = event.target;
@@ -380,55 +340,36 @@ export default function NotificationsPage({ profile }) {
 
   return (
     <AppShell profile={profile} title="Notifications">
-      <div className="notifications-page">
-        <div className="notification-actions" aria-label="Notification actions">
-          <div className="action-group">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => loadNotifications(false)}
-              disabled={refreshing}
-            >
-              <RefreshCw
-                size={17}
-                className={refreshing ? "rotating" : ""}
-              />
-
-              {refreshing ? "Refreshing..." : "Refresh"}
-            </button>
-
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={handleEnablePush}
-            >
-              <BellRing size={17} />
-              Enable Push
-            </button>
-          </div>
-
-          <button
-            type="button"
-            className="mark-all-button"
-            onClick={handleReadAll}
-            disabled={unreadCount === 0}
+      {detailNotification && (() => {
+        const DetailIcon = iconForNotificationType(detailNotification.notification_type);
+        return (
+          <div
+            className="notif-detail-backdrop"
+            onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailNotification(null); }}
           >
-            <CheckCheck size={17} />
-            Mark all read
-          </button>
-        </div>
-
-        <div className="notification-summary">
-          <div>
-            <strong>{items.length}</strong>
-            <span>Total notifications</span>
+            <div className="notif-detail" role="dialog" aria-modal="true" aria-labelledby="notif-detail-title">
+              <button type="button" className="notif-detail-close" aria-label="Close" onClick={() => setDetailNotification(null)}>
+                <X size={18} />
+              </button>
+              <div className="notif-detail-head">
+                <span className="notif-detail-icon"><DetailIcon size={22} /></span>
+                <div>
+                  <span className="notif-detail-type">{detailNotification.notification_type || "Notification"}</span>
+                  <h3 id="notif-detail-title">{detailNotification.title || "PawCruz Notification"}</h3>
+                </div>
+              </div>
+              <p className="notif-detail-message">{detailNotification.message || "You have a new notification."}</p>
+              <small className="notif-detail-date">
+                {detailNotification.created_at ? formatDateTime12h(detailNotification.created_at) : "Date unavailable"}
+              </small>
+              <button type="button" className="notif-detail-done" onClick={() => setDetailNotification(null)}>
+                Close
+              </button>
+            </div>
           </div>
-
-          <div>
-            <strong>{unreadCount}</strong>
-            <span>Unread notifications</span>
-          </div>
-        </div>
+        );
+      })()}
+      <div className="notifications-page">
 
         {error && (
           <div className="alert error-alert">
@@ -525,6 +466,7 @@ export default function NotificationsPage({ profile }) {
             onClick={() => setFilter("all")}
           >
             All
+            {items.length > 0 && <span className="filter-count">{items.length}</span>}
           </button>
 
           <button
@@ -533,16 +475,17 @@ export default function NotificationsPage({ profile }) {
             onClick={() => setFilter("unread")}
           >
             Unread
+            {unreadCount > 0 && <span className="filter-count">{unreadCount}</span>}
           </button>
 
-          {FILTER_OPTIONS.map((option) => (
+          {categoryTabs.map((category) => (
             <button
               type="button"
-              key={option}
-              className={filter === option ? "active" : ""}
-              onClick={() => setFilter(option)}
+              key={category.key}
+              className={filter === category.key ? "active" : ""}
+              onClick={() => setFilter(category.key)}
             >
-              {option}
+              {category.label}
             </button>
           ))}
         </div>
@@ -575,7 +518,7 @@ export default function NotificationsPage({ profile }) {
                     ? "notification-item"
                     : "notification-item unread"
                 }
-                onClick={() => handleRead(notification)}
+                onClick={() => openNotification(notification)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(event) => {
@@ -583,7 +526,8 @@ export default function NotificationsPage({ profile }) {
                     event.key === "Enter" ||
                     event.key === " "
                   ) {
-                    handleRead(notification);
+                    event.preventDefault();
+                    openNotification(notification);
                   }
                 }}
               >
@@ -793,19 +737,61 @@ export default function NotificationsPage({ profile }) {
 
           .notification-filters {
             display: flex;
-            gap: 8px;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 12px;
             overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #cfe6f0 transparent;
           }
 
           .notification-filters button {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            flex-shrink: 0;
             white-space: nowrap;
-            background: #edf7fa;
-            color: #477080;
+            border: 0;
+            border-radius: 999px;
+            padding: 9px 16px;
+            background: transparent;
+            color: #5f7884;
+            font-family: inherit;
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: none;
+            transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+          }
+
+          .notification-filters button:hover:not(.active) {
+            background: #eef7fb;
+            color: #2c7fb8;
           }
 
           .notification-filters button.active {
             background: #4da8da;
             color: #ffffff;
+            box-shadow: 0 6px 14px rgba(77, 168, 218, 0.28);
+          }
+
+          .notification-filters .filter-count {
+            min-width: 20px;
+            height: 20px;
+            padding: 0 6px;
+            box-sizing: border-box;
+            display: inline-grid;
+            place-items: center;
+            border-radius: 999px;
+            background: #4da8da;
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 700;
+          }
+
+          .notification-filters button.active .filter-count {
+            background: #ffffff;
+            color: #2c7fb8;
           }
 
           .notification-list {
@@ -885,6 +871,211 @@ export default function NotificationsPage({ profile }) {
 
           .notification-item small {
             color: #78909b;
+          }
+
+          /* Detail pop-up for notifications without a page of their own. */
+          .notif-detail-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 300;
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            background: rgba(24, 50, 63, 0.5);
+            backdrop-filter: blur(3px);
+          }
+
+          .notif-detail {
+            position: relative;
+            width: min(500px, 100%);
+            max-height: 85vh;
+            overflow-y: auto;
+            box-sizing: border-box;
+            display: grid;
+            gap: 14px;
+            padding: 26px;
+            border-radius: 20px;
+            background: #ffffff;
+            box-shadow: 0 24px 60px rgba(17, 48, 63, 0.28);
+          }
+
+          .notif-detail .notif-detail-close {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            justify-content: center;
+            border-radius: 10px;
+            background: #eef6f9;
+            color: #456472;
+          }
+
+          .notif-detail-head {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding-right: 40px;
+          }
+
+          .notif-detail-icon {
+            width: 48px;
+            height: 48px;
+            flex-shrink: 0;
+            display: grid;
+            place-items: center;
+            border-radius: 14px;
+            background: #eaf6fc;
+            color: #2c7fb8;
+          }
+
+          .notif-detail-type {
+            display: block;
+            color: #2c7fb8;
+            font-size: 11.5px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+          }
+
+          .notif-detail-head h3 {
+            margin: 3px 0 0;
+            color: #1d3a4a;
+            font-size: 19px;
+            line-height: 1.3;
+          }
+
+          .notif-detail-message {
+            margin: 0;
+            padding: 14px 16px;
+            border-radius: 12px;
+            background: #f7fbfd;
+            border: 1px solid #e6f0f4;
+            color: #2f4a56;
+            font-size: 15px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+          }
+
+          .notif-detail-date {
+            color: #8197a2;
+            font-size: 12.5px;
+          }
+
+          .notif-detail .notif-detail-done {
+            justify-self: end;
+            padding: 10px 22px;
+            border-radius: 12px;
+            font-weight: 700;
+          }
+
+          /* ---- Compact layout (styles only) ---- */
+          .notifications-page {
+            gap: 14px;
+          }
+
+          /* List: slim rows with separators instead of padded blocks. */
+          .notification-list {
+            padding: 4px 0;
+            overflow: hidden;
+          }
+
+          .notification-item {
+            position: relative;
+            gap: 14px;
+            align-items: center;
+            padding: 13px 22px;
+            border-radius: 0;
+            transition: background 0.15s ease;
+          }
+
+          .notification-item:hover {
+            background: #f5fbfe;
+          }
+
+          .notification-item.unread {
+            background: #f2f9fd;
+          }
+
+          .notification-item.unread::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: #4da8da;
+          }
+
+          .notification-icon {
+            width: 40px;
+            height: 40px;
+            padding: 0;
+            box-sizing: border-box;
+            display: grid;
+            place-items: center;
+            border-radius: 12px;
+            background: #eaf6fc;
+            color: #2c7fb8;
+            align-self: flex-start;
+          }
+
+          .notification-icon svg {
+            width: 18px;
+            height: 18px;
+          }
+
+          .notification-title {
+            gap: 12px;
+          }
+
+          .notification-title strong {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1d3a4a;
+          }
+
+          .notification-item.unread .notification-title strong {
+            font-weight: 800;
+          }
+
+          .notification-title span {
+            flex-shrink: 0;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: #9aabb3;
+          }
+
+          .notification-title .new-badge {
+            padding: 3px 9px;
+            background: #4da8da;
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 700;
+          }
+
+          .notification-item p {
+            margin: 3px 0 4px;
+            font-size: 14px;
+            line-height: 1.45;
+            color: #4f6b78;
+          }
+
+          .notification-item small {
+            font-size: 12px;
+            color: #8197a2;
+          }
+
+          /* Mark-as-read tick: small and quiet until hovered. */
+          .notification-item > svg {
+            color: #9fcbe0;
+            transition: color 0.15s ease;
+          }
+
+          .notification-item:hover > svg {
+            color: #2c7fb8;
           }
 
           .empty-state {

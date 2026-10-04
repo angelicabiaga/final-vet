@@ -13,20 +13,54 @@ import {
   checkUpcomingAppointmentReminders,
   getNotifications,
   markAllRead,
+  markNotificationRead,
+  registerWebPush,
   requestBrowserNotifications,
   showBrowserNotification,
   subscribeNotifications,
 } from "../services/notificationService";
 import { hasBeenWelcomed, markWelcomed, playNotificationSound } from "../utils/notificationSound";
 import { formatDateTime12h } from "../utils/timeFormat";
+import { getNotificationLink } from "../utils/notificationLink";
 
 const TOAST_DURATION_MS = 7000;
+
+// "default" (not asked yet), "granted", "denied", or "unsupported".
+function readPushPermission() {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+  return Notification.permission;
+}
 
 export default function NotificationBell({ profile }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [pushStatus, setPushStatus] = useState("");
+  const [pushPermission, setPushPermission] = useState(readPushPermission);
+
+  // Keep the push button in sync if the user changes the permission from the
+  // browser's own site settings while PawCruz is open.
+  useEffect(() => {
+    let status = null;
+    let cancelled = false;
+    const sync = () => setPushPermission(readPushPermission());
+    if (navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: "notifications" })
+        .then((result) => {
+          if (cancelled) return;
+          status = result;
+          status.onchange = sync;
+        })
+        .catch(() => {});
+    }
+    window.addEventListener("focus", sync);
+    return () => {
+      cancelled = true;
+      if (status) status.onchange = null;
+      window.removeEventListener("focus", sync);
+    };
+  }, []);
   const [toasts, setToasts] = useState([]);
   const panelRef = useRef(null);
   const navigate = useNavigate();
@@ -156,6 +190,24 @@ export default function NotificationBell({ profile }) {
     };
   }, [open]);
 
+  // One-off panel messages ("Browser notifications are enabled.", errors) are
+  // cleared when the panel closes -- otherwise they reappear (and re-toast)
+  // every time the bell is opened again.
+  useEffect(() => {
+    if (open) return;
+    setPushStatus("");
+    setError("");
+  }, [open]);
+
+  // Background web push: (re)register this browser whenever notifications
+  // are allowed, so pushes arrive even when PawCruz is closed.
+  useEffect(() => {
+    if (!profile?.id || pushPermission !== "granted") return;
+    registerWebPush(profile.id).catch((pushError) => {
+      console.warn("Background push registration failed:", pushError);
+    });
+  }, [profile?.id, pushPermission]);
+
   const unread = items.filter((item) => !item.is_read).length;
   const rolePath = profile?.role === "pet_owner" ? "pet-owner" : profile?.role;
 
@@ -163,6 +215,7 @@ export default function NotificationBell({ profile }) {
     try {
       setError("");
       const permission = await requestBrowserNotifications();
+      setPushPermission(readPushPermission());
       if (permission === "granted") {
         setPushStatus("Browser notifications are enabled.");
       } else {
@@ -181,6 +234,24 @@ export default function NotificationBell({ profile }) {
       setItems((current) => current.map((item) => ({ ...item, is_read: true })));
     } catch (e) {
       setError(e.message || "Unable to mark notifications as read.");
+    }
+  }
+
+  // Clicking a notification marks it read and opens the page it's about.
+  function openNotification(notification) {
+    if (!notification.is_read) {
+      setItems((current) =>
+        current.map((item) => (item.id === notification.id ? { ...item, is_read: true } : item))
+      );
+      markNotificationRead(notification.id).catch(() => {});
+    }
+    setOpen(false);
+    const destination = getNotificationLink(notification, profile?.role);
+    if (!destination) return;
+    if (destination.endsWith("/notifications")) {
+      navigate(destination, { state: { openNotificationId: notification.id } });
+    } else {
+      navigate(destination);
     }
   }
 
@@ -241,29 +312,45 @@ export default function NotificationBell({ profile }) {
       {open && (
         <div className="panel" role="dialog" aria-label="Notifications panel">
           <div className="panelHead">
-            <div>
-              <span className="eyebrow">Stay updated</span>
+            <div className="panelTitle">
               <h3>Notifications</h3>
-            </div>
-            <button className="closeButton" onClick={() => setOpen(false)} aria-label="Close notifications">
-              <X size={19} />
-            </button>
-          </div>
-
-          <div className="panelActions">
-            <button className="push" onClick={enablePush}>
-              <span className="actionIcon"><ShieldCheck size={18} /></span>
               <span>
-                <strong>Browser push notifications</strong>
-                <small>Stay updated when this panel is closed</small>
+                {unread > 0
+                  ? `${unread} notification${unread === 1 ? "" : "s"} require${unread === 1 ? "s" : ""} attention`
+                  : "You're all caught up"}
               </span>
-              <ChevronRight size={18} />
-            </button>
-
-            <button className="readAll" onClick={allRead} disabled={!unread}>
-              <CheckCheck size={17} />
-              Mark all as read
-            </button>
+            </div>
+            <div className="panelHeadActions">
+              {(pushPermission === "default" || pushPermission === "denied") && (
+                <button
+                  type="button"
+                  className="headIcon"
+                  onClick={
+                    pushPermission === "denied"
+                      ? () => setError("Notifications are blocked for PawCruz. Allow them in your browser's site settings, then reload the page.")
+                      : enablePush
+                  }
+                  aria-label={pushPermission === "denied" ? "Browser notifications are blocked" : "Enable browser push notifications"}
+                  title={
+                    pushPermission === "denied"
+                      ? "Notifications are blocked. Allow them in your browser's site settings."
+                      : "Get alerts even when PawCruz is in another tab"
+                  }
+                >
+                  <ShieldCheck size={17} />
+                </button>
+              )}
+              <button
+                type="button"
+                className="headIcon"
+                onClick={allRead}
+                disabled={!unread}
+                aria-label="Mark all as read"
+                title="Mark all as read"
+              >
+                <CheckCheck size={17} />
+              </button>
+            </div>
           </div>
 
           {error && <div className="message errorMessage">{error}</div>}
@@ -271,27 +358,39 @@ export default function NotificationBell({ profile }) {
 
           <div className="list">
             {items.slice(0, 6).map((notification) => (
-              <article key={notification.id} className={!notification.is_read ? "unread" : ""}>
+              <article
+                key={notification.id}
+                className={!notification.is_read ? "unread" : ""}
+                role="button"
+                tabIndex={0}
+                title="Open"
+                onClick={() => openNotification(notification)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openNotification(notification);
+                  }
+                }}
+              >
                 <div className="notificationIcon">
                   <Bell size={17} />
                 </div>
                 <div className="notificationContent">
-                  <div className="notificationTypeRow">
-                    <span className="notificationType"><span className="typeDot" />{getNotificationType(notification)}</span>
-                    {!notification.is_read && <span className="unreadPill">Unread</span>}
+                  <div className="notificationTitleLine">
+                    <strong className="notificationCardTitle">{getNotificationTitle(notification)}</strong>
+                    {!notification.is_read && <span className="unreadDotNew" aria-label="Unread" />}
                   </div>
-                  <strong className="notificationCardTitle">{getNotificationTitle(notification)}</strong>
                   <p className="notificationMessage">{getNotificationMessage(notification)}</p>
-                  <div className="notificationMeta">
-                    <small>{formatDate(notification.created_at)}</small>
-                  </div>
+                  <small className="notificationMetaLine">
+                    {getNotificationType(notification)} · {formatDate(notification.created_at)}
+                  </small>
                 </div>
               </article>
             ))}
 
             {items.length === 0 && (
               <div className="empty">
-                <div className="emptyIcon"><Bell size={25} /></div>
+                <div className="emptyIcon"><Bell size={22} /></div>
                 <strong>No notifications yet</strong>
                 <p>Appointment, queue, and clinic updates will appear here.</p>
               </div>
@@ -300,6 +399,7 @@ export default function NotificationBell({ profile }) {
 
           <div className="panelFooter">
             <button
+              type="button"
               className="view"
               onClick={() => {
                 setOpen(false);
@@ -307,18 +407,19 @@ export default function NotificationBell({ profile }) {
               }}
             >
               View all notifications
-              <ChevronRight size={18} />
+              <ChevronRight size={16} />
             </button>
 
             {profile?.role === "admin" && (
               <button
+                type="button"
                 className="broadcast"
                 onClick={() => {
                   setOpen(false);
                   navigate("/admin/notifications");
                 }}
               >
-                <Send size={16} />
+                <Send size={15} />
                 Send broadcast
               </button>
             )}
@@ -341,137 +442,94 @@ export default function NotificationBell({ profile }) {
         }
 
         .nb .panel{
-          position:fixed;right:22px;top:88px;width:min(560px,calc(100vw - 44px));
-          max-height:calc(100dvh - 110px);background:#fff;border:1px solid #d7e9f0;border-radius:24px;
-          box-shadow:0 26px 80px rgba(25,72,94,.28);overflow:hidden;z-index:1000;
-          display:flex;flex-direction:column;animation:notifDrop .18s ease-out
+          position:absolute;right:0;top:calc(100% + 12px);width:min(440px,calc(100vw - 32px));
+          max-height:min(560px,calc(100dvh - 120px));background:#fff;border:1px solid #d7e9f0;border-radius:20px;
+          box-shadow:0 22px 60px rgba(25,72,94,.24);overflow:hidden;z-index:1000;
+          display:flex;flex-direction:column;animation:notifDrop .16s ease-out
         }
-        @keyframes notifDrop{from{opacity:0;transform:translateY(-8px) scale(.99)}to{opacity:1;transform:translateY(0) scale(1)}}
+        @keyframes notifDrop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 
         .nb .panelHead{
-          flex:0 0 auto;display:flex;justify-content:space-between;align-items:flex-start;gap:18px;
-          padding:22px 24px 18px;background:linear-gradient(135deg,#f8fdff,#eaf7fc);border-bottom:1px solid #dcecf2
+          flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:12px;
+          padding:16px 16px 16px 20px;background:linear-gradient(115deg,#2c7fb8,#1f5f8f);color:#fff
         }
-        .nb .panelHead>div{min-width:0}
-        .nb .eyebrow{display:block;color:#2696c4!important;font-size:12px!important;font-weight:900!important;letter-spacing:.13em;text-transform:uppercase}
-        .nb .panelHead h3{margin:5px 0 7px!important;color:#174e67!important;font-size:27px!important;line-height:1.08!important;font-weight:900!important}
-        .nb .closeButton{
-          width:44px;height:44px;border:1px solid #e3edf1;border-radius:14px;background:#fff;color:#658493;
-          display:grid;place-items:center;cursor:pointer;box-shadow:0 5px 14px rgba(31,94,120,.09);flex:0 0 auto
+        .nb .panelTitle{min-width:0;display:grid;gap:2px}
+        .nb .panelTitle h3{margin:0!important;color:#fff!important;font-size:18px!important;line-height:1.2!important;font-weight:800!important}
+        .nb .panelTitle span{color:rgba(255,255,255,.82);font-size:12.5px;font-weight:600}
+        .nb .panelHeadActions{display:flex;gap:6px;flex:0 0 auto}
+        .nb .headIcon{
+          width:36px;height:36px;border-radius:11px;border:1px solid rgba(255,255,255,.4);
+          background:rgba(255,255,255,.14);color:#fff;display:grid;place-items:center;cursor:pointer;
+          transition:background .15s ease
         }
+        .nb .headIcon:hover:not(:disabled){background:rgba(255,255,255,.26)}
+        .nb .headIcon:disabled{opacity:.45;cursor:not-allowed}
 
-        .nb .panelActions{flex:0 0 auto;padding:16px 20px 14px;border-bottom:1px solid #e8f0f3;background:#fff;display:flex;align-items:center;gap:10px}
-        .nb .push{
-          flex:1;min-width:0;border:1px solid #cfe7d8;border-radius:18px;padding:10px 14px;cursor:pointer;
-          display:grid;grid-template-columns:36px minmax(0,1fr) 20px;align-items:center;gap:12px;
-          background:linear-gradient(135deg,#f2fbf5,#e8f7ee);color:#2b7950;text-align:left
-        }
-        .nb .push span:nth-child(2){display:flex;flex-direction:column;gap:3px;min-width:0}
-        .nb .push strong{font-size:15px!important;color:#2e7650!important;line-height:1.25!important;font-weight:900!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
-        .nb .push small{font-size:12px!important;color:#678c79!important;line-height:1.3!important;font-weight:600!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
-        .nb .actionIcon{width:36px;height:36px;border-radius:12px;background:#fff;display:grid;place-items:center;box-shadow:0 4px 10px rgba(56,130,87,.1)}
-        .nb .readAll{
-          flex:0 0 auto;align-self:stretch;margin:0;border:0;border-radius:12px;padding:0 13px;cursor:pointer;
-          display:flex;align-items:center;gap:7px;background:#edf7fb;color:#237da5;font-weight:800;font-size:12.5px
-        }
-        .nb .readAll:disabled{opacity:.46;cursor:not-allowed}
-
-        .nb .message{flex:0 0 auto;margin:12px 20px 0;padding:10px 12px;border-radius:11px;font-size:12.5px;font-weight:700}
+        .nb .message{flex:0 0 auto;margin:10px 14px 0;padding:9px 12px;border-radius:10px;font-size:12.5px;font-weight:700}
         .nb .errorMessage{background:#fff1f1;color:#a04444;border:1px solid #f5d9d9}
         .nb .successMessage{background:#eef9f2;color:#2f7850;border:1px solid #d9eedf}
 
         .nb .list{
-          flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px 16px 16px;
+          flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;
           scrollbar-width:thin;scrollbar-color:#a8cbd9 transparent;background:#fff;overscroll-behavior:contain
         }
-        .nb .list::-webkit-scrollbar{width:8px}
+        .nb .list::-webkit-scrollbar{width:7px}
         .nb .list::-webkit-scrollbar-thumb{background:#a8cbd9;border-radius:999px}
 
         .nb .list article{
-          display:flex!important;align-items:flex-start!important;gap:14px!important;
-          width:100%!important;margin:8px 0 12px!important;padding:17px 17px!important;
-          border:1px solid #dfecef!important;border-radius:19px!important;background:#fff!important;
-          box-sizing:border-box!important;min-width:0!important
+          position:relative;display:flex;align-items:flex-start;gap:13px;width:100%;margin:0;
+          padding:14px 18px;border-bottom:1px solid #edf4f7;background:#fff;box-sizing:border-box;min-width:0;
+          transition:background .15s ease
         }
-        .nb .list article.unread{background:#f4fbfe!important;border-color:#acd7e7!important;box-shadow:0 6px 18px rgba(39,118,151,.08)!important}
+        .nb .list article:last-child{border-bottom:0}
+        .nb .list article{cursor:pointer;outline:none}
+        .nb .list article:hover{background:#f0f8fc}
+        .nb .list article:focus-visible{box-shadow:inset 0 0 0 2px rgba(77,168,218,.45)}
+        .nb .list article.unread{background:#f2f9fd}
+        .nb .list article.unread::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:#4DA8DA}
         .nb .notificationIcon{
-          width:46px!important;height:46px!important;min-width:46px!important;flex:0 0 46px!important;
-          border-radius:15px!important;background:#e9f6fb!important;color:#298db7!important;
-          display:grid!important;place-items:center!important;margin:0!important
+          width:40px;height:40px;min-width:40px;flex:0 0 40px;border-radius:12px;
+          background:#eaf6fc;color:#2c7fb8;border:1px solid #d6ebf5;display:grid;place-items:center
         }
-        .nb .unread .notificationIcon{background:#d9f1fb!important;color:#197da8!important}
+        .nb .unread .notificationIcon{background:#dcf0fa;color:#1f6f9f}
 
-        .nb .notificationContent{
-          flex:1 1 auto!important;min-width:0!important;width:auto!important;display:block!important;
-          grid-template-columns:none!important;overflow:visible!important
-        }
-        .nb .notificationTypeRow{
-          display:flex!important;align-items:center!important;justify-content:space-between!important;
-          gap:10px!important;width:100%!important;margin:0 0 9px!important;min-width:0!important
-        }
-        .nb .notificationType{
-          display:flex!important;align-items:center!important;gap:8px!important;min-width:0!important;
-          color:#557684!important;font-size:12px!important;font-weight:900!important;line-height:1.35!important;
-          text-transform:capitalize!important;white-space:normal!important;word-break:normal!important;overflow-wrap:anywhere!important
-        }
-        .nb .typeDot{width:9px!important;height:9px!important;min-width:9px!important;border-radius:50%!important;background:#2da5df!important;box-shadow:0 0 0 3px rgba(45,165,223,.1)!important}
-        .nb .unreadPill{
-          flex:0 0 auto!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;
-          border:1.5px solid #2e9fd4!important;border-radius:999px!important;padding:5px 10px!important;
-          color:#248fc2!important;background:#fff!important;font-size:11px!important;font-weight:900!important;white-space:nowrap!important
-        }
-
+        .nb .notificationContent{flex:1 1 auto;min-width:0;display:grid;gap:3px}
+        .nb .notificationTitleLine{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
         .nb .notificationCardTitle{
-          display:block!important;width:100%!important;color:#174e66!important;font-size:17px!important;
-          line-height:1.32!important;font-weight:900!important;margin:0 0 7px!important;
-          white-space:normal!important;word-break:normal!important;overflow-wrap:anywhere!important
+          min-width:0;color:#1d3a4a!important;font-size:14.5px!important;line-height:1.3!important;font-weight:700!important;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis
         }
+        .nb .unread .notificationCardTitle{font-weight:800!important}
+        .nb .unreadDotNew{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#4DA8DA;box-shadow:0 0 0 3px rgba(77,168,218,.18)}
         .nb .notificationMessage{
-          display:block!important;width:100%!important;margin:0 0 11px!important;color:#4d6d7d!important;
-          font-size:14px!important;line-height:1.55!important;font-weight:650!important;
-          white-space:normal!important;word-break:normal!important;overflow-wrap:anywhere!important;opacity:1!important
+          margin:0!important;color:#4f6b78!important;font-size:13px!important;line-height:1.45!important;font-weight:500!important;
+          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere
         }
-        .nb .notificationMeta{
-          display:block!important;width:100%!important;min-height:auto!important;margin:0!important
-        }
-        .nb .notificationMeta small{
-          display:block!important;color:#7893a0!important;font-size:12px!important;line-height:1.35!important;font-weight:700!important
+        .nb .notificationMetaLine{
+          display:block;color:#8197a2!important;font-size:11.5px!important;line-height:1.3!important;font-weight:600!important;
+          text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
         }
 
-        .nb .notificationTitleRow,.nb .notificationTitleRow strong,.nb .unreadLabel,.nb .unreadDot{all:unset}
+        .nb .empty{text-align:center;padding:34px 22px;color:#7a939f}
+        .nb .emptyIcon{width:52px;height:52px;margin:0 auto 12px;border-radius:16px;background:#edf8fc;color:#3d98bd;display:grid;place-items:center}
+        .nb .empty strong{display:block;color:#315c70;font-size:14.5px;margin-bottom:5px}
+        .nb .empty p{margin:0;color:#7a939f!important;font-size:12.5px;line-height:1.5}
 
-        .nb .empty{text-align:center;padding:42px 24px;color:#7a939f}
-        .nb .emptyIcon{width:58px;height:58px;margin:0 auto 13px;border-radius:18px;background:#edf8fc;color:#3d98bd;display:grid;place-items:center}
-        .nb .empty strong{display:block;color:#315c70;font-size:15px;margin-bottom:6px}
-        .nb .empty p{margin:0;color:#7a939f!important;font-size:13px;line-height:1.5}
-
-        .nb .panelFooter{flex:0 0 auto;padding:13px 16px 16px;border-top:1px solid #e6eff2;background:#fbfdfe}
+        .nb .panelFooter{flex:0 0 auto;display:flex;gap:8px;padding:10px 12px;border-top:1px solid #e6eff2;background:#fbfdfe}
         .nb .view,.nb .broadcast{
-          width:100%;justify-content:center;border:0;border-radius:14px;padding:13px 15px;cursor:pointer;
-          display:flex;align-items:center;gap:8px;font-weight:900;font-size:13.5px
+          flex:1;justify-content:center;border:0;border-radius:12px;padding:10px 12px;cursor:pointer;
+          display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px;font-family:inherit
         }
-        .nb .view{background:linear-gradient(135deg,#49a9d5,#2f95c4);color:#fff;box-shadow:0 8px 18px rgba(50,151,197,.22)}
-        .nb .broadcast{margin-top:9px;background:#eaf7ef;color:#337754;border:1px solid #d7ebdf}
+        .nb .view{background:#eaf6fc;color:#2c7fb8}
+        .nb .view:hover{background:#dcf0fa}
+        .nb .broadcast{background:#fff;color:#2c7fb8;border:1px solid #cfe6f0}
+        .nb .broadcast:hover{background:#f0f8fc}
 
-        @media(max-width:900px){
-          .nb .panel{left:14px;right:14px;top:78px;width:auto;max-height:calc(100dvh - 94px)}
-        }
         @media(max-width:600px){
-          .nb .panel{left:8px;right:8px;top:72px;border-radius:20px;max-height:calc(100dvh - 80px)}
-          .nb .panelHead{padding:18px 16px 15px}
-          .nb .panelHead h3{font-size:23px!important}
-          .nb .panelActions{padding:13px 12px;flex-direction:column;align-items:stretch}
-          .nb .push{grid-template-columns:36px minmax(0,1fr) 18px;padding:12px}
-          .nb .readAll{align-self:flex-end}
-          .nb .actionIcon{width:36px;height:36px}
-          .nb .list{padding:10px}
-          .nb .list article{gap:10px!important;padding:14px 12px!important;border-radius:16px!important}
-          .nb .notificationIcon{width:40px!important;height:40px!important;min-width:40px!important;flex-basis:40px!important}
-          .nb .notificationCardTitle{font-size:15.5px!important}
-          .nb .notificationMessage{font-size:13px!important}
-          .nb .notificationType{font-size:11px!important}
-          .nb .unreadPill{font-size:10px!important;padding:4px 8px!important}
-          .nb .panelFooter{padding:10px 10px 12px}
+          .nb .panel{position:fixed;left:8px;right:8px;top:72px;width:auto;border-radius:18px;max-height:calc(100dvh - 84px)}
+          .nb .panelHead{padding:14px 12px 14px 16px}
+          .nb .list article{padding:12px 14px}
+          .nb .panelFooter{flex-direction:column}
         }
 
         .nbToastStack{
