@@ -183,47 +183,100 @@ async function sendOtpEmail(email, code, purpose) {
   return data;
 }
 
+// The code and the data it unlocks (e.g. a pending new password) are held
+// ONLY in this page's memory, and the code only as a salted SHA-256
+// fingerprint -- nothing secret is ever written to localStorage, which keeps
+// just email/purpose/expiry for the verification screen. Refreshing the page
+// clears it, so the user requests a new code.
+const OTP_MAX_ATTEMPTS = 5;
+let pendingOtpSecret = null; // { purpose, salt, codeHash, payload, attempts }
+
+// As soon as the app loads, delete any old-style pending OTP saved by an
+// earlier version (it contained the code itself and its payload).
+// Remove entries this app no longer stores in the browser: the old pending
+// OTP and password-reset marks (now kept in memory only) and leftovers from
+// earlier versions that nothing reads any more.
+try {
+  [OTP_KEY, RESET_KEY, "pawcruz_trusted_devices", "petOwnerTutorialDone", "staffAppointmentAvailableDates"]
+    .forEach((key) => localStorage.removeItem(key));
+} catch {}
+
+// "Verified for a password reset" mark: memory only, so it can't be edited in
+// browser storage to point at another account.
+let passwordResetGrant = null; // { profileId, expiresAt }
+
+// The pending request's public details (email/purpose/expiry) also live only
+// in memory, so pawcruz_pending_otp never appears in browser storage.
+let pendingOtpRecord = null; // { email, purpose, createdAt, expiresAt }
+
+function randomHex(bytes = 16) {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function fingerprintOtp(code, salt) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${salt}:${code}`));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function clearPendingOtp() {
+  pendingOtpSecret = null;
+  pendingOtpRecord = null;
+}
+
 export async function createAndSendOtp(email, purpose, payload = {}) {
   const cleanEmail = normalizeIdentifier(email);
   const code = generateOtp();
-  const record = {
+  const salt = randomHex();
+  await sendOtpEmail(cleanEmail, code, purpose);
+  pendingOtpSecret = { purpose, salt, codeHash: await fingerprintOtp(code, salt), payload, attempts: 0 };
+  pendingOtpRecord = {
     email: cleanEmail,
     purpose,
-    code,
-    payload,
     createdAt: Date.now(),
     expiresAt: Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000
   };
-  await sendOtpEmail(cleanEmail, code, purpose);
-  writeJson(OTP_KEY, record);
   return { email: cleanEmail, purpose, expiresMinutes: OTP_EXPIRY_MINUTES };
 }
 
 export function getPendingOtp() {
-  const pending = readJson(OTP_KEY);
+  const pending = pendingOtpRecord;
   if (!pending) return null;
   if (Date.now() > Number(pending.expiresAt || 0)) {
-    localStorage.removeItem(OTP_KEY);
+    clearPendingOtp();
     return null;
   }
-  return { ...pending, code: undefined };
+  return { ...pending };
 }
 
-function verifyOtpCode(purpose, code) {
-  const pending = readJson(OTP_KEY);
+async function verifyOtpCode(purpose, code) {
+  const pending = pendingOtpRecord;
   if (!pending || pending.purpose !== purpose) throw new Error("No active OTP request was found. Please request a new code.");
   if (Date.now() > Number(pending.expiresAt || 0)) {
-    localStorage.removeItem(OTP_KEY);
+    clearPendingOtp();
     throw new Error("This OTP has expired. Please resend a new code.");
   }
-  if (String(code || "").trim() !== String(pending.code || "")) throw new Error("Invalid OTP code.");
-  return pending;
+  if (!pendingOtpSecret || pendingOtpSecret.purpose !== purpose) {
+    throw new Error("This verification was reset (the page was reloaded). Please start again to get a new code.");
+  }
+  if (pendingOtpSecret.attempts >= OTP_MAX_ATTEMPTS) {
+    throw new Error("Too many incorrect attempts. Please resend a new code.");
+  }
+  const entered = String(code || "").trim();
+  const matches = /^\d{6}$/.test(entered) && (await fingerprintOtp(entered, pendingOtpSecret.salt)) === pendingOtpSecret.codeHash;
+  if (!matches) {
+    pendingOtpSecret.attempts += 1;
+    throw new Error("Invalid OTP code.");
+  }
+  return { ...pending, payload: pendingOtpSecret.payload || {} };
 }
 
 export async function resendAuthOtp(purpose) {
-  const pending = readJson(OTP_KEY);
+  const pending = pendingOtpRecord;
   if (!pending || pending.purpose !== purpose) throw new Error("No OTP request is available to resend.");
-  return createAndSendOtp(pending.email, pending.purpose, pending.payload || {});
+  if (!pendingOtpSecret || pendingOtpSecret.purpose !== purpose) {
+    throw new Error("This verification was reset (the page was reloaded). Please start again to get a new code.");
+  }
+  return createAndSendOtp(pending.email, pending.purpose, pendingOtpSecret.payload || {});
 }
 
 function validateRegistration(values) {
@@ -279,7 +332,7 @@ export async function registerPetOwner(values) {
  * recorded once the OTP is verified and the account is truly created.
  */
 export async function completeRegistrationOtp(code) {
-  const pending = verifyOtpCode("register", code);
+  const pending = await verifyOtpCode("register", code);
   const values = pending.payload || {};
   const { data: profile, error } = await supabase.rpc("pawcruz_create_pet_owner_with_consent", {
     p_full_name: values.fullName,
@@ -294,7 +347,7 @@ export async function completeRegistrationOtp(code) {
     p_phone: values.phone,
   });
   if (error) throw new Error(error.message || "Registration failed. Check your Supabase SQL policies and required columns.");
-  localStorage.removeItem(OTP_KEY);
+  clearPendingOtp();
   await writeActivity(profile, "Account creation", `Pet-owner account created for ${values.username}.`);
   return publicProfile(profile);
 }
@@ -333,7 +386,7 @@ export async function completeLoginOtp(code, trustDevice = false) {
   // this point) must leave the pending OTP intact so the user can retry,
   // rather than getting stuck on "No active verification request was
   // found" for an OTP that was already wiped out from under them.
-  const pending = verifyOtpCode("login", code);
+  const pending = await verifyOtpCode("login", code);
   const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", pending.payload?.profileId).single();
   if (error || !profile) throw new Error("Unable to complete login.");
   const now = new Date().toISOString();
@@ -349,7 +402,7 @@ export async function completeLoginOtp(code, trustDevice = false) {
   // has already happened.
   const session = saveSession(updatedProfile);
   if (trustDevice) await registerTrustedDevice(profile.id);
-  localStorage.removeItem(OTP_KEY);
+  clearPendingOtp();
   await writeActivity(updatedProfile, "Login", `${profile.full_name} logged in.`);
   return session;
 }
@@ -430,29 +483,29 @@ export async function sendPasswordReset(identifier) {
   return { requiresOtp: true, email: profile.email, purpose: "forgot_password" };
 }
 
-export function completePasswordResetOtp(code) {
-  const pending = verifyOtpCode("forgot_password", code);
-  writeJson(RESET_KEY, { profileId: pending.payload?.profileId, expiresAt: Date.now() + 15 * 60 * 1000 });
-  localStorage.removeItem(OTP_KEY);
+export async function completePasswordResetOtp(code) {
+  const pending = await verifyOtpCode("forgot_password", code);
+  passwordResetGrant = { profileId: pending.payload?.profileId, expiresAt: Date.now() + 15 * 60 * 1000 };
+  clearPendingOtp();
   return true;
 }
 
 export async function updatePassword(newPassword) {
   const password = String(newPassword || "");
   validatePassword(password);
-  const reset = readJson(RESET_KEY);
+  const reset = passwordResetGrant;
   if (!reset?.profileId || Date.now() > Number(reset.expiresAt || 0)) {
-    localStorage.removeItem(RESET_KEY);
+    passwordResetGrant = null;
     throw new Error("Password reset verification expired. Request a new OTP.");
   }
   const { error } = await supabase.from("profiles").update({ password, updated_at: new Date().toISOString() }).eq("id", reset.profileId);
   if (error) throw new Error(`Unable to update password: ${error.message}`);
-  localStorage.removeItem(RESET_KEY);
+  passwordResetGrant = null;
   return true;
 }
 
-export function verifyProfileOtp(purpose, code) {
-  const pending = verifyOtpCode(purpose, code);
-  localStorage.removeItem(OTP_KEY);
+export async function verifyProfileOtp(purpose, code) {
+  const pending = await verifyOtpCode(purpose, code);
+  clearPendingOtp();
   return pending.payload || {};
 }

@@ -199,7 +199,7 @@ export default function OtpVerification() {
           state: { registered: true },
         });
       } else if (purpose === 'forgot_password') {
-        completePasswordResetOtp(code);
+        await completePasswordResetOtp(code);
         navigate('/reset-password', { replace: true });
       } else {
         const result = await completeLoginOtp(code, trustDevice);

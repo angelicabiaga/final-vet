@@ -79,7 +79,7 @@ export async function requestProfileUpdate(profileId, values, role) {
 }
 
 export async function confirmProfileEmailChange(code) {
-  const payload = verifyProfileOtp("change_email", code);
+  const payload = await verifyProfileOtp("change_email", code);
   return updateProfile(payload.profileId, payload.values || {}, payload.role);
 }
 
@@ -93,7 +93,7 @@ export async function requestPasswordChange(profileId, currentPassword, newPassw
 }
 
 export async function confirmPasswordChange(code) {
-  const payload = verifyProfileOtp("change_password", code);
+  const payload = await verifyProfileOtp("change_password", code);
   const { error } = await supabase.from("profiles").update({ password: payload.newPassword, must_change_password: false, updated_at: new Date().toISOString() }).eq("id", payload.profileId);
   if (error) throw new Error(`Unable to update password: ${error.message}`);
   return true;
