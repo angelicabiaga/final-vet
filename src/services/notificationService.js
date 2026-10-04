@@ -2,11 +2,45 @@ import { supabase } from "../config/supabaseClient";
 import { formatTime12h } from "../utils/timeFormat";
 import { validateImageFile } from "../utils/validators";
 
+// Broadcast pictures are shown at most ~700px wide (pop-ups, Notifications
+// page), so they're shrunk before upload: longest side <= 1280px, saved as
+// JPEG. A multi-MB phone photo becomes a few hundred KB, so sending is quick
+// and every recipient's device downloads far less. If shrinking doesn't make
+// the file smaller (or the browser can't decode it), the original is used.
+const BROADCAST_IMAGE_MAX_SIDE = 1280;
+const BROADCAST_IMAGE_QUALITY = 0.82;
+
+async function shrinkBroadcastImage(file) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, BROADCAST_IMAGE_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    // JPEG has no transparency: paint white first so transparent PNGs don't turn black.
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", BROADCAST_IMAGE_QUALITY));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
+}
+
 // Picture attached to a broadcast (public broadcast-images bucket, see
 // supabase/BROADCAST_IMAGES.sql). Returns its public URL.
-export async function uploadBroadcastImage(file, actorId) {
-  if (!file) return null;
-  validateImageFile(file);
+export async function uploadBroadcastImage(originalFile, actorId) {
+  if (!originalFile) return null;
+  validateImageFile(originalFile);
+  const file = await shrinkBroadcastImage(originalFile);
   const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
   const path = `${actorId || "admin"}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { error } = await supabase.storage.from("broadcast-images").upload(path, file, { contentType: file.type || undefined });
