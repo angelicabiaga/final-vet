@@ -510,6 +510,20 @@ export default function NotificationBell({ profile }) {
           text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
         }
 
+        /* Page styles elsewhere (e.g. the Dashboard's ".list div") must never
+           box up the pieces of a notification row -- reset, then restyle. */
+        .nb .list article div{background:none;padding:0;margin:0;border:0;border-radius:0;box-shadow:none;justify-content:normal}
+        .nb .list article .notificationIcon{
+          display:grid;place-items:center;width:40px;height:40px;min-width:40px;flex:0 0 40px;
+          border-radius:12px;background:#eaf6fc;border:1px solid #d6ebf5;color:#2c7fb8
+        }
+        .nb .list article.unread .notificationIcon{background:#dcf0fa;color:#1f6f9f}
+        .nb .list article .notificationContent{display:grid;gap:3px;flex:1 1 auto;min-width:0}
+        .nb .list article .notificationTitleLine{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+        .nb .list article{align-items:flex-start;gap:12px;padding:13px 16px 13px 18px}
+        .nb .list article.unread{background:#f2f9fd}
+        .nb .list article:hover{background:#eaf5fb}
+
         .nb .empty{text-align:center;padding:34px 22px;color:#7a939f}
         .nb .emptyIcon{width:52px;height:52px;margin:0 auto 12px;border-radius:16px;background:#edf8fc;color:#3d98bd;display:grid;place-items:center}
         .nb .empty strong{display:block;color:#315c70;font-size:14.5px;margin-bottom:5px}
