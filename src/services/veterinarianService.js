@@ -85,6 +85,32 @@ async function ensureNoDuplicateVeterinarian(profileId, payload) {
   if (duplicate?.length) throw new Error("The username or email is already used by another account.");
 }
 
+// The vet's Professional Information panel: only specialization and the
+// Background in Veterinary Medicine fields. Name, email, phone, address and
+// photo are saved by the shared profile form, so they're never sent here
+// (and never overwritten by a stale copy).
+export async function updateVeterinarianProfessionalInfo(profileId, values, actor) {
+  const yearsRaw = values.years_experience;
+  const payload = {
+    specialization: String(values.specialization || "").trim(),
+    education: String(values.education || "").trim() || null,
+    years_experience: yearsRaw === "" || yearsRaw === null || yearsRaw === undefined ? null : Number(yearsRaw),
+    certifications_training: String(values.certifications_training || "").trim() || null,
+    previous_practice: String(values.previous_practice || "").trim() || null,
+    professional_interests: String(values.professional_interests || "").trim() || null,
+    biography: String(values.biography || "").trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+  if (!payload.specialization) throw new Error("Specialization is required.");
+  if (payload.years_experience !== null && (!Number.isFinite(payload.years_experience) || payload.years_experience < 0)) {
+    throw new Error("Years of experience must be a valid non-negative number.");
+  }
+  const { data, error } = await supabase.from("profiles").update(payload).eq("id", profileId).select("*").single();
+  if (error) throw new Error(`Unable to update professional information: ${error.message}`);
+  if (actor?.id === profileId) syncLocalSession(data);
+  return data;
+}
+
 // Self-service save for the veterinarian's own general profile fields
 // (name, contact info, specialization, and Background in Veterinary
 // Medicine details). License number is intentionally never part of this

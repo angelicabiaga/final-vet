@@ -9,6 +9,7 @@ import {
   FIRST_NAME_REQUIRED_MESSAGE, LAST_NAME_REQUIRED_MESSAGE, sanitizePhoneInput,
 } from "../utils/validators";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
+import { stripDrTitle, withDrTitle } from "../utils/vetName";
 
 const EMPTY_PASSWORDS = { current: "", next: "", confirm: "" };
 
@@ -65,8 +66,12 @@ function maskEmail(email) {
   return `${local.slice(0, 2)}****@${domain}`;
 }
 
+// "Dr." is a title, not a first name: keep it out of the name fields and put
+// it back on save only when the profile already stored it.
+const titleOf = (fullName) => (stripDrTitle(fullName) !== String(fullName || "").trim() ? "Dr." : "");
+
 function splitFullName(fullName) {
-  const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+  const parts = stripDrTitle(fullName).split(/\s+/).filter(Boolean);
   if (parts.length === 0) return { firstName: "", middleName: "", lastName: "" };
   if (parts.length === 1) return { firstName: parts[0], middleName: "", lastName: "" };
   if (parts.length === 2) return { firstName: parts[0], middleName: "", lastName: parts[1] };
@@ -98,9 +103,14 @@ function PasswordInput({ label, value, visible, error, inputRef, autoComplete, o
   );
 }
 
-export default function UserProfileModule({ profile, title = "My Profile" }) {
+// `children` (e.g. the vet's Professional Information) render under the two
+// panels, in the same page and styles.
+export default function UserProfileModule({ profile, title = "My Profile", children }) {
   const forcePasswordChange = !!profile?.must_change_password;
   const isOwner = profile?.role === "pet_owner";
+  const isVet = profile?.role === "veterinarian";
+  const [nameTitle, setNameTitle] = useState("");
+  const withTitle = (name) => (nameTitle && name ? `${nameTitle} ${name}` : name);
 
   // `saved` is what the page shows; `form` is only the draft while editing.
   const [saved, setSaved] = useState(null);
@@ -129,6 +139,7 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
           phone: data.phone || "", address: data.address || "", avatar_url: data.avatar_url || ""
         };
         if (active) {
+          setNameTitle(titleOf(data.full_name));
           setSaved(values);
           setForm(values);
           setAccountMeta({ status: data.account_status || "", createdAt: data.created_at || "" });
@@ -167,7 +178,7 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
     try {
       // A different email is only saved after the OTP sent to it is verified
       // (see requestProfileUpdate / confirmProfileEmailChange).
-      const result = await requestProfileUpdate(profile.id, { ...form, username: form.username.trim(), email: form.email.trim(), full_name: joinFullName(form) }, profile.role);
+      const result = await requestProfileUpdate(profile.id, { ...form, username: form.username.trim(), email: form.email.trim(), full_name: withTitle(joinFullName(form)) }, profile.role);
       if (result.requiresOtp) {
         setOtpModal({ open: true, email: maskEmail(result.email), purpose: "change_email", title: "Verify Email Change" });
         setMessage({ type: "success", text: `We sent a 6-digit verification code to ${maskEmail(result.email)} to confirm this email change.` });
@@ -192,7 +203,7 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
     try {
       const avatar_url = await uploadProfileAvatar(profile.id, file);
       // Only the photo changes; unsaved edits in the form stay unsaved.
-      const updated = await updateProfile(profile.id, { ...saved, full_name: joinFullName(saved), avatar_url }, profile.role);
+      const updated = await updateProfile(profile.id, { ...saved, full_name: withTitle(joinFullName(saved)), avatar_url }, profile.role);
       setSaved((current) => ({ ...current, avatar_url: updated.avatar_url }));
       setForm((current) => ({ ...current, avatar_url: updated.avatar_url }));
       setMessage({ type: "success", text: "Profile photo updated." });
@@ -264,7 +275,8 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
     />
   );
 
-  const displayName = (saved && joinFullName(saved)) || profile?.full_name || "";
+  const baseName = (saved && joinFullName(saved)) || stripDrTitle(profile?.full_name);
+  const displayName = isVet ? withDrTitle(baseName) : withTitle(baseName);
   const role = String(profile?.role || "").replaceAll("_", " ");
 
   return <AppShell profile={profile} title={title}><div className="pf">
@@ -344,6 +356,8 @@ export default function UserProfileModule({ profile, title = "My Profile" }) {
         </section>
       </div>
     )}
+
+    {!loading && form && children}
 
     <style>{`
       .pf{width:100%;display:grid;gap:18px}
