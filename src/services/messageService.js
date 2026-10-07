@@ -78,6 +78,54 @@ export async function getMessageContacts(profile) {
   return rows.filter((item) => roleFilter.includes(String(item.role || "").toLowerCase()));
 }
 
+// Same set of people (in any order) -> same key. Used to treat every
+// conversation between the same participants as one thread.
+export function participantKey(profileIds) {
+  return [...new Set((profileIds || []).filter(Boolean))].sort().join(",");
+}
+
+// The user's existing conversation with exactly these participants, most
+// recently active first -- so "Create Conversation" reopens it instead of
+// starting a duplicate thread with the same person.
+async function findExistingConversation(profile, ids) {
+  const { data: links, error: linksError } = await supabase
+    .from("conversation_participants")
+    .select("conversation_id")
+    .eq("profile_id", profile.id);
+  if (linksError || !links?.length) return null;
+
+  const conversationIds = [...new Set(links.map((row) => row.conversation_id))];
+  const { data: participantRows, error: participantError } = await supabase
+    .from("conversation_participants")
+    .select("conversation_id,profile_id")
+    .in("conversation_id", conversationIds);
+  if (participantError) return null;
+
+  const members = new Map();
+  (participantRows || []).forEach((row) => {
+    if (!members.has(row.conversation_id)) members.set(row.conversation_id, []);
+    members.get(row.conversation_id).push(row.profile_id);
+  });
+
+  const wanted = participantKey([profile.id, ...ids]);
+  const matches = [...members]
+    .filter(([, profileIds]) => participantKey(profileIds) === wanted)
+    .map(([conversationId]) => conversationId);
+  if (!matches.length) return null;
+
+  const { data: rows, error } = await supabase
+    .from("conversations")
+    .select("*")
+    .in("id", matches);
+  if (error || !rows?.length) return null;
+
+  return rows.sort(
+    (a, b) =>
+      new Date(b.last_message_at || b.created_at) -
+      new Date(a.last_message_at || a.created_at)
+  )[0];
+}
+
 export async function createConversation(profile, participantIds, subject) {
   if (!profile?.id) throw new Error("Your login session is incomplete.");
 
@@ -85,6 +133,9 @@ export async function createConversation(profile, participantIds, subject) {
     (id) => id !== profile.id
   );
   if (!ids.length) throw new Error("Choose at least one recipient.");
+
+  const existing = await findExistingConversation(profile, ids);
+  if (existing) return existing;
 
   const roleFilter = allowedContactRoles(profile);
   if (roleFilter) {
