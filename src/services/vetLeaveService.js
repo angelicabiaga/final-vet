@@ -11,15 +11,35 @@ export const EMERGENCY_TYPES = ["Sudden Illness", "Family Emergency", "Personal 
 
 const SETUP_MESSAGE = "Leave requests are not set up yet. Run supabase/VET_LEAVE_REQUESTS.sql in the Supabase SQL Editor.";
 
+// Only a truly missing table/function means "not set up"; a rule the
+// database rejected (check constraint, overlap) gets its own message.
 function isMissingSetup(error) {
   const text = [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
   return ["PGRST202", "PGRST205", "42883", "42P01"].includes(error?.code) ||
     text.includes("could not find the function") ||
-    text.includes("veterinarian_leave_requests");
+    (text.includes("veterinarian_leave_requests") && (text.includes("does not exist") || text.includes("could not find the table")));
 }
+
+const RULE_MESSAGES = [
+  [/vet_leave_reason_check/, "Add a short reason for this leave."],
+  [/vet_leave_dates_check/, "The last day must be on or after the first day, and one request can cover at most 31 days."],
+  [/vet_leave_partial_check/, "A partial-day leave must be on a single date, inside clinic hours (9:00 AM – 7:00 PM), with the end time after the start time."],
+  [/vet_leave_emergency_single_day_check/, "Emergency leave covers today only. For other dates, file a planned leave."],
+  [/vet_leave_request_type_check/, "Choose Planned leave or Emergency."],
+  [/vet_leave_status_check/, "This request's status can't be changed that way."]
+];
 
 function toError(error, fallback) {
   if (isMissingSetup(error)) return new Error(SETUP_MESSAGE);
+  const text = [error?.message, error?.details].filter(Boolean).join(" ");
+  const rule = RULE_MESSAGES.find(([pattern]) => pattern.test(text));
+  if (rule) return new Error(rule[1]);
+  if (error?.code === "23P01" || /overlap|exclusion constraint/i.test(text)) {
+    return new Error("Another pending or approved leave already covers part of these dates. Cancel it first or choose other dates.");
+  }
+  if (error?.code === "23514" || /check constraint/i.test(text)) {
+    return new Error("Check the leave dates, times and reason, then try again.");
+  }
   return new Error(error?.message || fallback);
 }
 

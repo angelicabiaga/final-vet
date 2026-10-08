@@ -2,15 +2,27 @@ import { supabase } from "../config/supabaseClient";
 
 // PawCruz Pet Care Assistant. Answers come from Groq (same key and model as
 // the medical-record and inventory AI features: REACT_APP_GROQ_API_KEY).
-// Without a key, or if the AI can't be reached, the built-in guidance below
-// answers instead, so the assistant always replies with something safe.
+// Every answer is generated for the owner's actual question. If the AI can't
+// be reached the owner sees a "try again" error, never a canned answer, except
+// for emergency wording, which always gets the emergency advice below.
 
 const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY;
 const GROQ_MODEL = "openai/gpt-oss-20b";
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
-const URGENCIES = ["emergency", "same_day", "routine", "unknown"];
 const ACTIONS = ["emergency_vet", "contact_clinic", "book_appointment", "none"];
+
+// Concern level (chosen by the AI) -> what the chat shows under the reply.
+// Only "concerning" shows the same-day notice and only "emergency" the
+// emergency notice, so ordinary questions get a plain answer.
+const CONCERN_LEVELS = {
+  info: { urgency: "routine", actions: ["none", "book_appointment"] },
+  mild: { urgency: "routine", actions: ["none", "book_appointment"] },
+  concerning: { urgency: "same_day", actions: ["contact_clinic"] },
+  emergency: { urgency: "emergency", actions: ["emergency_vet"] },
+  unclear: { urgency: "unknown", actions: ["none"] }
+};
+const LEGACY_URGENCY = { emergency: "emergency", same_day: "concerning", routine: "mild", unknown: "unclear" };
 
 const SYSTEM_PROMPT = `You are the PawCruz Pet Care Assistant for Cruz Veterinary Clinic (PawCruz), chatting with a pet owner in the PawCruz app.
 
@@ -19,18 +31,36 @@ Clinic facts:
 - Owners book a General Consultation from the Book Appointment page (choose the pet, veterinarian, date and an available time).
 - My Queue shows their queue number on the visit day; Animal Patients shows each pet's records and vaccinations.
 
-How to help:
-- Give practical, educational pet-care guidance in plain, friendly language. You are not a veterinarian and cannot examine the pet.
-- Never give a definite diagnosis. Never give medicine names with doses, and never suggest human medicines (paracetamol, ibuprofen, aspirin and similar are dangerous for pets).
-- If details are missing, ask one or two short follow-up questions (species, age, how long, other symptoms).
-- Emergency signs (trouble breathing, collapse, seizures, suspected poisoning, heavy bleeding, bloated or hard belly, straining to urinate with nothing coming out, heat stroke, being hit by a vehicle): tell them to go to the nearest emergency veterinary clinic now.
-- Only answer about pets, pet care and the clinic. For anything else, politely say you can only help with pet care and PawCruz.
-- Keep replies short: at most about 120 words, short paragraphs, "- " for lists. Plain text only: no markdown, no asterisks, no headings.
+How to answer:
+1. First work out exactly what the owner is asking: the animal (dog, cat, rabbit, hamster, bird, fish, turtle or other pet), the specific concern, and what was already said earlier in this conversation. Read past spelling mistakes and informal English, Tagalog or Taglish ("why cats vomit hair" = why cats throw up hairballs; "ayaw kumain ng aso ko" = my dog won't eat).
+2. Answer THAT question directly in the first sentence, then give the most useful guidance for that exact situation. Different questions need different answers.
+   - A question that mentions hair or fur being vomited is about HAIRBALLS: cats swallow loose fur while grooming, it collects in the stomach and comes back up; brushing helps; see a vet if vomiting is frequent, the cat stops eating, is constipated, or retches without bringing anything up. Do not reply with general vomiting advice.
+   - "Why is my dog not eating?" covers common appetite causes in dogs and the warning signs to watch.
+   - "Can dogs eat chocolate?" starts with a clear "No" and explains why, plus: contact a vet immediately if it was eaten.
+3. Follow-ups use the conversation. "How can I prevent it?", "is that normal?", "what about kittens?" refer to the topic just discussed; answer about that topic. Never ask again for something the owner already told you, and treat short replies ("3 times today", "oo", "2 years old") as answers to your last question.
+4. Ask a follow-up question only when the answer truly depends on it (at most one or two, at the end). Purely informational questions need no follow-up.
+5. If the message is unclear, gibberish, or too short to understand, ask briefly what they mean instead of guessing. If it is not about pets or the clinic, politely say you can only help with pet care and PawCruz.
+6. All pet topics are welcome: symptoms, illnesses, nutrition and toxic foods, behavior and training, grooming, vaccinations, deworming, fleas/ticks, medicines in general terms, puppy/kitten and senior care.
+7. Reply in the owner's language (English, Tagalog or Taglish), simple and friendly.
+
+Safety:
+- You are not a veterinarian and cannot examine the pet. Never give a definite diagnosis; use "possible causes include".
+- Never name medicines with doses, never invent dosages, never suggest human medicines (paracetamol, ibuprofen, aspirin are dangerous for pets).
+- Emergencies (trouble breathing, seizures, collapse, suspected poisoning or a toxic food actually eaten, heavy bleeding, bloated hard belly, straining to urinate with nothing coming out, heat stroke, hit by a vehicle): say clearly to go to the nearest emergency veterinary clinic now, with one or two safe first steps.
+
+Format: at most about 130 words, short paragraphs, "- " for lists. Plain text only: no markdown, no asterisks, no headings.
+
+Choose "concern" from what the owner describes, not from the topic:
+- "info": a general question with no sick pet described ("Why do cats get hairballs?", "How often should I bathe my dog?", "Can dogs eat chocolate?").
+- "mild": a symptom that can be watched at home for now ("my cat vomited once but is acting normal", one hairball, mild itching). Explain what to monitor and when to see a vet.
+- "concerning": symptoms that need a vet soon, today ("keeps vomiting and can't keep water down", blood in stool, not eating for over a day, very weak).
+- "emergency": an emergency sign above is happening now.
+- "unclear": you had to ask what they mean, or it is not a pet question.
+
+suggestedAction: "emergency_vet" only for emergency; "contact_clinic" only for concerning; "book_appointment" when a regular check-up would genuinely help; otherwise "none".
 
 Respond with ONLY a JSON object, no other text:
-{"reply": "<your message to the owner>", "urgency": "emergency" | "same_day" | "routine" | "unknown", "suggestedAction": "emergency_vet" | "contact_clinic" | "book_appointment" | "none"}
-urgency: emergency = needs a vet right now; same_day = should be seen or call the clinic today; routine = can wait for a normal appointment; unknown = not enough information or not a health question.
-suggestedAction: emergency_vet for emergencies, contact_clinic when they should call the clinic, book_appointment when a normal visit makes sense, none otherwise.`;
+{"reply": "<your message to the owner>", "concern": "info" | "mild" | "concerning" | "emergency" | "unclear", "suggestedAction": "emergency_vet" | "contact_clinic" | "book_appointment" | "none"}`;
 
 function createError(message, code) {
   const error = new Error(message);
@@ -38,68 +68,32 @@ function createError(message, code) {
   return error;
 }
 
-const EMERGENCY_PATTERN = /(?:cannot|can't|difficulty|trouble|not).*(?:breathe|breathing)|seizure|collapsed|unconscious|poison|toxin|severe bleeding|bleeding (?:a lot|heavily)|bloated (?:abdomen|belly|stomach)|hit by a (?:car|vehicle)|heat ?stroke/;
+// Urgent signs in English, Tagalog and Taglish. Poison only counts when the
+// pet actually ate or was exposed to something, so "Is chocolate toxic?" is
+// not treated as an emergency.
+const EMERGENCY_PATTERNS = [
+  /(?:can'?t|cannot|can not|hard|difficult(?:y)?|trouble|struggling|not)\s*(?:to\s*)?breath/,
+  /hirap (?:huminga|sa paghinga)|hindi (?:maka|makapag)hinga|gasping|blue (?:gums|tongue)/,
+  /seizure|convuls|kombulsyon|nangingisay/,
+  /collapsed?|unconscious|passed out|nahimatay|walang malay/,
+  /poisoned|nalason|(?:ate|eaten|swallowed|ingested|licked|kinain|nakain|nakakain|nalunok)\b.{0,40}(?:poison|rat bait|lason|pesticide|antifreeze|bleach|xylitol|chocolate|tsokolate|grapes|ubas|paracetamol|ibuprofen|lily|lilies)/,
+  /severe bleeding|bleeding (?:a lot|heavily|won'?t stop|nonstop)|maraming dugo|hindi tumitigil (?:ang )?(?:pagdurugo|dugo)/,
+  /bloated (?:abdomen|belly|stomach)|hard (?:belly|stomach)|lumaki (?:ang )?tiyan/,
+  /(?:straining|can'?t|cannot|unable) to (?:urinate|pee)|hindi (?:maka-?ihi|makaihi)/,
+  /hit by a (?:car|vehicle|motorcycle)|nabangga|nasagasaan/,
+  /heat ?stroke/
+];
 
-// Built-in guidance: used without an API key or when the AI is unreachable,
-// and as a safety net so emergency wording is never under-triaged.
-function getOfflineReply(message) {
-  const text = message.toLowerCase();
+const isEmergencyText = text => EMERGENCY_PATTERNS.some(pattern => pattern.test(String(text || "").toLowerCase()));
 
-  if (EMERGENCY_PATTERN.test(text)) {
-    return {
-      reply:
-        "This may be an emergency. Please contact the nearest emergency veterinary clinic now. Keep your pet calm, do not give food or medicine unless a veterinarian tells you to, and bring any suspected toxin packaging with you.",
-      urgency: "emergency",
-      suggestedAction: "emergency_vet"
-    };
-  }
-
-  if (
-    /(?:no|lost|loss of|poor|decreased).*(?:appetite)/.test(text) ||
-    /(?:not|won't|will not).*(?:eat|eating)/.test(text)
-  ) {
-    return {
-      reply:
-        "A reduced appetite can have many causes, so there is no single safe quick remedy. How long has your pet not been eating? Are they drinking, vomiting, having diarrhea, showing pain or low energy, or could they have reached a toxin or foreign object? Offer fresh water and their usual food, but do not force-feed or give human medicine. Contact the clinic today if it continues or if any other symptoms are present.",
-      urgency: "same_day",
-      suggestedAction: "contact_clinic"
-    };
-  }
-
-  if (/(?:human medicine|paracetamol|acetaminophen|ibuprofen|aspirin|medicine dose|dosage)/.test(text)) {
-    return {
-      reply:
-        "Please do not give human medicine or guess a dose. Some common medicines are toxic to pets, and the safe treatment depends on species, weight, age, and health history. Contact a veterinarian for advice.",
-      urgency: "same_day",
-      suggestedAction: "contact_clinic"
-    };
-  }
-
-  if (/(?:vomit|vomiting|diarrhea|loose stool)/.test(text)) {
-    return {
-      reply:
-        "Please tell me how often this is happening, when it started, and whether there is blood, weakness, pain, refusal to drink, or possible toxin exposure. Repeated symptoms, blood, marked weakness, or inability to keep water down need prompt veterinary care. Do not give human medicine.",
-      urgency: "same_day",
-      suggestedAction: "contact_clinic"
-    };
-  }
-
-  if (/(?:itch|itchy|scratching|skin rash|hot spot)/.test(text)) {
-    return {
-      reply:
-        "Itching can come from fleas, allergies, irritation, or infection. Check gently for fleas, swelling, wounds, discharge, and rapidly spreading redness, and prevent excessive licking if you can do so safely. A clinic visit is best if it is persistent, painful, spreading, or affecting sleep or appetite.",
-      urgency: "routine",
-      suggestedAction: "book_appointment"
-    };
-  }
-
-  return {
-    reply:
-      "I can give basic educational guidance. Please share your pet type, age, main symptom, when it started, whether it is getting worse, and any changes in eating, drinking, energy, breathing, vomiting, or stool. A veterinarian should examine urgent, severe, or persistent problems.",
-    urgency: "unknown",
-    suggestedAction: "contact_clinic"
-  };
-}
+// Used only when the AI is unreachable and the owner describes an emergency,
+// so urgent advice is never lost to an outage.
+const EMERGENCY_REPLY = {
+  reply:
+    "This may be an emergency. Please bring your pet to the nearest emergency veterinary clinic now. Keep them calm and still, do not give food, water or medicine unless a veterinarian tells you to, and bring any packaging of what they may have eaten.",
+  urgency: "emergency",
+  suggestedAction: "emergency_vet"
+};
 
 function ageText(dateOfBirth) {
   if (!dateOfBirth) return "";
@@ -128,7 +122,7 @@ async function getPetContext(petId) {
       data.allergies && `Known allergies: ${data.allergies}`,
       data.existing_conditions && `Existing conditions: ${data.existing_conditions}`
     ].filter(Boolean);
-    return `The owner is asking about this pet:\n${facts.join("\n")}`;
+    return `The owner selected this pet in the app:\n${facts.join("\n")}\nUse these details when relevant. If the owner asks about a different animal, answer for the animal they mention.`;
   } catch {
     return "";
   }
@@ -145,29 +139,43 @@ function cleanReply(text) {
     .trim();
 }
 
-// The model answers with a JSON object; fall back to its plain text if not.
+function toResult(reply, concern, action) {
+  const level = CONCERN_LEVELS[concern] ? concern : "unclear";
+  const { urgency, actions } = CONCERN_LEVELS[level];
+  return {
+    reply: cleanReply(reply),
+    urgency,
+    suggestedAction: actions.includes(action) ? action : actions[0]
+  };
+}
+
+// The model answers with a JSON object; a plain-text answer (from the
+// retry without JSON mode) is used as it is.
 function parseModelOutput(content) {
   const raw = String(content || "").trim();
+  if (!raw) return null;
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start !== -1 && end > start) {
     try {
       const parsed = JSON.parse(raw.slice(start, end + 1));
       if (parsed && typeof parsed.reply === "string" && parsed.reply.trim()) {
-        return {
-          reply: cleanReply(parsed.reply),
-          urgency: URGENCIES.includes(parsed.urgency) ? parsed.urgency : "unknown",
-          suggestedAction: ACTIONS.includes(parsed.suggestedAction) ? parsed.suggestedAction : "none"
-        };
+        const concern = String(parsed.concern || LEGACY_URGENCY[parsed.urgency] || "").toLowerCase();
+        return toResult(parsed.reply, concern, ACTIONS.includes(parsed.suggestedAction) ? parsed.suggestedAction : "none");
       }
     } catch {
-      // Not valid JSON: use the text as it is.
+      // Cut-off or broken JSON.
     }
+    return null;
   }
-  return raw ? { reply: cleanReply(raw), urgency: "unknown", suggestedAction: "none" } : null;
+  return toResult(raw, "mild", "none");
 }
 
-async function callGroq(messages) {
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// jsonMode false is the plain-text retry when the model can't produce JSON.
+// A busy (429) answer is retried once after the wait Groq suggests.
+async function callGroq(messages, jsonMode = true, attempt = 0) {
   let response;
   try {
     response = await fetch(GROQ_ENDPOINT, {
@@ -179,9 +187,10 @@ async function callGroq(messages) {
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages,
-        temperature: 0.3,
-        max_tokens: 1200,
-        response_format: { type: "json_object" }
+        temperature: 0.4,
+        max_tokens: 1500,
+        reasoning_effort: "low",
+        ...(jsonMode ? { response_format: { type: "json_object" } } : {})
       })
     });
   } catch {
@@ -191,6 +200,11 @@ async function callGroq(messages) {
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     console.error("Pet care assistant error:", response.status, detail);
+    if (response.status === 429 && attempt === 0) {
+      const seconds = Number(response.headers.get("retry-after"));
+      await wait(Math.min(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 2500, 8000));
+      return callGroq(messages, jsonMode, 1);
+    }
     if (response.status === 401 || response.status === 403) {
       throw createError("The pet care assistant isn't set up correctly (AI key). Please tell the clinic.", "PROVIDER_AUTH");
     }
@@ -209,16 +223,28 @@ async function callGroq(messages) {
 export async function askPetAssistant({ messages, petId = null }) {
   const history = (Array.isArray(messages) ? messages : [])
     .filter(message => ["user", "assistant"].includes(message?.role) && String(message.content || "").trim())
-    .map(message => ({ role: message.role, content: String(message.content).slice(0, 2000) }))
+    .map(message => ({ role: message.role, content: String(message.content).trim().slice(0, message.role === "user" ? 1000 : 1200) }))
     .slice(-10);
   const latestUserMessage = history.filter(message => message.role === "user").map(message => message.content).at(-1);
 
   if (!latestUserMessage) {
-    throw createError("Please enter a question for the pet care assistant.", "INVALID_REQUEST");
+    throw createError("Please type your question first.", "INVALID_REQUEST");
   }
 
-  const offline = getOfflineReply(latestUserMessage);
-  if (!GROQ_API_KEY) return offline;
+  const emergency = isEmergencyText(latestUserMessage);
+  const unavailable = code => (emergency
+    ? EMERGENCY_REPLY
+    : Promise.reject(createError(
+        code === "PROVIDER_AUTH"
+          ? "The pet care assistant isn't set up correctly (AI key). Please tell the clinic."
+          : "The pet care assistant couldn't answer just now. Please press Retry in a moment.",
+        code
+      )));
+
+  if (!GROQ_API_KEY) {
+    console.error("Pet care assistant: REACT_APP_GROQ_API_KEY is missing.");
+    return unavailable("PROVIDER_AUTH");
+  }
 
   const petContext = await getPetContext(petId);
   const prompt = [
@@ -227,43 +253,31 @@ export async function askPetAssistant({ messages, petId = null }) {
     ...history
   ];
 
-  let content;
+  let result = null;
   try {
-    content = await callGroq(prompt);
+    result = parseModelOutput(await callGroq(prompt));
+    // Empty or cut-off JSON: ask once more without JSON mode.
+    if (!result) result = parseModelOutput(await callGroq(prompt, false));
   } catch (error) {
     if (error.code === "BAD_REQUEST") {
-      // Retry once without JSON mode; the reply is then used as plain text.
       try {
-        content = await callGroqPlain(prompt);
-      } catch {
-        return offline;
+        result = parseModelOutput(await callGroq(prompt, false));
+      } catch (retryError) {
+        return unavailable(retryError.code || "PROVIDER_UNAVAILABLE");
       }
-    } else if (["NETWORK_ERROR", "PROVIDER_UNAVAILABLE", "PROVIDER_AUTH"].includes(error.code)) {
-      // Owners still get the built-in guidance; the cause is in the console
-      // (e.g. an invalid or expired REACT_APP_GROQ_API_KEY).
-      return offline;
-    } else {
+    } else if (error.code === "RATE_LIMITED") {
+      if (emergency) return EMERGENCY_REPLY;
       throw error;
+    } else {
+      return unavailable(error.code || "PROVIDER_UNAVAILABLE");
     }
   }
 
-  const result = parseModelOutput(content);
-  if (!result) return offline;
+  if (!result) return unavailable("PROVIDER_UNAVAILABLE");
 
-  // Safety net: emergency wording is always treated as an emergency.
-  if (offline.urgency === "emergency" && result.urgency !== "emergency") {
+  // Safety net: an emergency described right now is always flagged.
+  if (emergency && result.urgency !== "emergency") {
     return { ...result, urgency: "emergency", suggestedAction: "emergency_vet" };
   }
   return result;
-}
-
-async function callGroqPlain(messages) {
-  const response = await fetch(GROQ_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${GROQ_API_KEY}` },
-    body: JSON.stringify({ model: GROQ_MODEL, messages, temperature: 0.3, max_tokens: 1200 })
-  });
-  if (!response.ok) throw createError("unavailable", "PROVIDER_UNAVAILABLE");
-  const data = await response.json();
-  return data?.choices?.[0]?.message?.content || "";
 }

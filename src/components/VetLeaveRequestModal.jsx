@@ -75,6 +75,7 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [reasonMissing, setReasonMissing] = useState(false);
+  const [notice, setNotice] = useState(null);
   const sequence = useRef(0);
   const reasonRef = useRef(null);
 
@@ -118,6 +119,7 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
   function switchType(next) {
     setRequestType(next);
     setLeaveType(next === "Emergency" ? EMERGENCY_TYPES[0] : LEAVE_TYPES[0]);
+    setNotice(null);
   }
 
   const payload = useMemo(() => {
@@ -172,20 +174,49 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
   // button stays clickable and points to the box when it's still empty.
   const needsReason = leaveType === "Other";
   const hasReason = !needsReason || reason.trim().length > 0;
-  const canSubmit = !saving && !checking && Boolean(vetId) && impact?.ok;
+  const canSubmit = !saving && !checking;
+  const kind = isEmergency ? "Emergency leave" : "Leave";
+
+  // One specific reason this leave can't go through yet, checked in the
+  // order the form is filled in. field marks the input to highlight.
+  function findProblem() {
+    if (!vetId) return { field: "vet", title: "Select a veterinarian", text: `Choose which veterinarian this ${kind.toLowerCase()} is for.` };
+    if (isEmergency) {
+      if (emergencyMode === "from" && !fromTime) return { field: "time", title: "Choose a time", text: "Pick the time the veterinarian needs to leave today." };
+    } else {
+      if (!startDate || !endDate) return { field: "dates", title: "Select the leave dates", text: "Choose both the first day and the last day of the leave." };
+      if (endDate < startDate) return { field: "dates", title: "Check the last day", text: "The last day must be on or after the first day." };
+      if (endDate > addDays(startDate, 30)) return { field: "dates", title: "Leave is too long", text: "One request can cover at most 31 days. File separate requests for longer leave." };
+      if (startDate < today) return { field: "dates", title: "Date already passed", text: "Leave can't start on a date that has already passed." };
+      if (!staffMode && startDate < tomorrow) return { field: "dates", title: "File at least one day ahead", text: "Planned leave must be filed at least one day ahead. For today, use Emergency Leave instead." };
+      if (singleDay && duration !== "full" && !partialTime) return { field: "time", title: "Choose a time", text: duration === "late" ? "Pick the time the veterinarian will arrive." : "Pick the time the veterinarian will leave." };
+    }
+    if (!hasReason) return { field: "reason", title: "Reason required", text: `Describe what happened${staffMode ? " for the record" : " so staff can plan coverage"}.` };
+    if (reason.trim().length > REASON_LIMIT) return { field: "reason", title: "Reason too long", text: `Keep the reason under ${REASON_LIMIT} characters.` };
+    if (checkError) return { title: `${kind} can't be checked`, text: checkError };
+    const blocked = impact?.errors?.[0];
+    if (blocked) return { field: /time/i.test(blocked) ? "time" : /date|day|passed|ahead/i.test(blocked) ? "dates" : undefined, title: `${kind} not allowed`, text: blocked };
+    if (!impact?.ok) return { title: "Still checking the schedule", text: "Wait a moment while the schedule is checked, then try again." };
+    return null;
+  }
 
   async function submit(event) {
     event.preventDefault();
     if (!canSubmit) return;
-    if (!hasReason) {
-      setReasonMissing(true);
-      reasonRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-      reasonRef.current?.focus({ preventScroll: true });
+    const problem = findProblem();
+    if (problem) {
+      setNotice({ ...problem, key: Date.now() });
+      if (problem.field === "reason") {
+        setReasonMissing(true);
+        reasonRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        reasonRef.current?.focus({ preventScroll: true });
+      }
       return;
     }
     try {
       setSaving(true);
       setSubmitError("");
+      setNotice(null);
       const values = { veterinarianId: vetId, leaveType, reason: needsReason ? reason.trim() : leaveType, ...payload };
       const result = staffMode
         ? await staffFileLeave({ staffId: profile.id, ...values })
@@ -193,9 +224,11 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
       onSubmitted?.(result);
     } catch (error) {
       setSubmitError(error.message);
+      setNotice({ title: staffMode ? `${kind} not recorded` : isEmergency ? "Emergency leave not applied" : "Leave request not sent", text: error.message, key: Date.now() });
       setSaving(false);
     }
   }
+  const invalid = field => (notice?.field === field ? "vlm-invalid" : undefined);
 
   const selectedVet = veterinarians.find(vet => vet.id === vetId);
   const title = staffMode
@@ -225,7 +258,7 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
             <>
               <div className="vlm-two">
                 <label className="vlm-field">Veterinarian
-                  <select value={vetId} onChange={event => setVetId(event.target.value)}>
+                  <select className={invalid("vet")} value={vetId} onChange={event => { setVetId(event.target.value); setNotice(null); }}>
                     <option value="">Select veterinarian</option>
                     {veterinarians.map(vet => <option key={vet.id} value={vet.id}>{drName(vet.full_name)}</option>)}
                   </select>
@@ -256,7 +289,7 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
 
           {needsReason && (
             <label className="vlm-field">Please describe <span className="vlm-required">(required)</span>
-              <textarea ref={reasonRef} rows={3} maxLength={REASON_LIMIT} value={reason} onChange={event => setReason(event.target.value)}
+              <textarea ref={reasonRef} rows={3} maxLength={REASON_LIMIT} value={reason} onChange={event => { setReason(event.target.value); setNotice(null); }}
                 className={reasonMissing && !hasReason ? "vlm-invalid" : undefined}
                 placeholder={staffMode ? "e.g. Called in at 8:30 AM, car accident on the way." : isEmergency ? "A short note for staff, e.g. my child was brought to the hospital." : "e.g. Wedding, moving house."} />
               {reasonMissing && !hasReason && <small className="vlm-missing">Describe what happened{staffMode ? " for the record" : " so staff can plan coverage"}.</small>}
@@ -270,7 +303,7 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
               <label className={emergencyMode === "from" ? "active" : ""}>
                 <input type="radio" name="emergency-mode" checked={emergencyMode === "from"} onChange={() => setEmergencyMode("from")} />
                 <span>Leaving from
-                  <select value={fromTime} onChange={event => { setFromTime(event.target.value); setEmergencyMode("from"); }}>
+                  <select className={invalid("time")} value={fromTime} onChange={event => { setFromTime(event.target.value); setEmergencyMode("from"); setNotice(null); }}>
                     {emergencyOptions.map(time => <option key={time} value={time}>{formatTime12h(time)}</option>)}
                   </select>
                   until the end of {own} shift ({formatTime12h(emergencyEnd)})
@@ -285,14 +318,15 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
             <>
               <div className="vlm-two">
                 <label className="vlm-field">First day
-                  <input type="date" min={earliestLeaveDate} value={startDate} onChange={event => {
+                  <input type="date" className={invalid("dates")} min={earliestLeaveDate} value={startDate} onChange={event => {
                     const value = event.target.value;
                     setStartDate(value);
+                    setNotice(null);
                     if (!endDate || endDate < value || endDate > addDays(value, 30)) setEndDate(value);
                   }} />
                 </label>
                 <label className="vlm-field">Last day
-                  <input type="date" min={startDate || earliestLeaveDate} max={startDate ? addDays(startDate, 30) : undefined} value={endDate} onChange={event => setEndDate(event.target.value)} />
+                  <input type="date" min={startDate || earliestLeaveDate} max={startDate ? addDays(startDate, 30) : undefined} value={endDate} className={invalid("dates")} onChange={event => { setEndDate(event.target.value); setNotice(null); }} />
                 </label>
               </div>
               <fieldset className="vlm-choices">
@@ -333,8 +367,10 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
         </div>
 
         <footer className="vlm-foot">
-          {submitError && <div className="err">{submitError}</div>}
-          {canSubmit && !hasReason && <span className="vlm-foot-hint">Describe what happened above to continue.</span>}
+          {notice && <div key={notice.key} className="err" data-toast-title={notice.title}>{notice.text}</div>}
+          {!notice && submitError && <span className="vlm-foot-hint">{submitError}</span>}
+          {!notice && !submitError && impact?.errors?.length > 0 && <span className="vlm-foot-hint">{impact.errors[0]}</span>}
+          {!notice && !submitError && !impact?.errors?.length && !hasReason && <span className="vlm-foot-hint">Describe what happened above to continue.</span>}
           <button type="button" className="vlm-secondary" onClick={onClose} disabled={saving}>Cancel</button>
           <button type="submit" className="vlm-primary" disabled={!canSubmit}>
             {saving ? "Saving…" : staffMode ? (isEmergency ? "Record emergency" : "Record leave") : isEmergency ? "Apply emergency leave now" : "Send for approval"}
@@ -356,7 +392,7 @@ export default function VetLeaveRequestModal({ profile, mode = "Leave", today, i
         .vlm-field textarea{resize:vertical;min-height:74px}
         .vlm-counter{justify-self:end;color:#8aa0ab;font-weight:600}
         .vlm-required{color:#8aa0ab;font-weight:600}
-        .vlm-field textarea.vlm-invalid{border-color:#e08a80;box-shadow:0 0 0 3px #fdecea}
+        .vlm-field textarea.vlm-invalid,.vlm-field input.vlm-invalid,.vlm-field select.vlm-invalid,.vlm-choices select.vlm-invalid{border-color:#e08a80;box-shadow:0 0 0 3px #fdecea}
         .vlm-missing{color:#c0392b;font-weight:700}
         .vlm-foot-hint{margin-right:auto;color:#9d6817;font-size:13px;font-weight:700}
         .vlm-two{display:grid;grid-template-columns:1fr 1fr;gap:12px}

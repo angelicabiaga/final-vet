@@ -6,6 +6,7 @@ import React, {
 } from "react";
 
 import { useLocation, useNavigate } from "react-router-dom";
+import { pushToast } from "./GlobalToastCenter";
 
 import {
   DEFAULT_MEDICAL_RECORD_TEMPLATE,
@@ -258,6 +259,111 @@ function classifyPickerCategory(category) {
   return "Medicine";
 }
 
+// Health Record fields that must be filled (and sensible) before the
+// consultation can be completed. Returns { field: message }.
+const HEALTH_LIMITS = { weightMax: 150, tempMin: 30, tempMax: 45 };
+function validateHealthRecord(form) {
+  const errors = {};
+  const blank = value => !String(value ?? "").trim();
+  if (blank(form.chiefComplaint)) errors.chiefComplaint = "Add the chief complaint.";
+  if (blank(form.symptoms)) errors.symptoms = "Add the symptoms.";
+  if (blank(form.weight)) errors.weight = "Enter the weight.";
+  else if (!(Number(form.weight) > 0)) errors.weight = "Weight must be more than 0 kg.";
+  else if (Number(form.weight) > HEALTH_LIMITS.weightMax) errors.weight = `Weight must be ${HEALTH_LIMITS.weightMax} kg or less.`;
+  if (blank(form.temperature)) errors.temperature = "Enter the temperature.";
+  else if (!Number.isFinite(Number(form.temperature)) || Number(form.temperature) < HEALTH_LIMITS.tempMin || Number(form.temperature) > HEALTH_LIMITS.tempMax) errors.temperature = `Temperature must be between ${HEALTH_LIMITS.tempMin} °C and ${HEALTH_LIMITS.tempMax} °C.`;
+  if (blank(form.diagnosis)) errors.diagnosis = "Add a diagnosis.";
+  if (blank(form.treatment)) errors.treatment = "Add the treatment given.";
+  if (blank(form.treatmentPlan)) errors.treatmentPlan = "Add the treatment plan.";
+  return errors;
+}
+
+// Parasite Prevention: at least one entry, each with a date and treatment.
+function validateParasiteRecord(form) {
+  const errors = {};
+  const rows = form.parasiteTreatments || [];
+  if (!rows.length) {
+    errors.parasiteEntries = "Add at least one parasite prevention entry.";
+    return errors;
+  }
+  rows.forEach((row, index) => {
+    if (!String(row.date || "").trim()) errors[`parasite.${index}.date`] = `Entry ${index + 1}: select the date given.`;
+    if (!String(row.treatment || "").trim()) errors[`parasite.${index}.treatment`] = `Entry ${index + 1}: enter the treatment.`;
+  });
+  return errors;
+}
+
+// Heartworm: at least one test, each with its date and result.
+function validateHeartwormRecord(form) {
+  const errors = {};
+  const rows = form.heartwormTests || [];
+  if (!rows.length) {
+    errors.heartwormEntries = "Add at least one heartworm test.";
+    return errors;
+  }
+  rows.forEach((row, index) => {
+    if (!String(row.date || "").trim()) errors[`heartworm.${index}.date`] = `Test ${index + 1}: select the test date.`;
+    if (!["Negative", "Positive"].includes(row.result)) errors[`heartworm.${index}.result`] = `Test ${index + 1}: choose the result.`;
+  });
+  return errors;
+}
+
+// Dental: gum condition, bite, chart/findings and the treatment given
+// (or a note that none was needed).
+function validateDentalRecord(form) {
+  const errors = {};
+  const data = form.templateData || {};
+  const blank = (value) => !String(value ?? "").trim();
+  if (blank(data.gingiva)) errors.dentalGingiva = "Describe the gingiva (gum condition).";
+  if (blank(data.occlusion)) errors.dentalOcclusion = "Describe the occlusion (bite alignment).";
+  if (blank(data.dentalChart)) errors.dentalChart = "Add the dental chart and findings.";
+  if (blank(form.treatment)) errors.dentalTreatment = "Add the dental treatment, or write \"None needed\".";
+  return errors;
+}
+
+// Vaccination: at least one entry, each with date, age, weight and at least
+// one vaccine (a checkbox or the "Others" box).
+function validateVaccinationRecord(form) {
+  const errors = {};
+  const rows = form.vaccinationRecords || [];
+  if (!rows.length) {
+    errors.vaccinationEntries = "Add at least one vaccination.";
+    return errors;
+  }
+  const blank = (value) => !String(value ?? "").trim();
+  rows.forEach((row, index) => {
+    const n = index + 1;
+    if (blank(row.date)) errors[`vaccination.${index}.date`] = `Vaccination ${n}: select the date.`;
+    if (blank(row.age)) errors[`vaccination.${index}.age`] = `Vaccination ${n}: enter the age.`;
+    if (blank(row.weight)) errors[`vaccination.${index}.weight`] = `Vaccination ${n}: enter the weight.`;
+    else if (!(parseFloat(row.weight) > 0)) errors[`vaccination.${index}.weight`] = `Vaccination ${n}: weight must be a number more than 0.`;
+    if (!VACCINE_KEYS.some(([key]) => row[key]) && blank(row.others)) errors[`vaccination.${index}.vaccines`] = `Vaccination ${n}: select at least one vaccine.`;
+  });
+  return errors;
+}
+
+// Any template: when "Follow-up needed" is on, the date is required and
+// can't be before the consultation.
+function validateFollowUp(form) {
+  if (!form.followUpEnabled) return {};
+  if (!String(form.followUpDate || "").trim()) return { followUpDate: "Select the follow-up date." };
+  if (form.consultationDate && form.followUpDate < form.consultationDate) return { followUpDate: "The follow-up date can't be before the consultation date." };
+  return {};
+}
+
+// Required-field rules for the template being completed.
+const TEMPLATE_RULES = {
+  "health-record": { validate: validateHealthRecord, title: "Invalid health record details" },
+  "parasite-prevention": { validate: validateParasiteRecord, title: "Invalid parasite prevention details" },
+  heartworm: { validate: validateHeartwormRecord, title: "Invalid heartworm test details" },
+  dental: { validate: validateDentalRecord, title: "Invalid dental record details" },
+  vaccination: { validate: validateVaccinationRecord, title: "Invalid vaccination record details" },
+};
+const validateTemplateRecord = (form) => ({
+  ...(TEMPLATE_RULES[form.recordTemplate]?.validate(form) || {}),
+  ...validateFollowUp(form),
+});
+
 export default function MedicalRecordsModule({
   profile,
 }) {
@@ -427,6 +533,45 @@ export default function MedicalRecordsModule({
   const activeTemplate = getMedicalRecordTemplate(
     form.recordTemplate
   );
+
+  // Health Record fields still missing/invalid after Complete was clicked,
+  // and the toast that lists them.
+  const [healthErrors, setHealthErrors] = useState({});
+  const [healthNotice, setHealthNotice] = useState(null);
+
+  // Clear each field's error as soon as it's fixed.
+  useEffect(() => {
+    setHealthErrors((current) => {
+      const keys = Object.keys(current);
+      if (!keys.length) return current;
+      const now = validateTemplateRecord(form);
+      const still = {};
+      keys.forEach((key) => { if (now[key]) still[key] = now[key]; });
+      return Object.keys(still).length === keys.length && keys.every((key) => still[key] === current[key]) ? current : still;
+    });
+  }, [form]);
+
+  const healthInvalid = (name) => (healthErrors[name] ? "mr-invalid" : undefined);
+
+  // Blocks Complete while Health Record fields are empty or out of range.
+  function healthRecordReady() {
+    const errors = validateTemplateRecord(form);
+    const messages = Object.values(errors);
+    setHealthErrors(errors);
+    if (!messages.length) return true;
+    const shown = messages.slice(0, 4).join(" ");
+    setHealthNotice({
+      key: Date.now(),
+      title: TEMPLATE_RULES[form.recordTemplate]?.title || "Invalid medical record details",
+      text: messages.length === 1
+        ? messages[0]
+        : `Complete the required fields: ${shown}${messages.length > 4 ? ` (and ${messages.length - 4} more)` : ""}`,
+    });
+    const first = document.querySelector(".mr-invalid, .mr-section-invalid");
+    first?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    first?.focus?.({ preventScroll: true });
+    return false;
+  }
 
   // When set, the big central panel shows this past visit read-only instead
   // of the current consultation's editable fields -- see the History aside.
@@ -1203,8 +1348,10 @@ export default function MedicalRecordsModule({
       // same vet at once.
       await completeQueueEntry(queueContext.queueEntryId, profile);
 
-      setSuccess(
-        "Consultation completed. The record was finalized and sent to Staff POS for billing."
+      pushToast(
+        "The consultation is finalized and sent to Staff POS for billing.",
+        "success",
+        "Medical record completed"
       );
       triggerInsightPersistence(
         records.find((record) => record.id === pendingQueueCompletion.recordId)
@@ -1289,8 +1436,10 @@ export default function MedicalRecordsModule({
 
         triggerInsightPersistence(savedRecord);
         switchQueuePet(queueContext, nextPetIndex);
-        setSuccess(
-          `${doneName}'s record is saved. Now add the record for ${nextName} (pet ${nextPetIndex + 1} of ${queueContext.petIds.length}).`
+        pushToast(
+          `Now add the record for ${nextName} (pet ${nextPetIndex + 1} of ${queueContext.petIds.length}).`,
+          "success",
+          `${doneName}'s medical record completed`
         );
         return;
       }
@@ -1309,8 +1458,10 @@ export default function MedicalRecordsModule({
         // the same vet at once.
         await completeQueueEntry(queueContext.queueEntryId, profile);
 
-        setSuccess(
-          "Consultation completed. The record was finalized and sent to Staff POS for billing."
+        pushToast(
+          `${getQueuePetName(savedRecord?.pet_id || form.petId) || "The pet"}'s medical record is finalized and the consultation was sent to Staff POS for billing.`,
+          "success",
+          "Medical record completed"
         );
         triggerInsightPersistence(savedRecord);
         closeQueuedRecordModal(savedRecord?.pet_id || form.petId);
@@ -1345,6 +1496,8 @@ export default function MedicalRecordsModule({
     // saveQueuedTemplate already uses below.
     if (saving) return;
 
+    if (!pendingQueueCompletion && !healthRecordReady()) return;
+
     if (queueContext) {
       if (pendingQueueCompletion) {
         await retryQueueCompletion();
@@ -1365,7 +1518,7 @@ export default function MedicalRecordsModule({
         profile
       );
       await load();
-      setSuccess("Medical record saved successfully.");
+      pushToast("Your changes to this medical record were saved.", "success", "Medical record saved");
       setPendingQueueCompletion(null);
       setShow(false);
       setForm(blank);
@@ -1604,6 +1757,12 @@ export default function MedicalRecordsModule({
           {error && (
             <div className="alert err">
               {error}
+            </div>
+          )}
+
+          {healthNotice && (
+            <div key={healthNotice.key} className="alert err" data-toast-title={healthNotice.title}>
+              {healthNotice.text}
             </div>
           )}
 
@@ -2140,9 +2299,10 @@ export default function MedicalRecordsModule({
               {form.recordTemplate === "health-record" && (
                 <>
               <label className="wide">
-                Chief Complaint
+                <span>Chief Complaint<span className="required-mark"> *</span></span>
 
                 <textarea
+                  className={healthInvalid("chiefComplaint")}
                   value={
                     form.chiefComplaint
                   }
@@ -2155,12 +2315,14 @@ export default function MedicalRecordsModule({
                     })
                   }
                 />
+                {healthErrors.chiefComplaint && <small className="mr-field-error">{healthErrors.chiefComplaint}</small>}
               </label>
 
               <label className="wide">
-                Symptoms
+                <span>Symptoms<span className="required-mark"> *</span></span>
 
                 <textarea
+                  className={healthInvalid("symptoms")}
                   value={
                     form.symptoms
                   }
@@ -2173,15 +2335,17 @@ export default function MedicalRecordsModule({
                     })
                   }
                 />
+                {healthErrors.symptoms && <small className="mr-field-error">{healthErrors.symptoms}</small>}
               </label>
 
               <div className="wide vitals-row">
                 <label>
-                  Weight (kg)
+                  <span>Weight (kg)<span className="required-mark"> *</span></span>
 
                   <input
                     type="number"
                     step="0.01"
+                    className={healthInvalid("weight")}
                     value={
                       form.weight
                     }
@@ -2194,14 +2358,16 @@ export default function MedicalRecordsModule({
                       })
                     }
                   />
+                  {healthErrors.weight && <small className="mr-field-error">{healthErrors.weight}</small>}
                 </label>
 
                 <label>
-                  Temperature °C
+                  <span>Temperature °C<span className="required-mark"> *</span></span>
 
                   <input
                     type="number"
                     step="0.1"
+                    className={healthInvalid("temperature")}
                     value={
                       form.temperature
                     }
@@ -2214,13 +2380,15 @@ export default function MedicalRecordsModule({
                       })
                     }
                   />
+                  {healthErrors.temperature && <small className="mr-field-error">{healthErrors.temperature}</small>}
                 </label>
               </div>
 
               <label className="wide">
-                Diagnosis
+                <span>Diagnosis<span className="required-mark"> *</span></span>
 
                 <textarea
+                  className={healthInvalid("diagnosis")}
                   value={
                     form.diagnosis
                   }
@@ -2233,12 +2401,14 @@ export default function MedicalRecordsModule({
                     })
                   }
                 />
+                {healthErrors.diagnosis && <small className="mr-field-error">{healthErrors.diagnosis}</small>}
               </label>
 
               <label className="wide">
-                Treatment
+                <span>Treatment<span className="required-mark"> *</span></span>
 
                 <textarea
+                  className={healthInvalid("treatment")}
                   value={
                     form.treatment
                   }
@@ -2251,12 +2421,14 @@ export default function MedicalRecordsModule({
                     })
                   }
                 />
+                {healthErrors.treatment && <small className="mr-field-error">{healthErrors.treatment}</small>}
               </label>
 
               <label className="wide">
-                Treatment Plan
+                <span>Treatment Plan<span className="required-mark"> *</span></span>
 
                 <textarea
+                  className={healthInvalid("treatmentPlan")}
                   value={
                     form.treatmentPlan
                   }
@@ -2269,6 +2441,7 @@ export default function MedicalRecordsModule({
                     })
                   }
                 />
+                {healthErrors.treatmentPlan && <small className="mr-field-error">{healthErrors.treatmentPlan}</small>}
               </label>
 
               <button
@@ -2459,9 +2632,9 @@ export default function MedicalRecordsModule({
               )}
 
               {form.recordTemplate === "parasite-prevention" && (
-              <div className="wide record-section">
+              <div className={`wide record-section${healthErrors.parasiteEntries ? " mr-section-invalid" : ""}`}>
                 <div className="section-head">
-                  <h3>Parasite Prevention</h3>
+                  <h3>Parasite Prevention<span className="required-mark"> *</span></h3>
                   <button
                     type="button"
                     className="add-row"
@@ -2481,11 +2654,13 @@ export default function MedicalRecordsModule({
                     No parasite prevention entries yet.
                   </p>
                 )}
+                {healthErrors.parasiteEntries && <small className="mr-field-error">{healthErrors.parasiteEntries}</small>}
 
                 {form.parasiteTreatments.map((row, index) => (
                   <div className="row-grid two" key={index}>
                     <input
                       type="date"
+                      className={healthInvalid(`parasite.${index}.date`)}
                       value={row.date}
                       onChange={(e) =>
                         updateListItem("parasiteTreatments", index, {
@@ -2494,6 +2669,7 @@ export default function MedicalRecordsModule({
                       }
                     />
                     <input
+                      className={healthInvalid(`parasite.${index}.treatment`)}
                       value={row.treatment}
                       placeholder="Treatment"
                       onChange={(e) =>
@@ -2514,13 +2690,16 @@ export default function MedicalRecordsModule({
                     </button>
                   </div>
                 ))}
+                {Object.keys(healthErrors).some((key) => key.startsWith("parasite.")) && (
+                  <small className="mr-field-error">Fill in the date and treatment for every entry, or remove the empty ones.</small>
+                )}
               </div>
               )}
 
               {form.recordTemplate === "heartworm" && (
-              <div className="wide record-section">
+              <div className={`wide record-section${healthErrors.heartwormEntries ? " mr-section-invalid" : ""}`}>
                 <div className="section-head">
-                  <h3>Heartworm Tests and Prevention</h3>
+                  <h3>Heartworm Tests and Prevention<span className="required-mark"> *</span></h3>
                   <button
                     type="button"
                     className="add-row"
@@ -2540,11 +2719,13 @@ export default function MedicalRecordsModule({
                     No heartworm test results yet.
                   </p>
                 )}
+                {healthErrors.heartwormEntries && <small className="mr-field-error">{healthErrors.heartwormEntries}</small>}
 
                 {form.heartwormTests.map((row, index) => (
                   <div className="row-grid two" key={index}>
                     <input
                       type="date"
+                      className={healthInvalid(`heartworm.${index}.date`)}
                       value={row.date}
                       onChange={(e) =>
                         updateListItem("heartwormTests", index, {
@@ -2553,6 +2734,7 @@ export default function MedicalRecordsModule({
                       }
                     />
                     <select
+                      className={healthInvalid(`heartworm.${index}.result`)}
                       value={row.result}
                       onChange={(e) =>
                         updateListItem("heartwormTests", index, {
@@ -2575,13 +2757,16 @@ export default function MedicalRecordsModule({
                     </button>
                   </div>
                 ))}
+                {Object.keys(healthErrors).some((key) => key.startsWith("heartworm.")) && (
+                  <small className="mr-field-error">Fill in the date and result for every test, or remove the empty ones.</small>
+                )}
               </div>
               )}
 
               {form.recordTemplate === "vaccination" && (
-              <div className="wide record-section">
+              <div className={`wide record-section${healthErrors.vaccinationEntries ? " mr-section-invalid" : ""}`}>
                 <div className="section-head">
-                  <h3>Vaccination Record</h3>
+                  <h3>Vaccination Record<span className="required-mark"> *</span></h3>
                   <button
                     type="button"
                     className="add-row"
@@ -2601,6 +2786,7 @@ export default function MedicalRecordsModule({
                     No vaccinations recorded yet.
                   </p>
                 )}
+                {healthErrors.vaccinationEntries && <small className="mr-field-error">{healthErrors.vaccinationEntries}</small>}
 
                 {form.vaccinationRecords.map((row, index) => (
                   <div className="vaccine-card" key={index}>
@@ -2617,9 +2803,10 @@ export default function MedicalRecordsModule({
 
                     <div className="row-grid three">
                       <label className="mini">
-                        Date
+                        <span>Date<span className="required-mark"> *</span></span>
                         <input
                           type="date"
+                          className={healthInvalid(`vaccination.${index}.date`)}
                           value={row.date}
                           onChange={(e) =>
                             updateListItem(
@@ -2631,8 +2818,9 @@ export default function MedicalRecordsModule({
                         />
                       </label>
                       <label className="mini">
-                        Age
+                        <span>Age<span className="required-mark"> *</span></span>
                         <input
+                          className={healthInvalid(`vaccination.${index}.age`)}
                           value={row.age}
                           onChange={(e) =>
                             updateListItem(
@@ -2644,9 +2832,11 @@ export default function MedicalRecordsModule({
                         />
                       </label>
                       <label className="mini">
-                        Weight
+                        <span>Weight<span className="required-mark"> *</span></span>
                         <input
+                          className={healthInvalid(`vaccination.${index}.weight`)}
                           value={row.weight}
+                          placeholder="kg"
                           onChange={(e) =>
                             updateListItem(
                               "vaccinationRecords",
@@ -2658,7 +2848,13 @@ export default function MedicalRecordsModule({
                       </label>
                     </div>
 
-                    <div className="vaccine-checks">
+                    {["date", "age", "weight"].some((key) => healthErrors[`vaccination.${index}.${key}`]) && (
+                      <small className="mr-field-error">
+                        {["date", "age", "weight"].map((key) => healthErrors[`vaccination.${index}.${key}`]).filter(Boolean).join(" ")}
+                      </small>
+                    )}
+
+                    <div className={`vaccine-checks${healthErrors[`vaccination.${index}.vaccines`] ? " mr-section-invalid" : ""}`}>
                       {VACCINE_KEYS.map(([key, label]) => (
                         <label className="vaccine-check" key={key}>
                           <input
@@ -2676,6 +2872,9 @@ export default function MedicalRecordsModule({
                         </label>
                       ))}
                     </div>
+                    {healthErrors[`vaccination.${index}.vaccines`] && (
+                      <small className="mr-field-error">{healthErrors[`vaccination.${index}.vaccines`]}</small>
+                    )}
 
                     <div className="row-grid two">
                       <input
@@ -2749,21 +2948,25 @@ export default function MedicalRecordsModule({
               {form.recordTemplate === "dental" && (
                 <>
                   <label>
-                    Gingiva
+                    <span>Gingiva<span className="required-mark"> *</span></span>
 
                     <input
+                      className={healthInvalid("dentalGingiva")}
                       value={form.templateData?.gingiva || ""}
                       onChange={(e) => updateTemplateData({ gingiva: e.target.value })}
                     />
+                    {healthErrors.dentalGingiva && <small className="mr-field-error">{healthErrors.dentalGingiva}</small>}
                   </label>
 
                   <label>
-                    Occlusion
+                    <span>Occlusion<span className="required-mark"> *</span></span>
 
                     <input
+                      className={healthInvalid("dentalOcclusion")}
                       value={form.templateData?.occlusion || ""}
                       onChange={(e) => updateTemplateData({ occlusion: e.target.value })}
                     />
+                    {healthErrors.dentalOcclusion && <small className="mr-field-error">{healthErrors.dentalOcclusion}</small>}
                   </label>
 
                   <label>
@@ -2785,13 +2988,15 @@ export default function MedicalRecordsModule({
                   </label>
 
                   <label className="wide">
-                    Dental Chart and Findings
+                    <span>Dental Chart and Findings<span className="required-mark"> *</span></span>
 
                     <textarea
+                      className={healthInvalid("dentalChart")}
                       value={form.templateData?.dentalChart || ""}
                       placeholder="Record missing, displaced, injured, or decayed teeth and other observations."
                       onChange={(e) => updateTemplateData({ dentalChart: e.target.value })}
                     />
+                    {healthErrors.dentalChart && <small className="mr-field-error">{healthErrors.dentalChart}</small>}
                   </label>
 
                   <label className="wide">
@@ -2804,14 +3009,17 @@ export default function MedicalRecordsModule({
                   </label>
 
                   <label className="wide">
-                    Dental Treatment
+                    <span>Dental Treatment<span className="required-mark"> *</span></span>
 
                     <textarea
+                      className={healthInvalid("dentalTreatment")}
                       value={form.treatment}
+                      placeholder="Treatment performed, or write None needed."
                       onChange={(e) =>
                         setForm({ ...form, treatment: e.target.value })
                       }
                     />
+                    {healthErrors.dentalTreatment && <small className="mr-field-error">{healthErrors.dentalTreatment}</small>}
                   </label>
                 </>
               )}
@@ -2835,10 +3043,11 @@ export default function MedicalRecordsModule({
 
               {form.followUpEnabled && (
               <label>
-                Follow-up Date
+                <span>Follow-up Date<span className="required-mark"> *</span></span>
 
                 <input
                   type="date"
+                  className={healthInvalid("followUpDate")}
                   value={
                     form.followUpDate
                   }
@@ -2851,6 +3060,7 @@ export default function MedicalRecordsModule({
                     })
                   }
                 />
+                {healthErrors.followUpDate && <small className="mr-field-error">{healthErrors.followUpDate}</small>}
               </label>
               )}
 
@@ -4498,6 +4708,32 @@ export default function MedicalRecordsModule({
           font-weight: 500;
           font-size: 12px;
           color: #6f8792;
+        }
+
+        .mr textarea.mr-invalid,
+        .mr input.mr-invalid,
+        .mr select.mr-invalid {
+          border-color: #e08a80 !important;
+          box-shadow: 0 0 0 3px #fdecea !important;
+        }
+
+        .mr .vaccine-checks.mr-section-invalid {
+          border-radius: 10px;
+          outline: 1px solid #e08a80;
+          box-shadow: 0 0 0 3px #fdecea;
+        }
+
+        .mr .record-section.mr-section-invalid {
+          border-color: #e08a80 !important;
+          box-shadow: 0 0 0 3px #fdecea;
+        }
+
+        .mr .mr-field-error {
+          display: block;
+          margin-top: 4px;
+          color: #c0392b;
+          font-size: 12px;
+          font-weight: 700;
         }
 
         .mr-panel .field-required-note {

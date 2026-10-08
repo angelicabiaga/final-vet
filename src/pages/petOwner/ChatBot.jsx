@@ -437,6 +437,12 @@ export default function ChatBot({
     setDraft,
   ] = useState("");
 
+  // Shown as a toast when Send is pressed with an empty question.
+  const [
+    emptyNotice,
+    setEmptyNotice,
+  ] = useState(0);
+
   const [
     isTyping,
     setIsTyping,
@@ -717,7 +723,7 @@ export default function ChatBot({
         content:
           userText,
       },
-    ].slice(-8);
+    ].slice(-10);
   }
 
   function appendAssistantMessage(
@@ -934,6 +940,21 @@ export default function ChatBot({
     event
   ) {
     event.preventDefault();
+
+    if (
+      !String(
+        draft || ""
+      ).trim()
+    ) {
+      setDraft("");
+      setEmptyNotice(
+        Date.now()
+      );
+      inputRef.current?.focus();
+      return;
+    }
+
+    setEmptyNotice(0);
 
     sendMessage(
       draft
@@ -1627,6 +1648,18 @@ export default function ChatBot({
                 </div>
               </div>
 
+              {emptyNotice > 0 && (
+                <div
+                  key={
+                    emptyNotice
+                  }
+                  className="warn"
+                  data-toast-title="Question required"
+                >
+                  Please type your pet care question before sending.
+                </div>
+              )}
+
               <form
                 className="messageComposer"
                 onSubmit={
@@ -1673,7 +1706,6 @@ export default function ChatBot({
                   className="sendButton"
                   type="submit"
                   disabled={
-                    !draft.trim() ||
                     isTyping
                   }
                   aria-label="Send message"

@@ -88,6 +88,8 @@ export async function requestPasswordChange(profileId, currentPassword, newPassw
   const { data: current, error: loadError } = await supabase.from("profiles").select("id,email,password").eq("id", profileId).single();
   if (loadError) throw new Error(`Unable to validate password: ${loadError.message}`);
   if (String(current.password || "") !== String(currentPassword || "")) throw new Error("Current password is incorrect.");
+  // Don't send a code for a "change" that changes nothing.
+  if (String(newPassword) === String(current.password || "")) throw new Error("Your new password must be different from your current password.");
   await createAndSendOtp(current.email, "change_password", { profileId, newPassword: String(newPassword) });
   return { requiresOtp: true, email: current.email, purpose: "change_password" };
 }

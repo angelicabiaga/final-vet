@@ -164,6 +164,8 @@ export default function VeterinarianScheduleManagement({ profile }) {
     if (!af.veterinarianId) errors.veterinarianId = "Please select a veterinarian.";
     if (!af.scheduleDate) errors.scheduleDate = "Please select a date.";
     if (!af.startTime || !af.endTime || af.endTime <= af.startTime) errors.endTime = "The end time must be after the start time.";
+    // Same rule the database enforces: clinic hours are 9:00 AM – 7:00 PM.
+    else if (af.startTime.slice(0, 5) < "09:00" || af.endTime.slice(0, 5) > "19:00") errors.endTime = "Adjusted hours must be within clinic hours (9:00 AM – 7:00 PM).";
     setAfErrors(errors);
     if (Object.values(errors).some(Boolean)) {
       focusFirstInvalidField(afRefs, errors);

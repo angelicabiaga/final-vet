@@ -36,6 +36,7 @@ const EXCLUDED_SELECTOR = [
   '.chat',
   '.conversation',
   '[data-messaging-module]',
+  '.assistantError',
 ].join(',');
 
 function getType(element, text) {
@@ -80,6 +81,12 @@ function cleanText(element) {
     .trim();
 }
 
+// Show a toast from code, e.g. right before navigating to another page
+// (an on-page notice would unmount before it could be shown).
+export function pushToast(message, type = 'success', title = '') {
+  window.dispatchEvent(new CustomEvent('pawcruz-toast', { detail: { message, type, title } }));
+}
+
 export default function GlobalToastCenter() {
   const [toasts, setToasts] = useState([]);
   const timers = useRef(new Map());
@@ -110,21 +117,33 @@ export default function GlobalToastCenter() {
       if (!(element instanceof HTMLElement)) return;
       if (!element.matches(NOTICE_SELECTOR)) return;
       if (element.closest(EXCLUDED_SELECTOR)) return;
-      if (element.offsetParent === null && getComputedStyle(element).position !== 'fixed') return;
+      // Skip notices hidden by the page itself, but not ones hidden here as a
+      // toast source (their text can change while hidden).
+      if (!element.classList.contains('pawcruz-toast-source') && element.offsetParent === null && getComputedStyle(element).position !== 'fixed') return;
 
       const text = cleanText(element);
       if (!text) return;
+      // React may rewrite className on re-render and drop the hiding class,
+      // which made an old on-page banner reappear; re-hide it every time.
+      hideSource(element);
       if (seen.current.get(element) === text) return;
       seen.current.set(element, text);
 
       // A notice can carry a short bold heading via data-toast-title.
       showToast(text, getType(element, text), 5000, element.getAttribute('data-toast-title'));
-      element.classList.add('pawcruz-toast-source');
-      element.setAttribute('aria-hidden', 'true');
+    }
+
+    function hideSource(element) {
+      if (!element.classList.contains('pawcruz-toast-source')) element.classList.add('pawcruz-toast-source');
+      if (element.getAttribute('aria-hidden') !== 'true') element.setAttribute('aria-hidden', 'true');
     }
 
     function scan(root) {
       if (!(root instanceof Element)) return;
+      // A text change inside a reused notice (e.g. a new message in the
+      // same box) lands on a child, so check the notice around it too.
+      const outer = root.closest?.(NOTICE_SELECTOR);
+      if (outer) processElement(outer);
       processElement(root);
       root.querySelectorAll?.(NOTICE_SELECTOR).forEach(processElement);
     }
@@ -140,6 +159,9 @@ export default function GlobalToastCenter() {
           });
         } else if (mutation.target instanceof Element) {
           scan(mutation.target);
+        } else if (mutation.target?.parentElement) {
+          // characterData: the text node itself changed.
+          scan(mutation.target.parentElement);
         }
       });
     });
@@ -148,6 +170,9 @@ export default function GlobalToastCenter() {
       childList: true,
       subtree: true,
       characterData: true,
+      // className resets by React (see hideSource).
+      attributes: true,
+      attributeFilter: ['class'],
     });
 
     function handleInvalid(event) {
@@ -162,8 +187,15 @@ export default function GlobalToastCenter() {
     window.alert = (message) => showToast(message, 'info', 6000);
     document.addEventListener('invalid', handleInvalid, true);
 
+    function handlePushed(event) {
+      const { message, type, title } = event.detail || {};
+      showToast(message, type || 'success', 6000, title);
+    }
+    window.addEventListener('pawcruz-toast', handlePushed);
+
     return () => {
       observer.disconnect();
+      window.removeEventListener('pawcruz-toast', handlePushed);
       document.removeEventListener('invalid', handleInvalid, true);
       window.alert = originalAlert;
       activeTimers.forEach((timer) => window.clearTimeout(timer));

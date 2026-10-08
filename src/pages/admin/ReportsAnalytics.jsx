@@ -23,6 +23,28 @@ import { formatDateTime12h } from "../../utils/timeFormat";
 import pawLogo from "../../assets/reference/paw.png";
 import PrintPreviewModal from "../../components/PrintPreviewModal";
 import usePrintPreview from "../../hooks/usePrintPreview";
+import { pushToast } from "../../components/GlobalToastCenter";
+
+const REPORT_STATUSES = ["Confirmed", "Completed", "Cancelled"];
+const pad2 = (value) => String(value).padStart(2, "0");
+const localToday = () => { const now = new Date(); return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`; };
+const isRealDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
+
+// Checks the report filters before anything is generated. Returns the first
+// problem as { field, message }, or null when the filters are valid.
+function validateReportFilters(filters, veterinarians) {
+  const today = localToday();
+  if (!filters.from) return { field: "from", message: "Select the start date (From)." };
+  if (!isRealDate(filters.from)) return { field: "from", message: "Enter a valid start date (From)." };
+  if (!filters.to) return { field: "to", message: "Select the end date (To)." };
+  if (!isRealDate(filters.to)) return { field: "to", message: "Enter a valid end date (To)." };
+  if (filters.from > today) return { field: "from", message: "The start date (From) can't be in the future." };
+  if (filters.to > today) return { field: "to", message: "The end date (To) can't be in the future." };
+  if (filters.from > filters.to) return { field: "to", message: "The end date (To) must be on or after the start date (From)." };
+  if (filters.veterinarianId && veterinarians.length && !veterinarians.some((vet) => vet.id === filters.veterinarianId)) return { field: "veterinarianId", message: "Select a valid veterinarian." };
+  if (filters.status && !REPORT_STATUSES.includes(filters.status)) return { field: "status", message: "Select a valid appointment status." };
+  return null;
+}
 
 const PALETTE = ["#4DA8DA", "#4CAF78", "#F4B942", "#e16e64", "#8E7CC3", "#34B3A4"];
 
@@ -150,21 +172,57 @@ function PrintBar({ label, value, max, format }) {
 
 export default function ReportsAnalytics({ profile }) {
   const printPreview = usePrintPreview();
-  const today = new Date().toISOString().slice(0, 10);
-  const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+  // Local dates (toISOString is UTC and can land on the previous day).
+  const today = localToday();
+  const firstDay = `${today.slice(0, 8)}01`;
   const [filters, setFilters] = useState({ from: firstDay, to: today, status: "", veterinarianId: "" });
   const [data, setData] = useState(null);
   const [veterinarians, setVeterinarians] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Invalid filters: no report is generated (stale data is cleared too).
+  const [filterProblem, setFilterProblem] = useState(null);
+  const firstLoad = React.useRef(true);
+  const vetsRef = React.useRef([]);
+  vetsRef.current = veterinarians;
 
   const load = useCallback(async () => {
+    const problem = validateReportFilters(filters, vetsRef.current);
+    if (problem) {
+      setFilterProblem({ ...problem, key: Date.now() });
+      setData(null);
+      setError("");
+      setLoading(false);
+      return;
+    }
+    setFilterProblem(null);
     setLoading(true);
     setError("");
-    try { setData(await loadReports(filters)); }
+    try {
+      const result = await loadReports(filters);
+      setData(result);
+      // Feedback for a filter change (not the first page load).
+      if (!firstLoad.current) {
+        if (result?.matchingRecords === 0) pushToast("No records match the selected filters.", "info", "No matching report data");
+        else pushToast("The report now reflects the selected filters.", "success", "Report updated");
+      }
+      firstLoad.current = false;
+    }
     catch (loadError) { setError(loadError.message || "Unable to load reports."); }
     finally { setLoading(false); }
   }, [filters]);
+
+  const noMatches = !filterProblem && data?.matchingRecords === 0;
+  const invalidField = (name) => (filterProblem?.field === name ? "filter-invalid" : undefined);
+  const vetName = veterinarians.find((vet) => vet.id === filters.veterinarianId)?.full_name;
+  const filterSummary = [
+    isRealDate(filters.from) && isRealDate(filters.to) ? `${formatDate(filters.from)} – ${formatDate(filters.to)}` : "",
+    vetName || "All veterinarians",
+    filters.status || "All statuses",
+  ].filter(Boolean).join(" · ");
+  function resetFilters() {
+    setFilters({ from: firstDay, to: today, status: "", veterinarianId: "" });
+  }
 
   useEffect(() => {
     load();
@@ -180,7 +238,8 @@ export default function ReportsAnalytics({ profile }) {
     if (preset === "week") from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
     if (preset === "month") from = new Date(now.getFullYear(), now.getMonth(), 1);
     if (preset === "year") from = new Date(now.getFullYear(), 0, 1);
-    setFilters((current) => ({ ...current, from: from.toISOString().slice(0, 10), to: now.toISOString().slice(0, 10) }));
+    const ymd = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+    setFilters((current) => ({ ...current, from: ymd(from), to: ymd(now) }));
   }
 
   const sales = data?.sales || {};
@@ -300,22 +359,34 @@ export default function ReportsAnalytics({ profile }) {
     <div className="screen-only">
 
     {error && <div className="error">{error}</div>}
+    {filterProblem && <div key={filterProblem.key} className="error" data-toast-title="Invalid report filters">{filterProblem.message}</div>}
 
     <div className="filters">
-      <label>From<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label>
-      <label>To<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label>
-      <label>Veterinarian<select value={filters.veterinarianId} onChange={(event) => setFilters((current) => ({ ...current, veterinarianId: event.target.value }))}><option value="">All veterinarians</option>{veterinarians.map((veterinarian) => <option key={veterinarian.id} value={veterinarian.id}>{veterinarian.full_name}</option>)}</select></label>
-      <label>Appointment status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">All statuses</option>{["Confirmed", "Completed", "Cancelled"].map((status) => <option key={status}>{status}</option>)}</select></label>
+      <label>From<input type="date" className={invalidField("from")} max={localToday()} value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label>
+      <label>To<input type="date" className={invalidField("to")} max={localToday()} value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label>
+      <label>Veterinarian<select className={invalidField("veterinarianId")} value={filters.veterinarianId} onChange={(event) => setFilters((current) => ({ ...current, veterinarianId: event.target.value }))}><option value="">All veterinarians</option>{veterinarians.map((veterinarian) => <option key={veterinarian.id} value={veterinarian.id}>{veterinarian.full_name}</option>)}</select></label>
+      <label>Appointment status<select className={invalidField("status")} value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">All statuses</option>{REPORT_STATUSES.map((status) => <option key={status}>{status}</option>)}</select></label>
       <div className="presets">
         <button className="chip" onClick={() => applyPreset("today")}>Today</button>
         <button className="chip" onClick={() => applyPreset("week")}>This week</button>
         <button className="chip" onClick={() => applyPreset("month")}>This month</button>
         <button className="chip" onClick={() => applyPreset("year")}>This year</button>
       </div>
-      <button className="soft filter-print" onClick={openReportPreview} disabled={loading}><Printer size={16} /> Print</button>
+      <button className="soft filter-print" onClick={openReportPreview} disabled={loading || !!filterProblem || noMatches || !data}><Printer size={16} /> Print</button>
     </div>
 
-    {loading ? <div className="card">Loading analytics…</div> : <>
+    {filterProblem ? <div className="card report-state report-state-invalid">
+        <TriangleAlert size={22} />
+        <div><b>Report not generated</b><p>{filterProblem.message} Fix the filter above to generate the report.</p></div>
+      </div>
+    : loading ? <div className="card">Loading analytics…</div>
+    : noMatches ? <div className="card report-state">
+        <Receipt size={22} />
+        <div><b>No matching report data</b><p>No appointments, queue visits, POS transactions or stock movements match <strong>{filterSummary}</strong>.</p></div>
+        <button className="chip" onClick={resetFilters}>Reset filters</button>
+      </div>
+    : <>
+      <p className="report-scope">Showing results for <b>{filterSummary}</b></p>
       <section className="kpi-row">{kpiCards.map((kpi) => <article key={kpi.label} className="kpi"><span className="kpi-icon">{kpi.icon}</span><div><b>{kpi.value}</b><span>{kpi.label}</span></div></article>)}</section>
 
       <section className="panel">
@@ -615,9 +686,17 @@ export default function ReportsAnalytics({ profile }) {
       .soft{background:#eaf7fb;color:#237fab}
       .chip{background:#f2fafd;color:#24678b;height:var(--control-h);padding:0 14px;font-size:12.5px;font-weight:700;white-space:nowrap}
 
-      .filters,.charts section,.panel,.card,.table-card{background:#fff;border-radius:18px;box-shadow:0 8px 24px rgba(47,117,150,.07)}
+      .filters,.charts section,.reports .panel,.card,.table-card{background:#fff;border-radius:18px;box-shadow:0 8px 24px rgba(47,117,150,.07)}
       .filters{display:flex;gap:var(--gap-md);padding:20px;align-items:end;flex-wrap:wrap}
       .filters label{display:grid;gap:6px;flex:1 1 160px;min-width:150px;color:#536b78;font-size:13px;font-weight:700}
+      .filters input.filter-invalid,.filters select.filter-invalid{border-color:#e08a80!important;box-shadow:0 0 0 3px #fdecea}
+      .report-state{display:flex;align-items:center;gap:14px;padding:22px 24px;color:#2f6f8f}
+      .report-state>div{flex:1}
+      .report-state b{display:block;color:#1d3a4a;font-size:16px}
+      .report-state p{margin:4px 0 0;color:#5f7884;font-size:14px;line-height:1.5}
+      .report-state-invalid{color:#c0392b;border:1px solid #f5c6c0;background:#fffafa}
+      .report-scope{margin:0 0 12px;color:#5f7884;font-size:13.5px}
+      .report-scope b{color:#1d3a4a}
       .filters input,.filters select{height:var(--control-h);padding:0 12px;border:1px solid #d9e9ef;border-radius:9px;font-size:13.5px;box-sizing:border-box;color:#243342}
       .presets{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.filter-print{height:var(--control-h);display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
 
@@ -629,7 +708,7 @@ export default function ReportsAnalytics({ profile }) {
       .kpi b{font-size:21px;color:#24566d;display:block;line-height:1.2;white-space:nowrap}
       .kpi span{color:#6F7F88;font-size:12.5px;font-weight:700;white-space:nowrap}
 
-      .panel{padding:24px;display:grid;gap:20px;overflow:hidden}.panel>.panel-head{margin:-24px -24px 0;padding:18px 24px;background:linear-gradient(115deg,#2c7fb8,#1f5f8f)}.panel>.panel-head h3{color:#fff!important;font-size:18px!important}.panel>.panel-head span{color:rgba(255,255,255,.82)!important}.panel>.panel-head button{border-radius:999px;padding:0 18px;font-weight:700;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.45)}.panel>.panel-head button:hover{background:rgba(255,255,255,.24)}
+      .reports .panel{padding:24px;display:grid;gap:20px;overflow:hidden}.reports .panel>.panel-head{margin:-24px -24px 0;padding:18px 24px;background:linear-gradient(115deg,#2c7fb8,#1f5f8f)}.reports .panel>.panel-head h3{color:#fff!important;font-size:18px!important}.reports .panel>.panel-head span{color:rgba(255,255,255,.82)!important}.reports .panel>.panel-head button{border-radius:999px;padding:0 18px;font-weight:700;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.45)}.reports .panel>.panel-head button:hover{background:rgba(255,255,255,.24)}
       .panel-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
       .panel-head h3{margin:0;color:#24566d;font-size:17px}
       .panel-head span{color:#6F7F88;font-size:13px;line-height:1.5}
@@ -664,7 +743,7 @@ export default function ReportsAnalytics({ profile }) {
       @media(max-width:700px){
         .head,.filters{flex-direction:column;align-items:stretch}
         .head>div:last-child{flex-wrap:wrap}
-        .panel{padding:18px}.panel>.panel-head{margin:-18px -18px 0;padding:16px 18px}
+        .reports .panel{padding:18px}.reports .panel>.panel-head{margin:-18px -18px 0;padding:16px 18px}
         .panel-head{align-items:flex-start;flex-direction:column}
         .kpi,.stat-grid article,.period-row article{flex-basis:100%;max-width:none}
       }

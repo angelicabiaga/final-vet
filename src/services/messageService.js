@@ -382,12 +382,60 @@ export async function uploadMessageAttachment(file, profileId) {
   return { path, url: data.publicUrl, name: file.name };
 }
 
+export const MESSAGE_MAX_LENGTH = 2000;
+export const MESSAGE_MAX_FILE_MB = 10;
+const BLOCKED_FILE = /\.(exe|bat|cmd|com|msi|sh|ps1|vbs|js|jar|apk|scr|dll)$/i;
+
+function sendFailure(message) {
+  const error = new Error(message);
+  error.code = "SEND_FAILED";
+  return error;
+}
+
+// Checks a message before anything is uploaded or stored. Returns the
+// problem as text, or "" when the message can be sent.
+export function validateOutgoingMessage(body, file) {
+  const text = String(body ?? "").trim();
+  if (!text && !file) return "Type a message or attach a file before sending.";
+  if (text.length > MESSAGE_MAX_LENGTH) return `Messages can be up to ${MESSAGE_MAX_LENGTH.toLocaleString()} characters (yours has ${text.length.toLocaleString()}).`;
+  if (file) {
+    if (!file.size) return "The attached file is empty. Choose another file.";
+    if (file.size > MESSAGE_MAX_FILE_MB * 1024 * 1024) return `Attachments can be up to ${MESSAGE_MAX_FILE_MB} MB.`;
+    if (BLOCKED_FILE.test(file.name || "")) return "This file type can't be sent. Attach a photo, PDF or document instead.";
+  }
+  return "";
+}
+
 export async function sendMessage(conversationId, profile, body, file) {
-  if (!conversationId) throw new Error("Select a conversation first.");
-  if (!profile?.id) throw new Error("Your login session is incomplete.");
+  if (!conversationId) throw sendFailure("Select a conversation first.");
+  if (!profile?.id) throw sendFailure("Your login session is incomplete. Please log in again.");
+
+  const problem = validateOutgoingMessage(body, file);
+  if (problem) throw sendFailure(problem);
+
+  // The sender must belong to the selected conversation thread.
+  const { data: membership, error: membershipError } = await supabase
+    .from("conversation_participants")
+    .select("conversation_id")
+    .eq("conversation_id", conversationId)
+    .eq("profile_id", profile.id)
+    .limit(1);
+  if (!membershipError && !membership?.length) {
+    throw sendFailure("You're not part of this conversation, so the message wasn't sent.");
+  }
 
   let attachment = null;
-  if (file) attachment = await uploadMessageAttachment(file, profile.id);
+  if (file) {
+    try {
+      attachment = await uploadMessageAttachment(file, profile.id);
+    } catch {
+      throw sendFailure("The attachment couldn't be uploaded, so the message wasn't sent. Please try again.");
+    }
+  }
+  // If the message itself isn't stored, don't leave its file behind.
+  const discardAttachment = async () => {
+    if (attachment?.path) await supabase.storage.from("message-attachments").remove([attachment.path]).catch(() => {});
+  };
 
   const payload = {
     conversation_id: conversationId,
@@ -403,7 +451,7 @@ export async function sendMessage(conversationId, profile, body, file) {
     .select("*")
     .single();
 
-  if (!error) {
+  if (!error && data?.id) {
     await markConversationRead(conversationId, profile.id);
     return data;
   }
@@ -421,7 +469,11 @@ export async function sendMessage(conversationId, profile, body, file) {
     }
   );
 
-  if (rpcError) throw readableError("Unable to send message", rpcError);
+  if (rpcError || !rpcData) {
+    await discardAttachment();
+    console.error("Message send failed:", rpcError);
+    throw sendFailure("The message couldn't be sent. Check your connection and try again.");
+  }
   return rpcData;
 }
 

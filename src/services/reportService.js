@@ -313,6 +313,8 @@ export async function loadReports(filters = {}) {
 
   return {
     filters: { from: filters.from || null, to: filters.to || null },
+    // Records that matched the filters; 0 means "no matching report data".
+    matchingRecords: filteredAppointments.length + filteredQueues.length + filteredTransactions.length + filteredMovements.length,
     granularity,
     appointments: filteredAppointments,
     queues: filteredQueues,

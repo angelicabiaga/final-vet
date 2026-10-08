@@ -48,6 +48,7 @@ function validatePasswordField(name, passwords) {
       return String(passwords.current || "") ? "" : "Current password is required.";
     case "next": {
       if (!String(passwords.next || "")) return "New password is required.";
+      if (passwords.current && passwords.next === passwords.current) return "Your new password must be different from your current password.";
       try { validatePassword(passwords.next); return ""; } catch (error) { return error.message; }
     }
     case "confirm": {
@@ -174,6 +175,22 @@ export default function UserProfileModule({ profile, title = "My Profile", child
       return;
     }
 
+    // Nothing edited: say so instead of saving (or emailing a code) for no reason.
+    // Username and email compare case-insensitively, as they're stored lowercase.
+    const sameText = (a, b, ignoreCase = false) => {
+      const left = String(a || "").trim();
+      const right = String(b || "").trim();
+      return ignoreCase ? left.toLowerCase() === right.toLowerCase() : left === right;
+    };
+    const unchanged =
+      ["firstName", "middleName", "lastName", "phone", "address"].every((name) => sameText(form[name], saved[name])) &&
+      sameText(form.username, saved.username, true) &&
+      sameText(form.email, saved.email, true);
+    if (unchanged) {
+      setMessage({ type: "warn", title: "No changes to save", text: "You haven't changed any of your personal information yet.", key: Date.now() });
+      return;
+    }
+
     setSaving(true);
     try {
       // A different email is only saved after the OTP sent to it is verified
@@ -245,7 +262,7 @@ export default function UserProfileModule({ profile, title = "My Profile", child
       setPasswords(EMPTY_PASSWORDS);
       setPasswordFieldErrors({});
       setShow({ current: false, next: false, confirm: false });
-      setMessage({ type: "success", text: "Password changed successfully." });
+      setMessage({ type: "success", title: "Password updated", text: "Your password was changed successfully. Use your new password the next time you log in.", key: Date.now() });
     }
     setOtpModal({ open: false, email: "", purpose: "", title: "" });
   }
@@ -253,10 +270,11 @@ export default function UserProfileModule({ profile, title = "My Profile", child
   function passwordField(name, value) {
     const next = { ...passwords, [name]: value };
     setPasswords(next);
-    if (passwordFieldErrors[name] || (name === "next" && passwordFieldErrors.confirm)) {
+    if (passwordFieldErrors[name] || (name === "next" && passwordFieldErrors.confirm) || (name === "current" && passwordFieldErrors.next)) {
       setPasswordFieldErrors((currentErrors) => {
         const nextErrors = { ...currentErrors, [name]: validatePasswordField(name, next) };
         if (name === "next" && currentErrors.confirm) nextErrors.confirm = validatePasswordField("confirm", next);
+        if (name === "current" && currentErrors.next) nextErrors.next = validatePasswordField("next", next);
         return nextErrors;
       });
     }
@@ -281,7 +299,7 @@ export default function UserProfileModule({ profile, title = "My Profile", child
 
   return <AppShell profile={profile} title={title}><div className="pf">
     {forcePasswordChange && <div className="warn">You're using a temporary password. Please set a new password to continue.</div>}
-    {message.text && <div className={message.type}>{message.text}</div>}
+    {message.text && <div key={message.key || message.text} className={message.type} data-toast-title={message.title || undefined}>{message.text}</div>}
 
     {/* Account Overview: photo, name, email, role + account facts */}
     <section className="pfOverview">

@@ -13,6 +13,7 @@ import {
   ArrowRight,
   X,
 } from "lucide-react";
+import chatbotIcon from "../assets/reference/chatbot.png";
 
 const STEPS = [
   {
@@ -52,6 +53,8 @@ const STEPS = [
   },
   {
     icon: Bot,
+    // The same picture as the chat bubble it describes.
+    image: chatbotIcon,
     title: "PawCruz Assistant",
     body: "The chat bubble in the bottom-right corner is a quick AI assistant -- tap it any time for help finding your way around.",
   },
@@ -120,8 +123,8 @@ export default function PetOwnerTutorial({ profileId, onClose }) {
           <X size={18} />
         </button>
 
-        <span className="tutorialIcon" aria-hidden="true">
-          <StepIcon size={30} strokeWidth={2.1} />
+        <span className={`tutorialIcon${step.image ? " tutorialIconImage" : ""}`} aria-hidden="true">
+          {step.image ? <img src={step.image} alt="" /> : <StepIcon size={30} strokeWidth={2.1} />}
         </span>
 
         <p className="tutorialEyebrow">
@@ -219,6 +222,22 @@ export default function PetOwnerTutorial({ profileId, onClose }) {
           background: #e1f3fa;
           border: 1px solid #bfe3f1;
           border-radius: 19px;
+        }
+
+        /* Real PawCruz assistant picture (round, like the chat bubble). */
+        .tutorialIconImage {
+          width: 76px;
+          height: 76px;
+          border-radius: 50%;
+          border: 6px solid transparent;
+          background: #fff padding-box, linear-gradient(135deg, #4da8da, #2c6ba3) border-box;
+          box-shadow: 0 0 0 6px rgba(77, 168, 218, 0.16), 0 10px 22px rgba(44, 107, 163, 0.25);
+        }
+
+        .tutorialIconImage img {
+          width: 50px;
+          height: 50px;
+          object-fit: contain;
         }
 
         .tutorialEyebrow {

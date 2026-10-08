@@ -2,9 +2,18 @@ import { supabase } from "../config/supabaseClient";
 
 export const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-const isMissingTableError = error =>
-  ["42P01", "PGRST205"].includes(error?.code) ||
-  String(error?.message || "").toLowerCase().includes("veterinarian_schedule_overrides");
+// Only a genuinely missing table counts -- not every error whose text happens
+// to mention the table name (check-constraint messages do too).
+const isMissingTableError = error => {
+  if (["42P01", "PGRST205"].includes(error?.code)) return true;
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("veterinarian_schedule_overrides") &&
+    (message.includes("does not exist") || message.includes("could not find the table"));
+};
+
+// A database rule rejected the hours (code 23514 = check constraint).
+const isHoursRuleError = error =>
+  error?.code === "23514" || /check constraint|clinic hours/i.test(String(error?.message || ""));
 
 export async function getAllSchedules() {
   const { data, error } = await supabase
@@ -97,6 +106,9 @@ export async function saveScheduleOverride(row) {
 
   if (error && isMissingTableError(error)) {
     throw new Error("Date schedule table is missing. Run supabase/REPAIR_veterinarian_schedules.sql first.");
+  }
+  if (error && isHoursRuleError(error)) {
+    throw new Error("Adjusted hours must be within clinic hours (9:00 AM – 7:00 PM), and the end time must be after the start time.");
   }
   if (error) throw new Error(error.message || "Unable to save date schedule.");
 }

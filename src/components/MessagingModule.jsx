@@ -12,6 +12,8 @@ import {
   X,
 } from "lucide-react";
 import {
+  validateOutgoingMessage,
+  MESSAGE_MAX_LENGTH,
   createConversation,
   getConversations,
   getMessageContacts,
@@ -23,6 +25,7 @@ import {
   subscribeToMessagingOverview,
 } from "../services/messageService";
 import chatbotIcon from "../assets/reference/chatbot.png";
+import { pushToast } from "./GlobalToastCenter";
 
 // Messages from every conversation in a thread, oldest first.
 async function getThreadMessages(conversationIds) {
@@ -368,7 +371,14 @@ export default function MessagingModule({ profile }) {
   async function submitMessage(event) {
     event.preventDefault();
 
-    if (!activeConversation?.id || (!body.trim() && !file) || sending) {
+    if (sending) return;
+
+    // Validate first: nothing is uploaded or stored for an invalid message.
+    const problem = !activeConversation?.id
+      ? "Select a conversation first."
+      : validateOutgoingMessage(body, file);
+    if (problem) {
+      pushToast(problem, "error", "Message not sent");
       return;
     }
 
@@ -391,7 +401,8 @@ export default function MessagingModule({ profile }) {
       await loadConversations();
     } catch (sendError) {
       console.error("Unable to send message:", sendError);
-      setError(sendError.message || "Unable to send message.");
+      // The typed text and attachment stay so the user can retry.
+      pushToast(sendError.message || "The message couldn't be sent. Please try again.", "error", "Message not sent");
     } finally {
       setSending(false);
     }
@@ -571,6 +582,7 @@ export default function MessagingModule({ profile }) {
               </label>
               <input
                 placeholder={file ? `Attached: ${file.name}` : "Type a message..."}
+                maxLength={MESSAGE_MAX_LENGTH}
                 value={body}
                 onChange={(event) => setBody(event.target.value)}
               />

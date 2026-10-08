@@ -62,6 +62,7 @@ import { withDrTitle } from "../utils/vetName";
 import { getMedicalRecordTemplate } from "../constants/medicalRecordTemplates";
 import PrintPreviewModal from "./PrintPreviewModal";
 import usePrintPreview from "../hooks/usePrintPreview";
+import { pushToast } from "./GlobalToastCenter";
 
 function money(value) {
   return Number(value || 0).toLocaleString("en-PH", { style: "currency", currency: "PHP" });
@@ -876,10 +877,9 @@ export default function PetManagementModule({
         form.notes.trim() === (original.notes || "") &&
         ownerId === original.owner_id;
 
+      // Nothing to save: warn and keep the form open for editing.
       if (unchanged) {
-        setMessage("No changes to save.");
-        resetForm();
-        setFormOpen(false);
+        pushToast("You haven't changed any of this pet's details yet.", "warning", "No changes to save");
         return;
       }
     }

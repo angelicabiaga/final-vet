@@ -58,6 +58,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import InventoryForecastReport from "./InventoryForecastReport";
 import PrintPreviewModal from "./PrintPreviewModal";
 import usePrintPreview from "../hooks/usePrintPreview";
+import { pushToast } from "./GlobalToastCenter";
 
 const EMPTY_ITEM = {
   id: "",
@@ -1718,9 +1719,9 @@ export default function InventoryManagementModule({
         itemForm.item_name.trim() === (editingOriginalItem.item_name || "") &&
         Number(itemForm.unit_price) === Number(editingOriginalItem.unit_price || 0);
 
+      // Nothing to save: warn and keep the form open for editing.
       if (unchanged) {
-        setNotice({ type: "success", text: "No changes to save." });
-        setModal("");
+        pushToast("You haven't changed the item name or price per unit yet.", "warning", "No changes to save");
         return;
       }
     }

@@ -249,18 +249,58 @@ export async function getAppointments(filters = {}) {
   return data || [];
 }
 
+// Appointments that already have a queue ticket (checked in at the clinic),
+// directly or as one pet of a shared multi-pet ticket.
+export async function getCheckedInAppointmentIds(appointmentIds) {
+  const ids = [...new Set((appointmentIds || []).filter(Boolean))];
+  if (!ids.length) return new Set();
+  const [{ data: direct }, { data: shared }] = await Promise.all([
+    supabase.from("queue_entries").select("appointment_id").in("appointment_id", ids),
+    supabase.from("queue_entry_pets").select("appointment_id").in("appointment_id", ids)
+  ]);
+  return new Set([...(direct || []), ...(shared || [])].map(row => row.appointment_id).filter(Boolean));
+}
+
+function checkedInError() {
+  const error = new Error("This pet has already checked in at the clinic, so the appointment can no longer be cancelled.");
+  error.code = "NOT_ELIGIBLE";
+  return error;
+}
+
+// Thrown when a cancel finds the appointment already completed or
+// cancelled (e.g. staff finished the visit while the list was open).
+async function notEligibleForCancellation(id) {
+  const { data } = await supabase.from("appointments").select("status").eq("id", id).maybeSingle();
+  const reason = data?.status === "Completed"
+    ? "This appointment is already completed."
+    : data?.status === "Cancelled"
+      ? "This appointment is already cancelled."
+      : "This appointment can no longer be cancelled. Refresh the list to see its latest status.";
+  const error = new Error(reason);
+  error.code = "NOT_ELIGIBLE";
+  return error;
+}
+
 export async function updateAppointmentStatus(id, status, changedBy) {
   if (!APPOINTMENT_STATUSES.includes(status)) throw new Error("Invalid appointment status.");
-  const { error } = await supabase.from("appointments")
+  if (status === "Cancelled" && (await getCheckedInAppointmentIds([id])).has(id)) throw checkedInError();
+  let query = supabase.from("appointments")
     .update({ status, created_by: changedBy }).eq("id", id);
+  // Only a Confirmed appointment can be cancelled.
+  if (status === "Cancelled") query = query.eq("status", "Confirmed");
+  const { data, error } = await query.select("id");
   if (error) throw new Error("Unable to update appointment status.");
+  if (status === "Cancelled" && !data?.length) throw await notEligibleForCancellation(id);
 }
 
 export async function cancelAppointment(id, ownerId) {
-  const { error } = await supabase.from("appointments")
+  if ((await getCheckedInAppointmentIds([id])).has(id)) throw checkedInError();
+  const { data, error } = await supabase.from("appointments")
     .update({ status: "Cancelled" }).eq("id", id).eq("owner_id", ownerId)
-    .eq("status", "Confirmed");
+    .eq("status", "Confirmed")
+    .select("id");
   if (error) throw new Error("Unable to cancel the appointment.");
+  if (!data?.length) throw await notEligibleForCancellation(id);
 }
 
 // Rebooking keeps the same pet and owner, so only what changes is checked.

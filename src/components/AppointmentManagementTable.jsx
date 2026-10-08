@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { PawPrint, Search, X } from "lucide-react";
-import { APPOINTMENT_STATUSES, cancelAppointment, formatTime, getAppointments, updateAppointmentStatus, getVeterinarianAvailability, rescheduleAppointment, todayLocal } from "../services/appointmentService";
+import { APPOINTMENT_STATUSES, cancelAppointment, formatTime, getAppointments, getCheckedInAppointmentIds, updateAppointmentStatus, getVeterinarianAvailability, rescheduleAppointment, todayLocal } from "../services/appointmentService";
 import ConfirmDialog from "./ConfirmDialog";
 import { supabase } from "../config/supabaseClient";
 import { formatDateLong } from "../utils/timeFormat";
@@ -48,11 +48,18 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
   const [rebookFieldErrors,setRebookFieldErrors]=useState({});
   const rebookFieldRefs=useRef({}).current;
   const [pendingCancel,setPendingCancel]=useState(null);
+  // "Appointment not eligible for cancellation" toast: { text, key }.
+  const [cancelNotice,setCancelNotice]=useState(null);
+  // Confirmed appointments that already have a queue ticket.
+  const [checkedInIds,setCheckedInIds]=useState(() => new Set());
+  const showNotEligible = text => setCancelNotice({ text, key: Date.now() });
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
       const data = await getAppointments({ ownerId: ownerOnly ? profile.id : null, veterinarianId: veterinarianOnly ? profile.id : null, status, date });
+      const checkedIn = await getCheckedInAppointmentIds(data.filter(row => row.status === "Confirmed").map(row => row.id)).catch(() => new Set());
+      setCheckedInIds(checkedIn);
       setRows(data);
     } catch (e) {
       setMessage(e.message);
@@ -87,7 +94,13 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       setMessage("Appointment cancelled.");
       setPendingCancel(null);
       await load();
-    } catch (e) { setMessage(e.message); }
+    } catch (e) {
+      if (e.code === "NOT_ELIGIBLE") {
+        setPendingCancel(null);
+        showNotEligible(e.message);
+        await load();
+      } else setMessage(e.message);
+    }
     finally { setActingId(null); }
   }
 
@@ -95,6 +108,10 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
     const channel = supabase
       .channel(`web-appointment-management-${profile?.id || "staff"}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, () => {
+        load();
+      })
+      // A check-in adds a queue ticket: refresh so Cancel locks right away.
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "queue_entries" }, () => {
         load();
       })
       .subscribe();
@@ -144,7 +161,12 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       await updateAppointmentStatus(id, newStatus, profile.id);
       setMessage(`Appointment ${verb}.`);
       await load();
-    } catch (e) { setMessage(e.message); }
+    } catch (e) {
+      if (e.code === "NOT_ELIGIBLE") {
+        showNotEligible(e.message);
+        await load();
+      } else setMessage(e.message);
+    }
     finally { setActingId(null); }
   }
 
@@ -188,11 +210,13 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
   }
 
   function rowAction(row) {
-    if (row.status === "Completed") return { kind: "badge", label: "Completed", className: "badge-completed" };
-    if (row.status === "Cancelled") return { kind: "badge", label: "Cancelled", className: "badge-cancelled" };
+    // cancelBlocked: why Cancel can't be used (shown when it's clicked).
+    if (row.status === "Completed") return { kind: "badge", label: "Completed", className: "badge-completed", cancelBlocked: "This appointment is already completed." };
+    if (row.status === "Cancelled") return { kind: "badge", label: "Cancelled", className: "badge-cancelled", cancelBlocked: "This appointment is already cancelled." };
+    if (checkedInIds.has(row.id)) return { kind: "badge", label: "Checked in", className: "badge-confirmed", cancelBlocked: "This pet has already checked in at the clinic, so the appointment can no longer be cancelled." };
     if (ownerOnly) {
       // Started or past visits are with the clinic now (queue / visit).
-      if (!isUpcoming(row)) return { kind: "badge", label: "Confirmed", className: "badge-confirmed" };
+      if (!isUpcoming(row)) return { kind: "badge", label: "Confirmed", className: "badge-confirmed", cancelBlocked: "This visit has already started or its time has passed. Please contact the clinic for help." };
       return { kind: "pending", canRebook: row.appointment_source === "Online" };
     }
     return { kind: "pending", canRebook: true };
@@ -264,6 +288,7 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       <button onClick={clearFilters}><X size={16}/>Clear</button>
     </div>
     {message&&<div className="manage-message">{message}</div>}
+    {cancelNotice&&<div key={cancelNotice.key} className="warn" data-toast-title="Appointment not eligible for cancellation">{cancelNotice.text}</div>}
     <div className="table-wrap"><table><thead><tr><th>Date/Time</th><th>{ownerOnly ? "Pet" : "Pet / Owner"}</th>{!veterinarianOnly && <th>Veterinarian</th>}<th>Source</th><th>Notes</th><th>Action</th></tr></thead><tbody>{loading?<tr><td colSpan={veterinarianOnly?5:6}>Loading…</td></tr>:pageRows.length===0?<tr><td colSpan={veterinarianOnly?5:6}>No appointments found.</td></tr>:pageRows.map(row=>{
       const action=rowAction(row);
       return <tr key={row.id}>
@@ -273,7 +298,10 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
         <td>{row.appointment_source}</td>
         <td>{row.notes?<button type="button" className="view-notes" onClick={()=>setNotesModal(row)}>View Notes</button>:"N/A"}</td>
         <td>
-          {action.kind==="badge"&&<span className={`action-badge ${action.className}`}>{action.label}</span>}
+          {action.kind==="badge"&&<div className="action-group">
+            <span className={`action-badge ${action.className}`}>{action.label}</span>
+            {action.cancelBlocked&&<button type="button" className="action-btn cancel ineligible" aria-disabled="true" title="Not eligible for cancellation" onClick={()=>showNotEligible(action.cancelBlocked)}>Cancel</button>}
+          </div>}
           {action.kind==="pending"&&<div className="action-group">
             <button type="button" className="action-btn cancel" disabled={actingId===row.id} onClick={()=>ownerOnly ? setPendingCancel(row) : doAction(row.id,"Cancelled","cancelled")}>Cancel</button>
             {action.canRebook&&<button type="button" className="action-btn rebook" disabled={actingId===row.id} onClick={()=>openRebook(row)}>Rebook</button>}
@@ -330,6 +358,6 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
       onConfirm={confirmOwnerCancel}
       onCancel={() => setPendingCancel(null)}
     />}
-    <style>{`.filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px;align-items:center}.filters select,.filters input,.filters button,td select{border:1px solid #cfe4ed;border-radius:10px;padding:9px;background:white}.filters button{display:flex;gap:6px;align-items:center;cursor:pointer;color:#257fa9}.search-box{display:flex;align-items:center;gap:7px;min-width:260px;flex:1;border:1px solid #cfe4ed;border-radius:10px;padding:0 11px;background:white;color:#4da8da}.search-box input{flex:1;border:0;padding:9px 0;background:transparent}.manage-message{padding:11px;background:#eef9fd;border-radius:10px;margin-bottom:12px}.table-wrap{overflow:auto;background:white;border-radius:18px;box-shadow:0 8px 24px rgba(47,117,150,.09)}table{width:100%;border-collapse:collapse;min-width:860px}th,td{text-align:left;padding:13px;border-bottom:1px solid #edf3f6}th{background:#f2fafd;color:#52707d}small{color:#72848d}.visit-badge{display:block;color:#318fbe!important;font-weight:700}.appt-pet-cell{display:flex;align-items:center;gap:10px}.appt-pet-photo{flex-shrink:0;width:34px;height:34px;border-radius:9px;object-fit:cover;background:#eaf8fd;color:#4da8da}.appt-pet-photo-fallback{display:grid;place-items:center}.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;flex-wrap:wrap;color:#52707d;font-size:13px}.pagination-buttons{display:flex;gap:8px}.pagination-buttons button{border:1px solid #cfe4ed;border-radius:10px;padding:8px 16px;background:white;color:#257fa9;cursor:pointer;font-weight:700}.pagination-buttons button:disabled{opacity:.5;cursor:not-allowed}.view-notes{border:0;background:none;color:#318fbe;font-weight:700;cursor:pointer;text-decoration:underline;padding:0}.action-group{display:flex;gap:6px;flex-wrap:nowrap}.action-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;min-width:76px;height:34px;text-align:center;border:0;border-radius:9px;padding:8px 14px;font-weight:700;cursor:pointer;color:#fff;white-space:nowrap}@media(max-width:700px){.action-group{flex-wrap:wrap}}.action-btn:disabled{opacity:.6;cursor:not-allowed}.action-btn.cancel{background:#e35b5b}.action-btn.rebook{background:#e0982f}.action-btn.complete{background:#2d9d63}.action-badge{display:inline-block;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800}.action-badge.badge-completed{background:#eaf8ef;color:#26754a}.action-badge.badge-cancelled{background:#fdeceb;color:#b34848}.action-badge.badge-confirmed{background:#eaf7fc;color:#2884ad}.pagination-center{flex-direction:column;justify-content:center;text-align:center}.pagination-center .pagination-buttons{order:-1}.notes-backdrop{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px;background:rgba(24,50,63,.55);backdrop-filter:blur(3px)}.notes-modal{position:relative;box-sizing:border-box;width:min(480px,100%);max-height:80vh;display:flex;flex-direction:column;border-radius:18px;padding:26px;background:#fff;box-shadow:0 22px 55px rgba(22,56,72,.24);overflow-y:auto}.notes-modal h3{margin:0 0 6px;padding-right:28px;color:#20313b}.notes-close{position:absolute;top:16px;right:16px;display:grid;place-items:center;border:0;border-radius:9px;padding:6px;background:#edf5f8;color:#456472;cursor:pointer}.notes-context{margin:0 0 14px;color:#7c8c94;font-size:13px}.notes-body{box-sizing:border-box;margin:0 0 20px;padding:14px 16px;background:#f7fbfd;border:1px solid #edf3f6;border-radius:12px;color:#20313b;line-height:1.6;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-height:40vh;overflow-y:auto}.notes-back{align-self:flex-start;border:1px solid #cfe4ed;border-radius:10px;padding:10px 18px;background:#fff;color:#257fa9;font-weight:700;cursor:pointer}.rebook-form{display:grid;gap:14px}.rebook-form label{display:grid;gap:6px;font-weight:700;font-size:13px;color:#334e5a}.rebook-form input,.rebook-form select{border:1px solid #cfe4ed;border-radius:10px;padding:10px 12px;font:inherit;background:#fbfeff}.rebook-error{padding:10px 13px;border-radius:10px;background:#fff0f0;color:#a94444;font-size:13px}.rebook-confirm{background:#4DA8DA!important;color:#fff!important;border:0!important}.rebook-confirm:disabled{opacity:.65;cursor:not-allowed}/* Appointments list polish (styles only). */.filters{gap:12px;margin-bottom:18px}.filters .search-box,.filters select,.filters input[type=date],.filters>button{height:46px;box-sizing:border-box;border-color:#d6e7ee;border-radius:12px;font:inherit;font-size:14px}.filters .search-box{padding:0 14px;gap:9px;transition:border-color .15s ease,box-shadow .15s ease}.filters .search-box:focus-within{border-color:#4DA8DA;box-shadow:0 0 0 3px rgba(77,168,218,.14)}.filters .search-box input{height:100%;padding:0;outline:0;font-size:14px;color:#1d3a4a}.filters select,.filters input[type=date]{padding:0 12px;color:#2f4a56;cursor:pointer}.filters>button{padding:0 16px;font-weight:700}.filters>button:hover{background:#f0f8fc;border-color:#a9d6ea}.table-wrap{border:1px solid #e6f0f4;box-shadow:0 8px 24px rgba(47,117,150,.07)}.table-wrap th{padding:14px 18px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#5f7884;background:#f4fafd}.table-wrap td{padding:14px 18px;font-size:14.5px;color:#2f4a56;vertical-align:middle}.table-wrap tbody tr{transition:background .15s ease}.table-wrap tbody tr:hover{background:#f5fbfe}.table-wrap tbody tr:last-child td{border-bottom:0}.table-wrap td small{font-size:12.5px;color:#7b8e97}/* Pet / owner: name, owner and the multi-pet tag stacked tightly. */.appt-pet-cell{gap:12px}.appt-pet-photo{width:42px;height:42px;border-radius:12px;box-shadow:0 2px 8px rgba(47,117,150,.10)}.appt-pet-cell>div{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}.appt-pet-cell>div>br{display:none}.appt-pet-cell b{font-size:15px;font-weight:700;color:#1d3a4a}.appt-pet-cell .visit-badge{order:3;display:inline-block;margin-top:4px;padding:3px 9px;border-radius:999px;background:#eaf6fc;color:#2c7fb8!important;font-size:11px;font-weight:700;line-height:1.3}.action-badge{padding:5px 12px;font-weight:700}.view-notes{text-decoration:none;padding:5px 10px;border-radius:8px;background:#eaf6fc}.view-notes:hover{background:#dff0f9}`}</style>
+    <style>{`.filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px;align-items:center}.filters select,.filters input,.filters button,td select{border:1px solid #cfe4ed;border-radius:10px;padding:9px;background:white}.filters button{display:flex;gap:6px;align-items:center;cursor:pointer;color:#257fa9}.search-box{display:flex;align-items:center;gap:7px;min-width:260px;flex:1;border:1px solid #cfe4ed;border-radius:10px;padding:0 11px;background:white;color:#4da8da}.search-box input{flex:1;border:0;padding:9px 0;background:transparent}.manage-message{padding:11px;background:#eef9fd;border-radius:10px;margin-bottom:12px}.table-wrap{overflow:auto;background:white;border-radius:18px;box-shadow:0 8px 24px rgba(47,117,150,.09)}table{width:100%;border-collapse:collapse;min-width:860px}th,td{text-align:left;padding:13px;border-bottom:1px solid #edf3f6}th{background:#f2fafd;color:#52707d}small{color:#72848d}.visit-badge{display:block;color:#318fbe!important;font-weight:700}.appt-pet-cell{display:flex;align-items:center;gap:10px}.appt-pet-photo{flex-shrink:0;width:34px;height:34px;border-radius:9px;object-fit:cover;background:#eaf8fd;color:#4da8da}.appt-pet-photo-fallback{display:grid;place-items:center}.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;flex-wrap:wrap;color:#52707d;font-size:13px}.pagination-buttons{display:flex;gap:8px}.pagination-buttons button{border:1px solid #cfe4ed;border-radius:10px;padding:8px 16px;background:white;color:#257fa9;cursor:pointer;font-weight:700}.pagination-buttons button:disabled{opacity:.5;cursor:not-allowed}.view-notes{border:0;background:none;color:#318fbe;font-weight:700;cursor:pointer;text-decoration:underline;padding:0}.action-group{display:flex;gap:6px;flex-wrap:nowrap}.action-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;min-width:76px;height:34px;text-align:center;border:0;border-radius:9px;padding:8px 14px;font-weight:700;cursor:pointer;color:#fff;white-space:nowrap}@media(max-width:700px){.action-group{flex-wrap:wrap}}.action-btn:disabled{opacity:.6;cursor:not-allowed}.action-btn.cancel{background:#e35b5b}.action-btn.cancel.ineligible{opacity:.5;cursor:not-allowed}.action-group .action-badge{align-self:center}.action-btn.rebook{background:#e0982f}.action-btn.complete{background:#2d9d63}.action-badge{display:inline-block;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800}.action-badge.badge-completed{background:#eaf8ef;color:#26754a}.action-badge.badge-cancelled{background:#fdeceb;color:#b34848}.action-badge.badge-confirmed{background:#eaf7fc;color:#2884ad}.pagination-center{flex-direction:column;justify-content:center;text-align:center}.pagination-center .pagination-buttons{order:-1}.notes-backdrop{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px;background:rgba(24,50,63,.55);backdrop-filter:blur(3px)}.notes-modal{position:relative;box-sizing:border-box;width:min(480px,100%);max-height:80vh;display:flex;flex-direction:column;border-radius:18px;padding:26px;background:#fff;box-shadow:0 22px 55px rgba(22,56,72,.24);overflow-y:auto}.notes-modal h3{margin:0 0 6px;padding-right:28px;color:#20313b}.notes-close{position:absolute;top:16px;right:16px;display:grid;place-items:center;border:0;border-radius:9px;padding:6px;background:#edf5f8;color:#456472;cursor:pointer}.notes-context{margin:0 0 14px;color:#7c8c94;font-size:13px}.notes-body{box-sizing:border-box;margin:0 0 20px;padding:14px 16px;background:#f7fbfd;border:1px solid #edf3f6;border-radius:12px;color:#20313b;line-height:1.6;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-height:40vh;overflow-y:auto}.notes-back{align-self:flex-start;border:1px solid #cfe4ed;border-radius:10px;padding:10px 18px;background:#fff;color:#257fa9;font-weight:700;cursor:pointer}.rebook-form{display:grid;gap:14px}.rebook-form label{display:grid;gap:6px;font-weight:700;font-size:13px;color:#334e5a}.rebook-form input,.rebook-form select{border:1px solid #cfe4ed;border-radius:10px;padding:10px 12px;font:inherit;background:#fbfeff}.rebook-error{padding:10px 13px;border-radius:10px;background:#fff0f0;color:#a94444;font-size:13px}.rebook-confirm{background:#4DA8DA!important;color:#fff!important;border:0!important}.rebook-confirm:disabled{opacity:.65;cursor:not-allowed}/* Appointments list polish (styles only). */.filters{gap:12px;margin-bottom:18px}.filters .search-box,.filters select,.filters input[type=date],.filters>button{height:46px;box-sizing:border-box;border-color:#d6e7ee;border-radius:12px;font:inherit;font-size:14px}.filters .search-box{padding:0 14px;gap:9px;transition:border-color .15s ease,box-shadow .15s ease}.filters .search-box:focus-within{border-color:#4DA8DA;box-shadow:0 0 0 3px rgba(77,168,218,.14)}.filters .search-box input{height:100%;padding:0;outline:0;font-size:14px;color:#1d3a4a}.filters select,.filters input[type=date]{padding:0 12px;color:#2f4a56;cursor:pointer}.filters>button{padding:0 16px;font-weight:700}.filters>button:hover{background:#f0f8fc;border-color:#a9d6ea}.table-wrap{border:1px solid #e6f0f4;box-shadow:0 8px 24px rgba(47,117,150,.07)}.table-wrap th{padding:14px 18px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#5f7884;background:#f4fafd}.table-wrap td{padding:14px 18px;font-size:14.5px;color:#2f4a56;vertical-align:middle}.table-wrap tbody tr{transition:background .15s ease}.table-wrap tbody tr:hover{background:#f5fbfe}.table-wrap tbody tr:last-child td{border-bottom:0}.table-wrap td small{font-size:12.5px;color:#7b8e97}/* Pet / owner: name, owner and the multi-pet tag stacked tightly. */.appt-pet-cell{gap:12px}.appt-pet-photo{width:42px;height:42px;border-radius:12px;box-shadow:0 2px 8px rgba(47,117,150,.10)}.appt-pet-cell>div{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}.appt-pet-cell>div>br{display:none}.appt-pet-cell b{font-size:15px;font-weight:700;color:#1d3a4a}.appt-pet-cell .visit-badge{order:3;display:inline-block;margin-top:4px;padding:3px 9px;border-radius:999px;background:#eaf6fc;color:#2c7fb8!important;font-size:11px;font-weight:700;line-height:1.3}.action-badge{padding:5px 12px;font-weight:700}.view-notes{text-decoration:none;padding:5px 10px;border-radius:8px;background:#eaf6fc}.view-notes:hover{background:#dff0f9}`}</style>
   </div>;
 }
