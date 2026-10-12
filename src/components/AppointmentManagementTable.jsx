@@ -7,14 +7,6 @@ import { formatDateLong } from "../utils/timeFormat";
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 
 const PAGE_SIZE = 10;
-const STATUS_FILTER_OPTIONS = APPOINTMENT_STATUSES.filter(s => s !== "Confirmed");
-
-// Once an appointment's date is today (or has passed), it's handed off to
-// Queue Management for check-in, so it no longer needs to show in this table.
-function isHandedOffToQueue(row) {
-  if (row.status !== "Confirmed") return false;
-  return row.appointment_date <= todayLocal();
-}
 
 const pad = value => String(value).padStart(2, "0");
 // A Confirmed visit that hasn't started yet (pet owner view).
@@ -246,12 +238,10 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
 
   const filteredRows = useMemo(() => {
     const query = search.trim().toLowerCase();
-    // focusToday (arrived here via the Veterinarian sidebar's My
-    // Appointments badge/link) means today's Confirmed consultations
-    // should be prioritized, not hidden -- so the normal hand-off-to-queue
-    // filtering is skipped in that case. Every other entry point into
-    // this table (direct visit, Staff/Admin) keeps the original behavior.
-    const visible = focusToday || ownerOnly ? rows : rows.filter(row => !isHandedOffToQueue(row));
+    // Every appointment stays listed, today's included: ones already in the
+    // queue show a "Checked in" badge (Cancel locked), the rest can still
+    // be cancelled here.
+    const visible = rows;
     const base = !query ? visible : visible.filter(row => [
       row.pet?.pet_name,
       ...(ownerOnly ? [row.pet?.species, row.visit_reason, row.status] : [row.owner?.full_name, row.owner?.username, row.owner?.email]),
@@ -283,7 +273,7 @@ export default function AppointmentManagementTable({ profile, veterinarianOnly =
   return <div className="manage-wrap">
     <div className="filters">
       <div className="search-box"><Search size={16}/><input type="text" placeholder={ownerOnly ? "Search pet, veterinarian, reason, or notes" : veterinarianOnly ? "Search pet, owner, or notes" : "Search pet, owner, veterinarian, or notes"} value={search} onChange={e=>setSearch(e.target.value)}/></div>
-      <select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{(ownerOnly ? APPOINTMENT_STATUSES : STATUS_FILTER_OPTIONS).map(s=><option key={s}>{s}</option>)}</select>
+      <select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{APPOINTMENT_STATUSES.map(s=><option key={s}>{s}</option>)}</select>
       <input type="date" value={date} onChange={e=>setDate(e.target.value)}/>
       <button onClick={clearFilters}><X size={16}/>Clear</button>
     </div>

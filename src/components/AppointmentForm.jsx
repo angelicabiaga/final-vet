@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, CalendarDays, Check, ChevronDown, Clock3, PawPrint, Plus, RotateCcw, Search, Stethoscope, Users, X } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   createAppointment, getVeterinarianAvailability, getOwners, getPetsByOwner,
   createGuestOwner, sendGuestBookingConfirmationEmail, sendGuestAccountEmail, formatTime, todayLocal,
@@ -14,6 +14,7 @@ import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, sanitizePhoneInput } from "
 import { focusFirstInvalidField, invalidClass } from "../utils/formValidation";
 import { formatPetAge } from "../utils/timeFormat";
 import { SPECIES_GROUPS, SEX_OPTIONS, BREEDS_BY_SPECIES, COLORS_BY_SPECIES } from "../constants/petOptions";
+import { pushToast } from "./GlobalToastCenter";
 
 // Same field set as the Animal Patients "Register Pet" form (species/breed/
 // color each support a curated dropdown with an "Other" free-text
@@ -89,6 +90,7 @@ function validatePetModalField(name, value, form) {
 
 export default function AppointmentForm({ profile, mode = "owner", guestOwner = false, presetOwner = null, lockOwnerSelection = false, onCreated }) {
   const isStaff = mode === "staff";
+  const navigate = useNavigate();
   const [owners, setOwners] = useState([]);
   const [pets, setPets] = useState([]);
   const [vets, setVets] = useState([]);
@@ -549,19 +551,32 @@ export default function AppointmentForm({ profile, mode = "owner", guestOwner = 
 
       if (isStaff) {
         setMessage({ type: "", text: "" });
-        setWalkInSuccess({
-          owner: selectedOwner?.full_name || ownerRecord?.full_name || "Pet owner",
-          veterinarian: selectedVet?.full_name || "Selected veterinarian",
-          date: form.appointmentDate,
-          pets: bookings,
-          queueNumber,
-          emailed: guestFlow && !!ownerRecord?.email && !emailFailures.length,
-          hasAccount: !!ownerRecord?.tempPassword,
-          emailError: emailWarning ? emailWarning.trim() : null
-        });
-      } else {
-        setMessage({ type: "success", text: `${bookings.length > 1 ? "Appointments" : "Appointment"} booked successfully.${queueNumber ? ` Your queue number is ${queueNumber}.` : ""}` });
+        // Staff/Admin go straight to Appointments (where it can be
+        // cancelled); the details staff read to the owner travel in a toast.
+        const petList = bookings.map((booking) => booking.pet).filter(Boolean).join(", ");
+        const emailNote = guestFlow && !!ownerRecord?.email && !emailFailures.length
+          ? (ownerRecord?.tempPassword ? " Confirmation and login details were emailed." : " A confirmation email was sent.")
+          : "";
+        pushToast(
+          `${queueNumber ? `Queue number ${queueNumber} · ` : ""}${petList || "Pet"} with ${selectedVet?.full_name || "the veterinarian"} on ${formatAppointmentDate(form.appointmentDate)}.${emailNote} You can cancel it from this list.`,
+          "success",
+          `Walk-in registered for ${selectedOwner?.full_name || ownerRecord?.full_name || "the pet owner"}`
+        );
+        if (emailWarning) pushToast(emailWarning.trim(), "warning", "Email not sent");
+        setForm(current => ({ ...current, petIds: [], startTime: "", notes: "" }));
+        onCreated?.();
+        // Today's Confirmed visits are normally hidden from this list (they
+        // live in the Queue); focusToday shows them, filtered to today.
+        navigate("/staff/appointments", { state: { focusToday: form.appointmentDate === todayLocal() } });
+        return;
       }
+
+      // Shown as a toast so it survives the move to My Appointments.
+      pushToast(
+        `You can view or cancel ${bookings.length > 1 ? "them" : "it"} in My Appointments.${queueNumber ? ` Your queue number is ${queueNumber}.` : ""}`,
+        "success",
+        `${bookings.length > 1 ? "Appointments" : "Appointment"} booked`
+      );
 
       setForm(current => ({ ...current, petIds: [], startTime: "", notes: "" }));
       onCreated?.();
