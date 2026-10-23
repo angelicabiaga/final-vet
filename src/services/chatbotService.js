@@ -1,14 +1,13 @@
 import { supabase } from "../config/supabaseClient";
+import { GROQ_AUTH_KEY, GROQ_ENDPOINT } from "./groqProxy";
 
-// PawCruz Pet Care Assistant. Answers come from Groq (same key and model as
-// the medical-record and inventory AI features: REACT_APP_GROQ_API_KEY).
+// PawCruz Pet Care Assistant. Answers come from Groq (same groq-chat Edge
+// Function and model as the medical-record and inventory AI features).
 // Every answer is generated for the owner's actual question. If the AI can't
 // be reached the owner sees a "try again" error, never a canned answer, except
 // for emergency wording, which always gets the emergency advice below.
 
-const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY;
 const GROQ_MODEL = "openai/gpt-oss-20b";
-const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
 const ACTIONS = ["emergency_vet", "contact_clinic", "book_appointment", "none"];
 
@@ -182,7 +181,7 @@ async function callGroq(messages, jsonMode = true, attempt = 0) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`
+        Authorization: `Bearer ${GROQ_AUTH_KEY}`
       },
       body: JSON.stringify({
         model: GROQ_MODEL,
@@ -241,8 +240,8 @@ export async function askPetAssistant({ messages, petId = null }) {
         code
       )));
 
-  if (!GROQ_API_KEY) {
-    console.error("Pet care assistant: REACT_APP_GROQ_API_KEY is missing.");
+  if (!GROQ_AUTH_KEY) {
+    console.error("Pet care assistant: REACT_APP_SUPABASE_ANON_KEY is missing.");
     return unavailable("PROVIDER_AUTH");
   }
 

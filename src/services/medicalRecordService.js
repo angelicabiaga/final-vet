@@ -1,12 +1,7 @@
 import { supabase } from "../config/supabaseClient";
-
-const GROQ_API_KEY =
-  process.env.REACT_APP_GROQ_API_KEY;
+import { GROQ_AUTH_KEY, GROQ_ENDPOINT } from "./groqProxy";
 
 const GROQ_MODEL = "openai/gpt-oss-20b";
-
-const GROQ_ENDPOINT =
-  "https://api.groq.com/openai/v1/chat/completions";
 
 function unique(values = []) {
   return [...new Set(values.filter(Boolean))];
@@ -1229,9 +1224,9 @@ export async function getPreviousMedicalRecordsForAi(
 export async function generatePredictiveHealthAnalysis(
   record
 ) {
-  if (!GROQ_API_KEY) {
+  if (!GROQ_AUTH_KEY) {
     throw new Error(
-      "Groq API key is not configured. Set REACT_APP_GROQ_API_KEY in your .env file and restart npm start."
+      "Supabase is not configured. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY in your .env file and restart npm start."
     );
   }
 
@@ -1397,7 +1392,7 @@ AI predictive health analysis is based only on available PawCruz medical records
             "application/json",
 
           Authorization:
-            `Bearer ${GROQ_API_KEY}`,
+            `Bearer ${GROQ_AUTH_KEY}`,
         },
 
         body: JSON.stringify({
@@ -1451,7 +1446,7 @@ AI predictive health analysis is based only on available PawCruz medical records
       response.status === 401
     ) {
       throw new Error(
-        "The Groq API key is invalid or missing. Check REACT_APP_GROQ_API_KEY."
+        "The Groq API key is invalid or missing. Check the GROQ_API_KEY secret on the groq-chat Edge Function."
       );
     }
 
@@ -1509,9 +1504,9 @@ AI predictive health analysis is based only on available PawCruz medical records
 // on each Medical History card. Nothing here is persisted to the
 // database; it is generated on demand and never creates a record.
 export async function generateConsultationHealthInsight(record, previousRecords = []) {
-  if (!GROQ_API_KEY) {
+  if (!GROQ_AUTH_KEY) {
     throw new Error(
-      "Groq API key is not configured. Set REACT_APP_GROQ_API_KEY in your .env file and restart npm start."
+      "Supabase is not configured. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY in your .env file and restart npm start."
     );
   }
 
@@ -1620,7 +1615,7 @@ This AI health insight is based only on this consultation's recorded information
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`,
+        Authorization: `Bearer ${GROQ_AUTH_KEY}`,
       },
       body: JSON.stringify({
         model: GROQ_MODEL,
@@ -1646,7 +1641,7 @@ This AI health insight is based only on this consultation's recorded information
     const errorText = await response.text().catch(() => "");
     console.error("Consultation health insight error:", response.status, errorText);
 
-    if (response.status === 401) throw new Error("The Groq API key is invalid or missing. Check REACT_APP_GROQ_API_KEY.");
+    if (response.status === 401) throw new Error("The Groq API key is invalid or missing. Check the GROQ_API_KEY secret on the groq-chat Edge Function.");
     if (response.status === 403) throw new Error("The AI request is not authorized. Check the Groq API key permissions.");
     if (response.status === 404) throw new Error("The configured AI model is unavailable.");
     if (response.status === 429) throw new Error("The AI health insight service has reached its request limit. Please wait and try again.");

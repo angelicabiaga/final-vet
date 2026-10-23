@@ -28,6 +28,8 @@ self.addEventListener("push", (event) => {
         icon: "/web_logo.png",
         badge: "/web_logo.png",
         tag: data.tag || undefined,
+        // Large picture banner (Chrome / Edge / Brave on Windows & Android).
+        image: data.image || undefined,
         data: { url: data.url || "/" },
       });
     })()

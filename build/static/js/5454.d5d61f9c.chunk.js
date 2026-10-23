@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkpawcruz_veterinary_management_system=self.webpackChunkpawcruz_veterinary_management_system||[]).push([[5454],{5454(e,t,n){n.r(t),n.d(t,{default:()=>s});n(65043);var r=n(73216),a=n(89079),p=n(29686),o=n(70579);function s(e){let t=e.profile;const n=(0,r.Zp)();return(0,o.jsx)(a.A,{profile:t,title:"Book Appointment",children:(0,o.jsx)(p.A,{profile:t,mode:"owner",onCreated:()=>n("/pet-owner/appointments")})})}}}]);
+//# sourceMappingURL=5454.d5d61f9c.chunk.js.map

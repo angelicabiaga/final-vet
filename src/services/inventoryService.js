@@ -1,16 +1,11 @@
 import { supabase } from "../config/supabaseClient";
+import { GROQ_AUTH_KEY, GROQ_ENDPOINT } from "./groqProxy";
 
 const ITEM_FIELDS =
   "id,item_name,category,sku,description,quantity,unit,unit_price,reorder_level,expiry_date,supplier_name,batch_number,status,is_archived,created_by,created_at,updated_at";
 
-const GROQ_API_KEY =
-  process.env.REACT_APP_GROQ_API_KEY;
-
 const GROQ_MODEL =
   "openai/gpt-oss-20b";
-
-const GROQ_ENDPOINT =
-  "https://api.groq.com/openai/v1/chat/completions";
 
 const RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -1289,9 +1284,9 @@ export async function getInventoryForecasts(
 export async function summarizeForecastWithGroq(
   forecasts
 ) {
-  if (!GROQ_API_KEY) {
+  if (!GROQ_AUTH_KEY) {
     throw new Error(
-      "Groq API key is not configured. Set REACT_APP_GROQ_API_KEY in your .env file and restart npm start."
+      "Supabase is not configured. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY in your .env file and restart npm start."
     );
   }
 
@@ -1701,7 +1696,7 @@ AI inventory analysis is based on available inventory and transaction records an
             "application/json",
 
           Authorization:
-            `Bearer ${GROQ_API_KEY}`,
+            `Bearer ${GROQ_AUTH_KEY}`,
         },
 
         body: JSON.stringify({
@@ -1761,7 +1756,7 @@ AI inventory analysis is based on available inventory and transaction records an
       response.status === 401
     ) {
       throw new Error(
-        "The Groq API key is invalid or missing. Check REACT_APP_GROQ_API_KEY."
+        "The Groq API key is invalid or missing. Check the GROQ_API_KEY secret on the groq-chat Edge Function."
       );
     }
 
