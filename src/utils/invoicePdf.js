@@ -461,6 +461,59 @@ async function loadImageDataUrl(url) {
   }
 }
 
+// Pet photos can be any format the browser shows (WebP, GIF, PNG, JPEG…),
+// but jsPDF only draws JPEG/PNG reliably -- an unsupported one silently fell
+// back to "No Photo". The browser decodes the photo, it's cropped to a
+// centered square (no stretching) and re-encoded as JPEG for the PDF.
+async function loadPhotoForPdf(url, size = 480) {
+  if (!url) return null;
+  let objectUrl = null;
+  try {
+    let source = url;
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        objectUrl = URL.createObjectURL(await response.blob());
+        source = objectUrl;
+      }
+    } catch {
+      // Fall back to loading the URL directly below.
+    }
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      if (!objectUrl) img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = source;
+    });
+    const side = Math.min(image.naturalWidth, image.naturalHeight);
+    if (!side) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, size, size);
+    context.drawImage(
+      image,
+      (image.naturalWidth - side) / 2,
+      (image.naturalHeight - side) / 2,
+      side,
+      side,
+      0,
+      0,
+      size,
+      size
+    );
+    return canvas.toDataURL("image/jpeg", 0.9);
+  } catch {
+    // Unreachable or undecodable photo: the original loader is the last try.
+    return loadImageDataUrl(url);
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+  }
+}
+
 function naText(value) {
   const text = value === null || value === undefined ? "" : String(value).trim();
   return text || "N/A";
@@ -518,7 +571,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
 
   const [logoDataUrl, petPhotoDataUrl] = await Promise.all([
     loadImageDataUrl(pawLogo),
-    pet.photo_url ? loadImageDataUrl(pet.photo_url) : Promise.resolve(null),
+    pet.photo_url ? loadPhotoForPdf(pet.photo_url) : Promise.resolve(null),
   ]);
 
   function isEmptyValue(value) {
