@@ -397,6 +397,8 @@ function buildPrescriptionPadPdf(prescriptions, meta = {}) {
 
   y = Math.max(listY + 30, y + 60);
   const sigX = right - 75;
+  // Name, title and license sit centered under the signature line.
+  const sigCenter = (sigX + right) / 2;
   pdf.setDrawColor(97, 118, 129);
   pdf.setLineWidth(0.4);
   pdf.line(sigX, y, right, y);
@@ -404,15 +406,15 @@ function buildPrescriptionPadPdf(prescriptions, meta = {}) {
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10.5);
   pdf.setTextColor(30, 49, 58);
-  pdf.text(withDrTitle(meta.veterinarianName, "Attending Veterinarian"), sigX, y);
+  pdf.text(withDrTitle(meta.veterinarianName, "Attending Veterinarian"), sigCenter, y, { align: "center" });
   y += 4.5;
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8.5);
   pdf.setTextColor(97, 118, 129);
-  pdf.text("Attending Veterinarian", sigX, y);
+  pdf.text("Attending Veterinarian", sigCenter, y, { align: "center" });
   // License number under the signature line.
   y += 4.5;
-  pdf.text(`License No.: ${meta.veterinarianLicense || "N/A"}`, sigX, y);
+  pdf.text(`License No.: ${meta.veterinarianLicense || "N/A"}`, sigCenter, y, { align: "center" });
 
   pdf.setFont("helvetica", "bolditalic");
   pdf.setFontSize(8.5);
@@ -959,6 +961,8 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   ensureSpace(30);
   y += 9;
   const sigX = right - 75;
+  // Name, title and license sit centered under the signature line.
+  const sigCenter = (sigX + right) / 2;
   pdf.setDrawColor(...BRAND_LIGHT);
   pdf.setLineWidth(0.4);
   pdf.line(sigX, y, right, y);
@@ -966,15 +970,15 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(10.5);
   pdf.setTextColor(...TEXT_DARK);
-  pdf.text(withDrTitle(meta.veterinarianName, "N/A"), sigX, y);
+  pdf.text(withDrTitle(meta.veterinarianName, "N/A"), sigCenter, y, { align: "center" });
   y += 4.5;
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8.5);
   pdf.setTextColor(...BRAND_LIGHT);
-  pdf.text("Attending Veterinarian", sigX, y);
+  pdf.text("Attending Veterinarian", sigCenter, y, { align: "center" });
   // License number under the signature line.
   y += 4.5;
-  pdf.text(`License No.: ${meta.veterinarianLicense || "N/A"}`, sigX, y);
+  pdf.text(`License No.: ${meta.veterinarianLicense || "N/A"}`, sigCenter, y, { align: "center" });
 
   const printedAt = formatDateTime(new Date());
   const totalPages = pdf.internal.getNumberOfPages();
