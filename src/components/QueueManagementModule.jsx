@@ -246,10 +246,18 @@ export default function QueueManagementModule({profile,mode="staff"}){
   // only returns once they confirm.
   return isVet?base.filter(r=>r.status==="Serving"):base.filter(r=>!r.doctor_offer_id);
  },[rows,status,isVet]);
- // Only the earliest "Serving" ticket gets the ongoing highlight -- if more
- // than one row happens to carry that status at once, the rest still show
- // the plain "Serving" label without the extra emphasis.
- const firstServingId=useMemo(()=>tableRows.find(r=>r.status==="Serving")?.id,[tableRows]);
+ // Each veterinarian's earliest "Serving" ticket (in queue order) gets the
+ // red ongoing highlight; any extra Serving tickets for that same vet keep
+ // the plain blue "Serving" label. It moves on by itself once that ticket
+ // changes status.
+ const firstServingIds=useMemo(()=>{
+  const firstByVet=new Map();
+  tableRows.forEach(r=>{
+   const vetKey=r.veterinarian_id||"unassigned";
+   if(r.status==="Serving"&&!firstByVet.has(vetKey))firstByVet.set(vetKey,r.id);
+  });
+  return new Set(firstByVet.values());
+ },[tableRows]);
  // A vet only ever has one active patient -- once staff marks one ticket
  // Serving, every other Waiting ticket for that same vet stays Waiting
  // (its own "Serving" button is disabled) until that one is Completed.
@@ -336,7 +344,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
      <button type="button" role="tab" aria-selected={queueTab==="History"} className={`queue-tab${queueTab==="History"?" active":""}`} onClick={()=>setQueueTab("History")}>History</button>
     </div>:<h3>Live queue</h3>}
 
-   {(!isVet||queueTab==="Live Queue")&&(loading?<p>Loading queue…</p>:tableRows.length===0?<p>No queue entries today.</p>:<div className="table"><table><thead><tr><th>No.</th><th>Pet</th>{!isVet&&<th>Veterinarian</th>}<th>Time</th><th>Status</th><th>Location / Station</th><th>Actions</th></tr></thead><tbody>{tableRows.map(r=>{const isActiveServing=r.status==="Serving"&&r.id===firstServingId;return <tr key={r.id} className={isActiveServing?"serving-row":""}><td>{/leave/i.test(queueProblem(r))?<><b title={`On hold: the doctor went on sudden leave (was ${r.queue_number})`}>—</b><small className="onhold">On hold</small></>:<b>{r.queue_number}</b>}{r.late_arrival&&<small className="late">Late Arrival</small>}</td><td><div className="queuePetCell"><PetThumb pet={r.pet}/><div>{r.pets?.length?r.pets.map(p=>p.pet_name).join(", "):(r.pet?.pet_name||"—")}{r.pets?.length>1&&<small className="petcount">{r.pets.length} pets · {r.visitDurationMinutes} min</small>}<small>{r.owner?.full_name||""}</small></div></div></td>{!isVet&&<td>{r.veterinarian?.full_name||"—"}{queueProblem(r)&&(()=>{const tag=unavailableTag(queueProblem(r),r.queue_date,r.original_appointment_time);return <span className="doc-alert" title={unavailableNote(r.veterinarian?.full_name,queueProblem(r),r.queue_date,r.original_appointment_time)}><TriangleAlert size={13}/><span className="doc-alert-text"><b>{tag.headline}</b>{tag.detail&&<em>{tag.detail}</em>}</span></span>;})()}</td>}<td>{bookingTime(r)}</td><td><span className={`pill ${isActiveServing?"serving":r.status==="Serving"?"servingplain":r.status.replaceAll(" ","").toLowerCase()}`}>{isActiveServing&&<span className="live-dot"/>}{r.status}</span></td><td><span className="station-cell"><MapPin size={13}/> {stationLabel(r.status)}</span></td><td>
+   {(!isVet||queueTab==="Live Queue")&&(loading?<p>Loading queue…</p>:tableRows.length===0?<p>No queue entries today.</p>:<div className="table"><table><thead><tr><th>No.</th><th>Pet</th>{!isVet&&<th>Veterinarian</th>}<th>Time</th><th>Status</th><th>Location / Station</th><th>Actions</th></tr></thead><tbody>{tableRows.map(r=>{const isActiveServing=r.status==="Serving"&&firstServingIds.has(r.id);return <tr key={r.id} className={isActiveServing?"serving-row":""}><td>{/leave/i.test(queueProblem(r))?<><b title={`On hold: the doctor went on sudden leave (was ${r.queue_number})`}>—</b><small className="onhold">On hold</small></>:<b>{r.queue_number}</b>}{r.late_arrival&&<small className="late">Late Arrival</small>}</td><td><div className="queuePetCell"><PetThumb pet={r.pet}/><div>{r.pets?.length?r.pets.map(p=>p.pet_name).join(", "):(r.pet?.pet_name||"—")}{r.pets?.length>1&&<small className="petcount">{r.pets.length} pets · {r.visitDurationMinutes} min</small>}<small>{r.owner?.full_name||""}</small></div></div></td>{!isVet&&<td>{r.veterinarian?.full_name||"—"}{queueProblem(r)&&(()=>{const tag=unavailableTag(queueProblem(r),r.queue_date,r.original_appointment_time);return <span className="doc-alert" title={unavailableNote(r.veterinarian?.full_name,queueProblem(r),r.queue_date,r.original_appointment_time)}><TriangleAlert size={13}/><span className="doc-alert-text"><b>{tag.headline}</b>{tag.detail&&<em>{tag.detail}</em>}</span></span>;})()}</td>}<td>{bookingTime(r)}</td><td><span className={`pill ${isActiveServing?"serving":r.status==="Serving"?"servingplain":r.status.replaceAll(" ","").toLowerCase()}`}>{isActiveServing&&<span className="live-dot"/>}{r.status}</span></td><td><span className="station-cell"><MapPin size={13}/> {stationLabel(r.status)}</span></td><td>
     {canManage&&<div className="actions">
      <button className="icon-btn serve-btn" disabled={r.status!=="Waiting"||updatingId===r.id||vetsCurrentlyServing.has(r.veterinarian_id)} title={r.status==="Waiting"&&vetsCurrentlyServing.has(r.veterinarian_id)?`${r.veterinarian?.full_name||"This veterinarian"} is already serving another patient`:"Mark as Serving"} aria-label="Mark as Serving" onClick={()=>act(r.id,()=>updateQueueStatus(r.id,"Serving",profile),"Marked as serving.")}><Play size={15}/></button>
      <button className="icon-btn link-btn" disabled={r.status!=="Waiting"||updatingId===r.id} title="Re-queue to next available slot" aria-label="Re-queue" onClick={()=>act(r.id,()=>requeueToNextAvailable(r.id,profile),time=>`Re-queued to ${formatTime(time)}.`)}><RotateCcw size={15}/></button>
