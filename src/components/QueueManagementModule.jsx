@@ -189,6 +189,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
    const url=await printMedicalRecordDocument(record,{...record.pet,owner:record.owner},{
     veterinarianName:record.veterinarian?.full_name||"",
     veterinarianPhone:record.veterinarian?.phone||"",
+    veterinarianLicense:record.veterinarian?.license_number||"",
     visitDateTime:record.consultation_date?formatDateLong(record.consultation_date):"",
    });
    printPreview.showPdf(url,"Print Medical Record");
@@ -201,6 +202,7 @@ export default function QueueManagementModule({profile,mode="staff"}){
    const {url,download}=downloadPrescriptionPadPdf(rx,{
     veterinarianName:withDrTitle(record.veterinarian?.full_name),
     veterinarianPhone:record.veterinarian?.phone||"",
+    veterinarianLicense:record.veterinarian?.license_number||"",
     ownerName:record.owner?.full_name,
     ownerAddress:record.owner?.address,
     petName:record.pet?.pet_name,

@@ -2773,6 +2773,7 @@ export default function PetManagementModule({
                                       const url = await printMedicalRecordDocument(record, selectedPet, {
                                         veterinarianName: vetsById[record.veterinarian_id]?.full_name || "",
                                         veterinarianPhone: vetsById[record.veterinarian_id]?.phone || "",
+                                        veterinarianLicense: vetsById[record.veterinarian_id]?.license_number || "",
                                         // Only pass a formatted string when there's a real date -- formatVisitDateTime's
                                         // own "Date not recorded" fallback is for the on-screen card; the printout
                                         // falls back to the record's single "N/A" convention instead.

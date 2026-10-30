@@ -257,7 +257,7 @@ async function loadRelatedRecords(
       ? supabase
           .from("profiles")
           .select(
-            "id, full_name, username, email, phone, address, role, account_status, avatar_url"
+            "id, full_name, username, email, phone, address, role, account_status, avatar_url, license_number"
           )
           .in("id", profileIds)
       : Promise.resolve({

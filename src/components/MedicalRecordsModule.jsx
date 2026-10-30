@@ -2228,6 +2228,7 @@ export default function MedicalRecordsModule({
                             const url = await printMedicalRecordDocument(viewingHistoryRecord, selectedPet, {
                               veterinarianName: viewingHistoryRecord.veterinarian?.full_name || "",
                               veterinarianPhone: viewingHistoryRecord.veterinarian?.phone || "",
+                              veterinarianLicense: viewingHistoryRecord.veterinarian?.license_number || "",
                               visitDateTime: viewingHistoryRecord.consultation_date ? formatHistoryDate(viewingHistoryRecord.consultation_date) : "",
                               petAge: formatPetAge(selectedPet?.date_of_birth),
                             });

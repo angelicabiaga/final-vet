@@ -142,6 +142,11 @@ export default function ConfirmDialog({
         }
 
         .pcConfirmActions button {
+          /* Centered even when a page's own button styles leak in. */
+          display: flex !important;
+          align-items: center;
+          justify-content: center !important;
+          text-align: center !important;
           border: 0;
           border-radius: 12px;
           padding: 13px;

@@ -7,6 +7,48 @@ function money(value) {
   return Number(value || 0).toLocaleString("en-PH", { style: "currency", currency: "PHP" });
 }
 
+// jsPDF's built-in fonts have no "₱" glyph (it printed as "±" with the
+// digits spread apart). Text containing ₱ is drawn with a plain "P" and the
+// peso's two bars are added as short lines over it.
+function drawPesoText(pdf, originalText, text, x, y, options = {}) {
+  const plain = text.replace(/₱/g, "P");
+  const width = pdf.getTextWidth(plain);
+  const startX = options.align === "right" ? x - width : options.align === "center" ? x - width / 2 : x;
+  const { align, ...rest } = options;
+  originalText(plain, startX, y, rest);
+
+  const fontSizeMm = pdf.getFontSize() / pdf.internal.scaleFactor;
+  const capHeight = fontSizeMm * 0.7;
+  const pWidth = pdf.getTextWidth("P");
+  const previousDraw = pdf.getDrawColor();
+  const previousWidth = pdf.getLineWidth();
+  pdf.setDrawColor(pdf.getTextColor());
+  pdf.setLineWidth(Math.max(0.12, fontSizeMm * 0.06));
+  let index = text.indexOf("₱");
+  while (index !== -1) {
+    const px = startX + pdf.getTextWidth(plain.slice(0, index));
+    [0.58, 0.78].forEach((level) => {
+      const barY = y - capHeight * level;
+      pdf.line(px - pWidth * 0.12, barY, px + pWidth * 0.95, barY);
+    });
+    index = text.indexOf("₱", index + 1);
+  }
+  pdf.setDrawColor(previousDraw);
+  pdf.setLineWidth(previousWidth);
+  return pdf;
+}
+
+// A jsPDF document whose text() draws ₱ correctly (see drawPesoText).
+function createPdf(options) {
+  const pdf = new jsPDF(options);
+  const originalText = pdf.text.bind(pdf);
+  pdf.text = (text, x, y, options) =>
+    typeof text === "string" && text.includes("₱")
+      ? drawPesoText(pdf, originalText, text, x, y, options)
+      : originalText(text, x, y, options);
+  return pdf;
+}
+
 function formatDateTime(value) {
   return value ? formatDateTime12h(value) : "—";
 }
@@ -42,7 +84,7 @@ function invoiceLineItems(transaction) {
  * "Download Invoice" action (staff POS, pet owner's pet records).
  */
 export function downloadInvoicePdf(transaction) {
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const pdf = createPdf({ orientation: "portrait", unit: "mm", format: "a4" });
   const centerX = 105;
   let y = 22;
 
@@ -137,7 +179,7 @@ export function downloadInvoicePdf(transaction) {
  * elsewhere" declaration isn't only visible inside the POS.
  */
 export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const pdf = createPdf({ orientation: "portrait", unit: "mm", format: "a4" });
   const centerX = 105;
   let y = 22;
 
@@ -245,7 +287,7 @@ export function downloadPrescriptionNoticePdf(prescription, meta = {}) {
  * meant to be kept or shown elsewhere as the prescription itself.
  */
 function buildPrescriptionPadPdf(prescriptions, meta = {}) {
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const pdf = createPdf({ orientation: "portrait", unit: "mm", format: "a4" });
   const left = 22;
   const right = 188;
   const centerX = 105;
@@ -368,6 +410,9 @@ function buildPrescriptionPadPdf(prescriptions, meta = {}) {
   pdf.setFontSize(8.5);
   pdf.setTextColor(97, 118, 129);
   pdf.text("Attending Veterinarian", sigX, y);
+  // License number under the signature line.
+  y += 4.5;
+  pdf.text(`License No.: ${meta.veterinarianLicense || "N/A"}`, sigX, y);
 
   pdf.setFont("helvetica", "bolditalic");
   pdf.setFontSize(8.5);
@@ -451,7 +496,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
     throw new Error("This consultation does not belong to the selected animal patient.");
   }
 
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const pdf = createPdf({ orientation: "portrait", unit: "mm", format: "a4" });
   const pageHeight = 297;
   const left = 20;
   const right = 190;
@@ -697,6 +742,7 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
     [
       ["Attending Veterinarian", withDrTitle(meta.veterinarianName)],
       ["Veterinarian Contact Number", meta.veterinarianPhone],
+      ["Veterinary License Number", meta.veterinarianLicense],
     ],
     2
   );
@@ -925,7 +971,10 @@ export async function printMedicalRecordDocument(record, pet, meta = {}) {
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8.5);
   pdf.setTextColor(...BRAND_LIGHT);
-  pdf.text("Attending Veterinarian — Signature over Printed Name", sigX, y);
+  pdf.text("Attending Veterinarian", sigX, y);
+  // License number under the signature line.
+  y += 4.5;
+  pdf.text(`License No.: ${meta.veterinarianLicense || "N/A"}`, sigX, y);
 
   const printedAt = formatDateTime(new Date());
   const totalPages = pdf.internal.getNumberOfPages();
