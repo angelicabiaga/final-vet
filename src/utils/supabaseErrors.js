@@ -8,7 +8,7 @@ export function describeDbError(error, fallback, context = "") {
   }
   switch (error.code) {
     case "23505":
-      return "That record already exists. Please check for duplicates and try again.";
+      return duplicateFieldMessage(error) || "That record already exists. Please check for duplicates and try again.";
     case "23514":
       return friendlyCheckViolation(error) || "Please review the required fields — one of them doesn't meet the clinic's requirements.";
     case "23502":
@@ -21,6 +21,19 @@ export function describeDbError(error, fallback, context = "") {
     default:
       return fallback;
   }
+}
+
+// Unique-constraint violations on profiles (e.g. "profiles_username_unique",
+// "profiles_email_key") -> a message naming the field that's taken.
+export function duplicateFieldMessage(error) {
+  if (!error) return null;
+  const text = String(error.message || "") + " " + String(error.details || "");
+  if (error.code !== "23505" && !/duplicate key/i.test(text)) return null;
+  const lower = text.toLowerCase();
+  if (lower.includes("username")) return "That username is already taken. Please choose another one.";
+  if (lower.includes("email")) return "That email is already registered.";
+  if (lower.includes("phone")) return "That phone number is already registered.";
+  return null;
 }
 
 function friendlyCheckViolation(error) {

@@ -5,6 +5,7 @@ import { unregisterWebPush } from "./notificationService";
 import { CONSENT_REQUIRED_ERROR, PRIVACY_NOTICE_VERSION } from "../constants/privacyNotice";
 import { getQueue } from "./queueService";
 import { getAppointments, todayLocal } from "./appointmentService";
+import { duplicateFieldMessage } from "../utils/supabaseErrors";
 
 const SESSION_KEY = "pawcruz_session";
 const OTP_KEY = "pawcruz_pending_otp";
@@ -346,7 +347,7 @@ export async function completeRegistrationOtp(code) {
     p_address: values.address,
     p_phone: values.phone,
   });
-  if (error) throw new Error(error.message || "Registration failed. Check your Supabase SQL policies and required columns.");
+  if (error) throw new Error(duplicateFieldMessage(error) || error.message || "Registration failed. Check your Supabase SQL policies and required columns.");
   clearPendingOtp();
   await writeActivity(profile, "Account creation", `Pet-owner account created for ${values.username}.`);
   return publicProfile(profile);

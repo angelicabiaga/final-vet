@@ -1,6 +1,7 @@
 import { supabase } from "../config/supabaseClient";
 import { createAndSendOtp, verifyProfileOtp } from "./authService";
 import { validateImageFile, isValidPhMobile, INVALID_PH_MOBILE_MESSAGE, validatePassword } from "../utils/validators";
+import { duplicateFieldMessage } from "../utils/supabaseErrors";
 
 const SESSION_KEY = "pawcruz_session";
 
@@ -54,7 +55,7 @@ export async function updateProfile(profileId, values, role) {
   const payload = normalizeProfile(values, role);
   await ensureNoDuplicate(profileId, payload);
   const { data, error } = await supabase.from("profiles").update(payload).eq("id", profileId).select("*").single();
-  if (error) throw new Error(`Unable to update profile: ${error.message}`);
+  if (error) throw new Error(duplicateFieldMessage(error) || `Unable to update profile: ${error.message}`);
   updateLocalProfile(data);
   return data;
 }

@@ -5,6 +5,7 @@ import { supabase } from "../config/supabaseClient";
 import { registerMobilePush, unregisterMobilePush } from "./pushRegistration";
 import { CONSENT_REQUIRED_ERROR, PRIVACY_NOTICE_VERSION } from "../constants/privacyNotice";
 import { isValidPhMobile, INVALID_PH_MOBILE_MESSAGE } from "../utils/validators";
+import { duplicateFieldMessage } from "../utils/supabaseErrors";
 import { getQueue } from "./queueService";
 import { getVeterinarianAppointments, todayLocal } from "./mobileAppointmentService";
 
@@ -496,7 +497,8 @@ export async function registerUser({
       console.log("Registration error:", error);
 
       throw new Error(
-        error.message ||
+        duplicateFieldMessage(error) ||
+          error.message ||
           "Registration failed. Check your Supabase policies and required columns."
       );
     }
@@ -520,7 +522,8 @@ export async function registerUser({
       console.log("Registration error:", error);
 
       throw new Error(
-        error.message ||
+        duplicateFieldMessage(error) ||
+          error.message ||
           "Registration failed. Check your Supabase policies and required columns."
       );
     }
