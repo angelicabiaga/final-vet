@@ -1,4 +1,5 @@
-import React, { forwardRef, useState } from "react";
+import React, { forwardRef, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import {
   CONSENT_CHECKBOX_LINK_TEXT,
@@ -20,7 +21,23 @@ export function focusConsentBlock(ref) {
 }
 
 function PrivacyNoticeModal({ onClose }) {
-  return (
+  // Lock page scroll while open and close on Escape.
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  // Portal to <body> so the parent form's transforms/styles can't clip or
+  // restyle the dialog.
+  return createPortal(
     <div className="pcModalBackdrop" onClick={onClose}>
       <div
         className="pcModal"
@@ -29,23 +46,28 @@ function PrivacyNoticeModal({ onClose }) {
         aria-labelledby="pcModalTitle"
         onClick={(event) => event.stopPropagation()}
       >
-        <button type="button" className="pcModalClose" onClick={onClose} aria-label="Close">
-          <X size={18} />
-        </button>
-        <h2 id="pcModalTitle">PawCruz Privacy Notice</h2>
+        <div className="pcModalHeader">
+          <h2 id="pcModalTitle" className="pcModalTitle">PawCruz Privacy Notice</h2>
+          <button type="button" className="pcModalClose" onClick={onClose} aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
         <div className="pcModalBody">
           {PRIVACY_NOTICE_SECTIONS.map((section) => (
-            <section key={section.heading}>
-              <h3>{section.heading}</h3>
-              <p>{section.body}</p>
+            <section key={section.heading} className="pcModalSection">
+              <h3 className="pcModalHeading">{section.heading}</h3>
+              <p className="pcModalText">{section.body}</p>
             </section>
           ))}
         </div>
-        <button type="button" className="pcModalCloseBtn" onClick={onClose}>
-          Close
-        </button>
+        <div className="pcModalFooter">
+          <button type="button" className="pcModalCloseBtn" onClick={onClose}>
+            Close
+          </button>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -174,66 +196,99 @@ const DataPrivacyConsent = forwardRef(function DataPrivacyConsent(
         .pcModalBackdrop {
           position: fixed;
           inset: 0;
-          z-index: 300;
-          display: grid;
-          place-items: center;
-          padding: 20px;
+          z-index: 1000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px 16px;
           background: rgba(24, 50, 63, 0.62);
           backdrop-filter: blur(4px);
         }
 
         .pcModal {
-          position: relative;
+          display: flex;
+          flex-direction: column;
           width: min(600px, 100%);
-          max-height: 84vh;
-          overflow-y: auto;
+          max-height: min(85vh, 760px);
+          max-height: min(85dvh, 760px);
+          overflow: hidden;
           border-radius: 20px;
-          padding: 30px 28px 26px;
           background: #fff;
           box-shadow: 0 24px 60px rgba(4, 31, 45, 0.3);
+          text-align: left;
         }
 
-        .pcModal h2 {
-          margin: 0 0 16px;
-          padding-right: 30px;
+        .pcModalHeader {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-shrink: 0;
+          padding: 20px 24px 14px;
+          border-bottom: 1px solid #e6eff3;
+        }
+
+        .pcModal .pcModalTitle {
+          margin: 0;
           color: #183747;
-          font-size: 21px;
+          font-size: 20px;
+          font-weight: 800;
+          line-height: 1.3;
         }
 
-        .pcModalBody section {
-          margin-bottom: 16px;
+        .pcModalBody {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+          padding: 16px 24px 8px;
         }
 
-        .pcModalBody h3 {
+        .pcModal .pcModalSection {
+          margin: 0 0 16px;
+        }
+
+        .pcModal .pcModalHeading {
           margin: 0 0 6px;
           color: #237da4;
-          font-size: 14px;
+          font-size: 15px;
+          font-weight: 700;
+          line-height: 1.35;
         }
 
-        .pcModalBody p {
+        .pcModal .pcModalText {
           margin: 0;
           color: #445b66;
-          font-size: 13.5px;
+          font-size: 14px;
+          font-weight: 400;
           line-height: 1.6;
         }
 
         .pcModalClose {
-          position: absolute;
-          top: 14px;
-          right: 14px;
           display: grid;
           place-items: center;
+          flex-shrink: 0;
+          width: 34px;
+          height: 34px;
+          padding: 0;
           border: 0;
           border-radius: 9px;
-          padding: 7px;
           background: #edf5f8;
           color: #456472;
           cursor: pointer;
         }
 
+        .pcModalClose:hover {
+          background: #dcebf1;
+        }
+
+        .pcModalFooter {
+          flex-shrink: 0;
+          padding: 12px 24px 20px;
+          border-top: 1px solid #e6eff3;
+        }
+
         .pcModalCloseBtn {
           width: 100%;
-          margin-top: 6px;
           padding: 11px;
           border: 0;
           border-radius: 12px;
@@ -247,6 +302,17 @@ const DataPrivacyConsent = forwardRef(function DataPrivacyConsent(
         @media (max-width: 520px) {
           .pcConsentRow > span {
             font-size: 12.5px;
+          }
+
+          .pcModalHeader,
+          .pcModalBody,
+          .pcModalFooter {
+            padding-left: 18px;
+            padding-right: 18px;
+          }
+
+          .pcModal .pcModalTitle {
+            font-size: 18px;
           }
         }
       `}</style>
