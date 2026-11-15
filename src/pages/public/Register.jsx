@@ -981,9 +981,9 @@ function RegisterFooter() {
 
       <div className="register-contact-item register-phone-numbers">
         <Phone size={20} aria-hidden="true" />
-        <a href="tel:0938537649">0938537649</a>
+        <a href="tel:09338537649">09338537649</a>
         <span aria-hidden="true">|</span>
-        <a href="tel:0917165379">0917165379</a>
+        <a href="tel:09328901662">09328901662</a>
       </div>
     </footer>
   );

@@ -49,6 +49,6 @@ export const PRIVACY_NOTICE_SECTIONS = [
   {
     heading: "Contact Us",
     body:
-      "For questions or concerns about this Privacy Notice or your personal information, please visit or contact Cruz Veterinary Clinic at 2189 Stall G, Felimarc Pet Center, A. Luna St, Pasay City, or call 0938 537 649 / 0917 165 379.",
+      "For questions or concerns about this Privacy Notice or your personal information, please visit or contact Cruz Veterinary Clinic at 2189 Stall G, Felimarc Pet Center, A. Luna St, Pasay City, or call 0933 853 7649 / 0932 890 1662.",
   },
 ];
