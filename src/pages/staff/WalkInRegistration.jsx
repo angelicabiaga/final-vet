@@ -619,9 +619,11 @@ const styles = `
 
 .wr-error{margin:0 0 14px;color:#b34848;font-size:13.5px}
 
-.wr-pagination-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-top:18px;padding-top:17px;border-top:1px solid #edf3f6}
-.wr-result-summary{color:#6f7f88;font-size:13px;font-weight:600}
-.wr-pagination{display:flex;align-items:center;gap:14px}
+/* Three-column grid (1fr | auto | 1fr) so the page buttons sit in the true
+   center of the card regardless of how wide the "Showing ..." text is. */
+.wr-pagination-bar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;margin-top:18px;padding-top:17px;border-top:1px solid #edf3f6}
+.wr-result-summary{grid-column:1;justify-self:start;color:#6f7f88;font-size:13px;font-weight:600}
+.wr-pagination{grid-column:2;display:flex;align-items:center;justify-content:center;gap:14px}
 .wr-page-nav{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;flex-shrink:0;border:1px solid #cfe4ed;border-radius:50%;background:#fff;color:#2b6f8f;cursor:pointer;transition:background .2s ease,border-color .2s ease,opacity .2s ease}
 .wr-page-nav:hover:not(:disabled){background:#eaf8fd;border-color:#a9dff0}
 .wr-page-nav:disabled{cursor:not-allowed;opacity:.4}
@@ -748,7 +750,8 @@ const styles = `
   .wr-toolbar-right{justify-content:stretch}
   .wr-list-card .search{max-width:none;flex:1 1 auto;min-width:0}
   .wr-new-account-btn{justify-content:center}
-  .wr-pagination-bar{flex-direction:column;justify-content:center}
+  .wr-pagination-bar{grid-template-columns:1fr;justify-items:center}
+  .wr-result-summary,.wr-pagination{grid-column:1;justify-self:center}
 
   .wr-table{overflow:visible}
   .wr-table table{display:block;table-layout:auto}
