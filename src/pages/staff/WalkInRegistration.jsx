@@ -4,6 +4,8 @@ import {
   Archive,
   ArrowLeft,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   History,
   Mail,
@@ -37,6 +39,8 @@ function NotRecorded() {
   return <span className="wr-not-recorded">Not recorded</span>;
 }
 
+const OWNERS_PAGE_SIZE = 10;
+
 export default function WalkInRegistration({ profile }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -50,6 +54,7 @@ export default function WalkInRegistration({ profile }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   // null | { owner: ownerObject|null, guestFlow: boolean } -- owner is null
   // only for the "New Account / Walk-In" entry point, which has no row to
   // pre-fill from.
@@ -206,6 +211,21 @@ export default function WalkInRegistration({ profile }) {
       });
   }, [owners, petCounts, search]);
 
+  // Same client-side pagination as the Animal Patients list
+  // (PetManagementModule). currentPage is clamped so a shrinking result set
+  // (new search, reload) never leaves the table on an empty page.
+  const totalPages = Math.max(1, Math.ceil(visibleOwners.length / OWNERS_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * OWNERS_PAGE_SIZE;
+  const paginatedOwners = useMemo(
+    () => visibleOwners.slice(pageStart, pageStart + OWNERS_PAGE_SIZE),
+    [visibleOwners, pageStart]
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
   function closeBooking() {
     setBookingFor(null);
     // A guest registration or a newly booked visit can change the pet/owner
@@ -275,7 +295,7 @@ export default function WalkInRegistration({ profile }) {
                 </tr>
               </thead>
               <tbody>
-                {visibleOwners.map((owner) => (
+                {paginatedOwners.map((owner) => (
                   <tr key={owner.id}>
                     <td data-label="Pet Owner">
                       <button type="button" className="wr-owner-cell wr-owner-cell-link" onClick={() => openOwnerProfile(owner)}>
@@ -327,6 +347,52 @@ export default function WalkInRegistration({ profile }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {!loading && visibleOwners.length > 0 && (
+          <div className="wr-pagination-bar">
+            <span className="wr-result-summary">
+              Showing {pageStart + 1}–{Math.min(pageStart + OWNERS_PAGE_SIZE, visibleOwners.length)} of {visibleOwners.length} pet owner{visibleOwners.length === 1 ? "" : "s"}
+            </span>
+
+            {totalPages > 1 && (
+              <div className="wr-pagination">
+                <button
+                  type="button"
+                  className="wr-page-nav"
+                  aria-label="Previous page"
+                  disabled={currentPage === 1}
+                  onClick={() => setPage(currentPage - 1)}
+                >
+                  <ChevronLeft size={18} />
+                </button>
+
+                <div className="wr-pagination-pages">
+                  {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      aria-current={pageNumber === currentPage ? "page" : undefined}
+                      className={pageNumber === currentPage ? "active" : ""}
+                      onClick={() => setPage(pageNumber)}
+                    >
+                      {pageNumber}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  className="wr-page-nav"
+                  aria-label="Next page"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -552,6 +618,17 @@ const styles = `
 .wr-clear-search{display:grid;place-items:center;margin-right:6px;border:0;border-radius:7px;padding:5px;background:#edf5f8;color:#5d7782;cursor:pointer}
 
 .wr-error{margin:0 0 14px;color:#b34848;font-size:13.5px}
+
+.wr-pagination-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-top:18px;padding-top:17px;border-top:1px solid #edf3f6}
+.wr-result-summary{color:#6f7f88;font-size:13px;font-weight:600}
+.wr-pagination{display:flex;align-items:center;gap:14px}
+.wr-page-nav{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;flex-shrink:0;border:1px solid #cfe4ed;border-radius:50%;background:#fff;color:#2b6f8f;cursor:pointer;transition:background .2s ease,border-color .2s ease,opacity .2s ease}
+.wr-page-nav:hover:not(:disabled){background:#eaf8fd;border-color:#a9dff0}
+.wr-page-nav:disabled{cursor:not-allowed;opacity:.4}
+.wr-pagination-pages{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center}
+.wr-pagination-pages button{min-width:36px;min-height:36px;border:1px solid transparent;border-radius:9px;background:transparent;color:#55707d;font-weight:700;font-size:13px;cursor:pointer;transition:background .2s ease,color .2s ease}
+.wr-pagination-pages button:hover{background:#eaf8fd}
+.wr-pagination-pages button.active{border-color:#4da8da;background:#4da8da;color:#fff}
 .wr-empty{display:grid;justify-items:center;gap:8px;padding:48px 20px;color:#8496a0;text-align:center}
 .wr-empty h3{margin:0;color:#20313B}
 .wr-empty p{margin:0;font-size:13.5px}
@@ -671,6 +748,7 @@ const styles = `
   .wr-toolbar-right{justify-content:stretch}
   .wr-list-card .search{max-width:none;flex:1 1 auto;min-width:0}
   .wr-new-account-btn{justify-content:center}
+  .wr-pagination-bar{flex-direction:column;justify-content:center}
 
   .wr-table{overflow:visible}
   .wr-table table{display:block;table-layout:auto}
