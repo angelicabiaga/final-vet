@@ -86,7 +86,12 @@ export default function UserManagement({ profile }) {
   const [credentialsUser,setCredentialsUser]=useState(null), [sendingCredentials,setSendingCredentials]=useState(false);
   function openEdit(user){
     setEditUser(user);
-    setEditForm({ ...splitFullName(user.full_name), username:user.username||"", email:user.email||"", phone:user.phone||"", address:user.address||"", role:user.role });
+    // Use the parts saved at registration when present; older accounts only
+    // have full_name, so fall back to splitting it.
+    const savedParts = (user.first_name || user.last_name)
+      ? { firstName:user.first_name||"", middleName:user.middle_name||"", lastName:user.last_name||"", suffix:user.name_suffix||"" }
+      : splitFullName(user.full_name);
+    setEditForm({ ...savedParts, username:user.username||"", email:user.email||"", phone:user.phone||"", address:user.address||"", role:user.role });
     setEditErrors({});setEditError("");
   }
   function updateEditField(name,value){

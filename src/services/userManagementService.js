@@ -11,8 +11,27 @@ export async function fetchUsers({ search = "", role = "", status = "" } = {}) {
   return term ? (data || []).filter(u => [u.full_name,u.username,u.email,u.phone].some(v => String(v||"").toLowerCase().includes(term))) : (data || []);
 }
 
+// Name parts as typed (first_name / middle_name / last_name / name_suffix).
+// Only included when the caller supplied them.
+export function nameParts(values) {
+  if (values.firstName === undefined && values.lastName === undefined) return {};
+  const clean = (v) => String(v || "").trim() || null;
+  return { first_name: clean(values.firstName), middle_name: clean(values.middleName), last_name: clean(values.lastName), name_suffix: clean(values.suffix) };
+}
+
+// Saves to profiles; if the name-part columns don't exist yet
+// (supabase/PROFILE_NAME_PARTS.sql not applied), retries without them.
+async function updateProfileRow(id, updates) {
+  let result = await supabase.from("profiles").update(updates).eq("id", id).select("*").single();
+  if (result.error && /first_name|middle_name|last_name|name_suffix/.test(result.error.message || "")) {
+    const { first_name, middle_name, last_name, name_suffix, ...rest } = updates;
+    result = await supabase.from("profiles").update(rest).eq("id", id).select("*").single();
+  }
+  return result;
+}
+
 export async function updateUserAccount(id, updates, actor) {
-  const { data, error } = await supabase.from("profiles").update({ ...updates, updated_at: new Date().toISOString() }).eq("id", id).select("*").single();
+  const { data, error } = await updateProfileRow(id, { ...updates, updated_at: new Date().toISOString() });
   if (error) throw new Error(`Unable to update account: ${error.message}`);
   await supabase.from("activity_logs").insert({ user_id: actor?.id || null, role: actor?.role || "admin", action: "Account Update", module: "User Management", related_record: id, description: `Updated account fields: ${Object.keys(updates).join(", ")}`, created_at: new Date().toISOString() }).then(() => {}).catch(() => {});
   return data;
@@ -49,6 +68,8 @@ export async function createManagedUser(values, actor) {
     if (error.code === "23505") throw new Error("That username or email is already registered.");
     throw new Error(`Unable to create account: ${error.message}`);
   }
+  const parts = nameParts(values);
+  if (Object.keys(parts).length) await updateProfileRow(data.id, parts).then(() => {}, () => {});
   await supabase.from("activity_logs").insert({ user_id: actor?.id || null, role: actor?.role || "admin", action: "Account Creation", module: "User Management", related_record: data.id, description: `Created ${values.role} account for ${values.full_name}` }).then(() => {}).catch(() => {});
   return data;
 }
@@ -69,7 +90,7 @@ export async function editUserDetails(user, values, actor) {
   if (checkError) throw new Error("Unable to check the account details. Please try again.");
   if (existing?.length) throw new Error("That username or email is already used by another account.");
 
-  const updates = { full_name: fullName, username, email, phone: phone || null, address: String(values.address || "").trim() || null };
+  const updates = { full_name: fullName, ...nameParts(values), username, email, phone: phone || null, address: String(values.address || "").trim() || null };
   // An admin can never change their own role from here.
   if (values.role && user.id !== actor?.id) updates.role = values.role;
 

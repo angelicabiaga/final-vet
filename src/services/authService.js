@@ -303,7 +303,10 @@ function validateRegistration(values) {
   // caller (Register.jsx) already blocks submission on this in the UI;
   // this is the service-layer backstop so no caller can skip it.
   if (values.serviceConsent !== true) throw new Error(CONSENT_REQUIRED_ERROR);
-  return { fullName, username, email, address, phone, password, marketingConsent: Boolean(values.marketingConsent) };
+  const firstName = String(values.firstName || "").trim();
+  const middleName = String(values.middleName || "").trim();
+  const lastName = String(values.lastName || "").trim();
+  return { fullName, firstName, middleName, lastName, username, email, address, phone, password, marketingConsent: Boolean(values.marketingConsent) };
 }
 
 export async function registerPetOwner(values) {
@@ -349,6 +352,16 @@ export async function completeRegistrationOtp(code) {
   });
   if (error) throw new Error(duplicateFieldMessage(error) || error.message || "Registration failed. Check your Supabase SQL policies and required columns.");
   clearPendingOtp();
+  // Keep the name exactly as split on the form (first / middle / last) so
+  // the admin Edit User form shows it the same way. Best-effort: skipped if
+  // supabase/PROFILE_NAME_PARTS.sql hasn't been applied yet.
+  if (values.firstName || values.lastName) {
+    await supabase.from("profiles").update({
+      first_name: values.firstName || null,
+      middle_name: values.middleName || null,
+      last_name: values.lastName || null,
+    }).eq("id", profile.id).then(() => {}, () => {});
+  }
   await writeActivity(profile, "Account creation", `Pet-owner account created for ${values.username}.`);
   return publicProfile(profile);
 }
