@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  ExternalLink,
   IdCard,
   RefreshCw,
   ShieldCheck,
@@ -189,6 +190,13 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
 
       {isAdmin && status === "Pending Review" && (
         <div className="vvp-decision">
+          {/* PRC's site has reCAPTCHA and no API, so the admin checks it by hand.
+              The "By Name" tab only needs the name, so no birthdate is collected. */}
+          <p className="vvp-prc-hint">
+            On the PRC site, open <b>Verification of License (By Name)</b>, choose <b>Veterinarian</b>, search
+            {vetProfile?.full_name ? <> <b>{vetProfile.full_name}</b></> : " the veterinarian's name"}, and confirm the
+            license number matches before approving.
+          </p>
           <label>Reason (required for Reject / Needs Resubmission)
             <textarea
               ref={decisionReasonRef}
@@ -203,6 +211,7 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
           </label>
           <div className="vvp-decision-actions">
             <button type="button" className="approve" onClick={() => decide("Verified")} disabled={!!deciding}>{deciding === "Verified" ? "Saving..." : "Approve - Verified"}</button>
+            <a className="prc-link" href="https://verification.prc.gov.ph" target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /> Check on PRC</a>
             <button type="button" className="resubmit" onClick={() => decide("Needs Resubmission")} disabled={!!deciding}>{deciding === "Needs Resubmission" ? "Saving..." : "Needs Resubmission"}</button>
             <button type="button" className="reject" onClick={() => decide("Rejected")} disabled={!!deciding}>{deciding === "Rejected" ? "Saving..." : "Reject"}</button>
           </div>
@@ -247,6 +256,9 @@ export default function VeterinarianVerificationPanel({ vetId, vetProfile, viewe
         .vvp-decision-actions button.resubmit{background:#a5680b}
         .vvp-decision-actions button.reject{background:#c0392b}
         .vvp-decision-actions button:disabled{opacity:.6;cursor:not-allowed}
+        .vvp-decision-actions a.prc-link{display:inline-flex;align-items:center;gap:6px;border:1px solid #4DA8DA;border-radius:9px;padding:8px 13px;font-weight:700;color:#2f7596;background:#fff;text-decoration:none}
+        .vvp-decision-actions a.prc-link:hover{background:#f0f8fc}
+        .vvp-prc-hint{margin:0;padding:10px 13px;background:#f4f9fb;border:1px solid #e1edf2;border-radius:10px;color:#334e5a;font-size:12.5px;line-height:1.55}
       `}</style>
     </section>
   );
