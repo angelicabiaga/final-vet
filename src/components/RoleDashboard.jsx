@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import AppShell from "./AppShell";
+import ActivityLogPanel from "./ActivityLogPanel";
 import { loadDashboardData } from "../services/dashboardService";
 import { subscribeToQueue } from "../services/queueService";
 import { formatTime12h, formatClockTime } from "../utils/timeFormat";
@@ -290,6 +291,7 @@ export default function RoleDashboard({ profile }) {
             <section className="dash-panel wide"><header><div><h3>Recent Appointments</h3><p>Latest connected appointment records</p></div><CalendarDays size={20}/></header><div className="appointments">{summary.appointments.length ? summary.appointments.map((a) => <div key={a.id}><span className="date">{dateKey(a.appointment_date)}</span><div><b>{a.visit_reason || "General Consultation"}</b><small>{formatTime(a.start_time)} · {a.appointment_source || "Online"}</small></div><i>{a.status}</i></div>) : <em>No appointment records available.</em>}</div></section>
             <section className="dash-panel"><header><div><h3>{profile?.role === "pet_owner" ? "Messages" : "Inventory Alerts"}</h3><p>{profile?.role === "pet_owner" ? "Recent incoming message count" : "Items requiring attention"}</p></div>{profile?.role === "pet_owner" ? <MessageCircle size={20}/> : <PackageSearch size={20}/>}</header>{profile?.role === "pet_owner" ? <div className="message-count"><strong>{summary.unread}</strong><span>Recent incoming messages</span><Link to="/pet-owner/messages">Open Messages</Link></div> : <div className="list">{summary.inventoryAlerts.length ? summary.inventoryAlerts.map((item) => <div key={item.id}><b>{item.item_name}</b><span>{item.quantity ?? 0} left</span></div>) : <em>No stock alerts.</em>}</div>}</section>
           </div>
+          {profile?.role === "admin" && <ActivityLogPanel reloadSignal={data} />}
         </>
       )}
       <style>{`
